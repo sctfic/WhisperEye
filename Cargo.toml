@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "common",
+    "boards/board_default",
+]
+
+# Optionnel : optimisations globales pour les firmwares ESP32 (réduction de la taille du binaire)
+[profile.release]
+opt-level = "s"      # Optimiser pour la taille
+lto = true           # Link-Time Optimization
+codegen-units = 1
+panic = "abort"      # Réduire la surcharge liée à la capture de paniques
+strip = true         # Enlever les symboles de débogage

@@ -1,0 +1,16 @@
+[build]
+target = "riscv32imac-unknown-none-elf"
+
+[target.riscv32imac-unknown-none-elf]
+linker = "ldproxy"
+# Optionnel : activez-le si vous utilisez l'outil de flash espflash en runner
+# runner = "espflash flash --monitor"
+rustflags = [
+    "-C", "default-linker-libraries",
+]
+
+[env]
+# Indique à esp-idf-sys pour quel microcontrôleur compiler
+MCU = "esp32c6"
+# Version stable d'ESP-IDF recommandée pour l'ESP32-C6
+ESP_IDF_VERSION = "v5.2.1"

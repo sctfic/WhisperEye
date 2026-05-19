@@ -1,0 +1,22 @@
+[package]
+name = "board_default"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sctfic <contact@sctfic.com>"]
+
+[dependencies]
+# Dépendance vers la bibliothèque commune du projet
+common = { path = "../../common" }
+
+# Dépendances système et HAL pour ESP32
+esp-idf-sys = { version = "0.34", features = ["binstart"] }
+esp-idf-hal = "0.44"
+esp-idf-svc = "0.49"
+
+# Driver pour multiplexeur I2C TCA9548A (utilisé pour les capteurs SCD41, SHT45)
+# Note: Nous utiliserons embedded-hal pour piloter les capteurs I2C
+embedded-hal = "1.0.0"
+
+# Crate standard de logging pour l'affichage console
+log = "0.4.22"
+anyhow = "1.0.86"
