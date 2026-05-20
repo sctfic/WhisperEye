@@ -31,22 +31,26 @@ WhisperEye/
 
 ### 1. La Base Commune (`common`)
 * **OTA Update** : Système de flashage de firmware à distance via double partition active/inactive (`ota_0` et `ota_1`), garantissant un rollback automatique en cas de boot défaillant.
-* **Wifi & Bluetooth BLE** : Connexion robuste en mode Station. Si la connexion échoue, la carte bascule automatiquement en mode Point d'Accès (AP) pour permettre une configuration. Initialisation de la pile Bluetooth NimBLE.
-* **NTP Client** : Synchronisation précise de l'heure système via SNTP en tâche de fond.
-* **Serveur HTTP & TOTP** : Serveur HTTP ultra-léger (pas de HTTPS pour limiter l'utilisation CPU/RAM) sécurisé par une authentification **TOTP (Time-based One-Time Password)** à 6 chiffres.
+* **Wifi & Bluetooth BLE** : Connexion robuste en mode Station (**SSID par défaut: `IoT` / Pass: `Esp32&Cie2026`**). Si la connexion échoue, la carte bascule automatiquement en mode Point d'Accès (AP) pour permettre une configuration. Initialisation de la pile Bluetooth NimBLE.
+* **NTP Client** : Synchronisation précise de l'heure système via SNTP en tâche de fond (**serveur par défaut: `wrt.lan`**).
+* **Serveur HTTP & TOTP** : Serveur HTTP ultra-léger (pas de HTTPS pour limiter l'utilisation CPU/RAM) sécurisé par une authentification **TOTP (Time-based One-Time Password)** à 6 chiffres (**secret par défaut: `Totp-Salt-4-Hash-Between-Probe-&-WhisperEye`**).
 
 ### 2. Déclinaisons Matérielles (`boards/`)
 Selon les déclinaisons de cartes, les modules optionnels suivants sont initialisés :
 * 🖥️ **Écran graphique** : Piloté sur bus **SPI** haute vitesse.
 * 🚌 **RS485 half-duplex** : Port série de communication industrielle avec contrôle matériel de flux (DE/RTS).
-* 📻 **Port Radio** : Pour les transmissions sans fil longue portée.
-* 🌡️ **Capteurs** :
+* 📻 **Port Radio** : Pour les transmissions sans fil longue portée (LoRa, RFM95, etc.).
+* 🌡️ **Capteurs (Metrics)** :
+  * **Roue codeuse et poussoir** de l'écran (navigation fluide dans les menus).
+  * **Sensitif périphérique** (entrée tactile capacitive robuste).
+  * **Capteur de tension d'alimentation** (mesure de batterie ou tension d'entrée via ADC).
   * **DS18B20** via bus 1-Wire.
   * **SCD41** (CO2/Temp/Humidité) & **SHT45** (Haute précision Temp/Humidité) sur bus **I2C**, multiplexés derrière un switch **TCA9548A**.
-* ⚙️ **Actionneurs** :
+* ⚙️ **Actionneurs (Cmd)** :
   * 2x **Relais de puissance**.
-  * 1x **Moteur double sens** ou 2x **sorties PWM** de précision (via driver LEDC).
-  * 4x **LEDs d'état** de diagnostic.
+  * 1x **Moteur double sens** ou 2x **sorties PWM** de précision.
+  * 2x **LEDs d'état** de diagnostic (clignotement alterné heartbeat).
+  * 1x **Pin sectionneur d'alimentation** (gestion avancée de la consommation et sécurité).
 
 ---
 
@@ -96,7 +100,7 @@ cargo build --release --target riscv32imac-unknown-none-elf
 Connectez votre carte WhisperEye en USB, puis lancez le flashage et le moniteur de logs série :
 
 ```bash
-# Flasher le binaire编译 sur la carte
+# Flasher le binaire compilé sur la carte
 cargo espflash flash --release --monitor
 ```
 
@@ -105,8 +109,8 @@ cargo espflash flash --release --monitor
 ## 🔒 Configuration de la Sécurité (TOTP)
 
 Par défaut, le secret TOTP de WhisperEye est défini dans `common/src/lib.rs`. Pour générer des codes TOTP valides :
-1. Copiez la clé secrète Base32 par défaut : `BASE32SECRET323232323232323232` (ou configurez la vôtre).
-2. Ajoutez-la dans votre application d'authentification favorite (Google Authenticator, Bitwarden, Aegis, 2FAS).
+1. Copiez la clé secrète par défaut : `Totp-Salt-4-Hash-Between-Probe-&-WhisperEye` (ou configurez la vôtre).
+2. Ajoutez-la dans votre application d'authentification favorite (Google Authenticator, Bitwarden, Aegis, 2FAS, etc.).
 3. Connectez-vous au Wifi de la carte, naviguez sur `http://<IP_DE_LA_CARTE>/` et saisissez le code à 6 chiffres affiché par votre application.
 
 ---

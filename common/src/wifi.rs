@@ -1,18 +1,18 @@
-use esp_idf_svc::wifi::{EspWifi, BlockingWifi, WifiEvent};
+use esp_idf_svc::wifi::{EspWifi, BlockingWifi};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_hal::modem::Modem;
-use log::{info, error, warn};
+use log::{info, error};
 use anyhow::Result;
 
-pub struct WifiManager {
-    wifi: BlockingWifi<EspWifi<'static>>,
+pub struct WifiManager<'a> {
+    wifi: BlockingWifi<EspWifi<'a>>,
 }
 
-impl WifiManager {
+impl<'a> WifiManager<'a> {
     /// Initialise le Wifi et le Bluetooth (BLE)
     pub fn new(
-        modem: Modem,
+        modem: Modem<'a>,
         sys_loop: EspSystemEventLoop,
         nvs: EspDefaultNvsPartition,
     ) -> Result<Self> {
@@ -20,11 +20,11 @@ impl WifiManager {
         
         let esp_wifi = EspWifi::new(
             modem,
-            sys_loop,
+            sys_loop.clone(),
             Some(nvs),
         )?;
         
-        let mut wifi = BlockingWifi::wrap(esp_wifi, sys_loop)?;
+        let wifi = BlockingWifi::wrap(esp_wifi, sys_loop)?;
         
         Ok(Self { wifi })
     }
@@ -47,7 +47,7 @@ impl WifiManager {
         match self.wifi.connect() {
             Ok(_) => {
                 info!("Connecté au Wifi avec succès !");
-                let ip_info = self.wifi.wifi().sts_ip_info()?;
+                let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
                 info!("Adresse IP allouée : {:?}", ip_info.ip);
                 Ok(())
             }

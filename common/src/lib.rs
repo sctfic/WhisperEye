@@ -25,10 +25,10 @@ pub struct BaseConfig {
 impl Default for BaseConfig {
     fn default() -> Self {
         Self {
-            wifi_ssid: String::from("WhisperEye-AP"),
-            wifi_psk: String::from("WhisperEye123!"),
-            totp_secret: String::from("BASE32SECRET323232323232323232"), // Secret TOTP par défaut
-            ntp_server: String::from("pool.ntp.org"),
+            wifi_ssid: String::from("IoT"),
+            wifi_psk: String::from("Esp32&Cie2026"),
+            totp_secret: String::from("Totp-Salt-4-Hash-Between-Probe-&-WhisperEye"), // Secret TOTP par défaut
+            ntp_server: String::from("wrt.lan"),
         }
     }
 }

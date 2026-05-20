@@ -16,7 +16,7 @@ impl HttpServerManager {
         info!("Démarrage du serveur HTTP sur le port {}...", port);
         
         let config = Configuration {
-            port,
+            http_port: port,
             ..Default::default()
         };
         
@@ -66,7 +66,7 @@ impl HttpServerManager {
             
             let mut response = _req.into_ok_response()?;
             response.write(html.as_bytes())?;
-            Ok(())
+            Ok::<(), esp_idf_svc::sys::EspError>(())
         })?;
 
         // 2. Endpoint sécurisé par TOTP
@@ -121,7 +121,7 @@ impl HttpServerManager {
                 response.write(unauthorized_html.as_bytes())?;
             }
             
-            Ok(())
+            Ok::<(), esp_idf_svc::sys::EspError>(())
         })?;
 
         Ok(())
@@ -133,14 +133,25 @@ impl HttpServerManager {
             return false;
         }
 
-        // Crée un objet TOTP à partir de la clé secrète Base32 standard
-        if let Ok(secret_bytes) = Secret::Encoded(secret_str.to_string()).to_bytes() {
+        // Crée un objet TOTP à partir de la clé secrète. Si ce n'est pas du Base32 valide,
+        // on retombe sur du texte brut.
+        let secret_bytes = match Secret::Encoded(secret_str.to_string()).to_bytes() {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                // Secret brut converti en bytes
+                Secret::Raw(secret_str.as_bytes().to_vec()).to_bytes().unwrap_or_default()
+            }
+        };
+
+        if !secret_bytes.is_empty() {
             if let Ok(totp) = TOTP::new(
                 Algorithm::SHA1,
                 6,
                 1,
                 30,
                 secret_bytes,
+                Some("Sctfic".to_string()),
+                "WhisperEye".to_string(),
             ) {
                 // Vérifie la validité du jeton par rapport à l'heure système actuelle de l'ESP32
                 if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {

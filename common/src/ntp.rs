@@ -1,10 +1,10 @@
-use esp_idf_svc::sntp::{EspSntp, SyncStatus};
-use log::{info, warn};
+use esp_idf_svc::sntp::{EspSntp, SntpConf, SyncStatus};
+use log::info;
 use std::time::SystemTime;
 use anyhow::Result;
 
 pub struct NtpManager {
-    sntp: EspSntp,
+    sntp: EspSntp<'static>,
 }
 
 impl NtpManager {
@@ -12,7 +12,11 @@ impl NtpManager {
     pub fn new(server: &str) -> Result<Self> {
         info!("Initialisation du client NTP avec le serveur : {}...", server);
         
-        let sntp = EspSntp::new_with_servers([server])?;
+        let mut conf = SntpConf::default();
+        if !conf.servers.is_empty() {
+            conf.servers[0] = server;
+        }
+        let sntp = EspSntp::new(&conf)?;
         
         Ok(Self { sntp })
     }
