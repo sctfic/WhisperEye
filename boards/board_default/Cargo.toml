@@ -9,7 +9,7 @@ authors = ["Sctfic <contact@sctfic.com>"]
 common = { path = "../../common" }
 
 # Dépendances système et HAL pour ESP32
-esp-idf-sys = { version = "0.34", features = ["binstart"] }
+esp-idf-sys = { version = "0.35", features = ["binstart"] }
 esp-idf-hal = "0.44"
 esp-idf-svc = "0.49"
 

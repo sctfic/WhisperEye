@@ -6,7 +6,7 @@ authors = ["Sctfic <contact@sctfic.com>"]
 
 [dependencies]
 # Abstractions matérielles et services de l'écosystème ESP-IDF
-esp-idf-sys = { version = "0.34", features = ["binstart"] }
+esp-idf-sys = { version = "0.35", features = ["binstart"] }
 esp-idf-hal = "0.44"
 esp-idf-svc = "0.49"
 

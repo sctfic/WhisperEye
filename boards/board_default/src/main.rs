@@ -18,7 +18,7 @@ use common::BaseConfig;
 fn main() -> anyhow::Result<()> {
     // 1. Initialisation système de base d'ESP-IDF
     esp_idf_svc::log::EspLogger::initialize_default();
-    info!("Démarrage du Firmware WhisperEye sur ESP32-C6...");
+    info!("Démarrage du Firmware WhisperEye sur ESP32-S3...");
 
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
@@ -59,7 +59,7 @@ fn main() -> anyhow::Result<()> {
     let spi_config = SpiConfig::new().baudrate(10.MHz().into());
     let _spi_driver = SpiDeviceDriver::new_single(
         peripherals.spi2,
-        peripherals.pins.gpio6, // SCLK (Exemple ESP32-C6)
+        peripherals.pins.gpio6, // SCLK (Exemple ESP32-S3)
         peripherals.pins.gpio7, // MOSI
         Option::<Gpio5>::None,  // MISO (Non connecté pour l'écran)
         Some(peripherals.pins.gpio18), // CS / Chip Select

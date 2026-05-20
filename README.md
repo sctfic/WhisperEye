@@ -1,6 +1,6 @@
 # 👁️ WhisperEye — Firmware ESP32 en Rust
 
-> **WhisperEye** est un firmware industriel modulaire, écrit en **Rust**, conçu pour une carte électronique à base d'**ESP32** (et plus particulièrement optimisé pour l'**ESP32-C6** RISC-V). Grâce à son architecture en *Cargo Workspace*, il sépare rigoureusement la logique réseau de base des orchestrations de capteurs et actionneurs spécifiques à chaque modèle de carte.
+> **WhisperEye** est un firmware industriel modulaire, écrit en **Rust**, conçu pour une carte électronique à base d'**ESP32** (et plus particulièrement optimisé pour l'**ESP32-S3** Xtensa). Grâce à son architecture en *Cargo Workspace*, il sépare rigoureusement la logique réseau de base des orchestrations de capteurs et actionneurs spécifiques à chaque modèle de carte.
 
 ---
 
@@ -26,7 +26,7 @@ WhisperEye/
 │   ├── ota.rs          # Gestionnaire de mises à jour Over-The-Air sécurisées
 │   └── http_server.rs  # Serveur HTTP avec validation TOTP dynamique
 └── boards/             # [Binary Crates] Déclinaisons spécifiques aux cartes
-    └── board_default/  # Déclinaison de référence (ESP32-C6)
+    └── board_default/  # Déclinaison de référence (ESP32-S3)
 ```
 
 ### 1. La Base Commune (`common`)
@@ -73,7 +73,7 @@ cargo install cargo-espflash
 
 ### 2. Compilation du Projet
 
-Pour compiler la déclinaison par défaut de la carte (cible **ESP32-C6** RISC-V) :
+Pour compiler la déclinaison par défaut de la carte (cible **ESP32-S3** Xtensa) :
 
 ```bash
 # Aller dans le dossier du binaire de la carte
@@ -83,10 +83,10 @@ cd boards/board_default
 cargo build --release
 ```
 
-Pour compiler pour une autre cible (ex: ESP32 classique, S3) :
+Pour compiler pour une autre cible (ex: ESP32-C6 RISC-V, ESP32 classique) :
 Vous pouvez changer la variable `MCU` et la cible `target` dans le fichier `boards/board_default/.cargo/config.toml` ou passer l'argument de compilation :
 ```bash
-cargo build --release --target xtensa-esp32-espidf
+cargo build --release --target riscv32imac-unknown-none-elf
 ```
 
 ---
