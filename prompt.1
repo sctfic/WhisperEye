@@ -1,15 +1,9 @@
 Initialise un repo sur mon github pour ce nouveau projet. https://github.com/sctfic/WhisperEye.git
 
-Il s'agira du firmware en Rust pour une carte électronique à base d'ESP32-S3
+Il s'agira du firmware en Rust pour une carte électronique à base d'ESP (WROOM-32 dans un premier temps, puis S3 et C6)
 Il y aura une base commune du firmware et plusieurs déclinaisons en fonction des capteurs sur les cartes. 
 
-Le firmware de base s'occupera de différents éléments :
-- OTA Update
-- Wifi et BT ( SSID: IoT , Pass: Esp32&Cie2026 )
-- Client NTP (server: wrt.lan)
-- Serveur HTTP (pas de https) avec du TOTP (secret: Totp-Salt-4-Hash-Between-Probe-&-WhisperEye)
-
-Selon les cartes, Nous pourrons ajouter une ou plusieurs fonctionnalités :
+Selon les cartes (S3 et C6), le firmware de production embarquera plus ou moins des éléments suivants :
 - ecran sur SPI 
 - un port RS485
 - un port radio
@@ -24,7 +18,7 @@ Selon les cartes, Nous pourrons ajouter une ou plusieurs fonctionnalités :
         - ...
 - actionneurs (cmd)
     - 2 relais
-    - 1 moteur double sens ou 2 PWM
+    - 1 moteur double sens ou 2 PWM (pont en H)
     - 2 LED
     - pin sectionneur d'alimentation
     - ...
