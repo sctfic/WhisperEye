@@ -1,6 +1,6 @@
 use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
 use anyhow::{Result, Context};
-use log::{info, error};
+use log::{info};
 
 pub struct NvsStorage {
     nvs: EspNvs<NvsDefault>,
@@ -27,19 +27,56 @@ impl NvsStorage {
             self.set_str("fwVersion", "empty")?;
             self.set_str("lastOtaDl", "1970-01-01T00:00:00Z")?;
             self.set_str("lastOtaSuccess", "1970-01-01T00:00:00Z")?;
-            self.set_str("updateUrl", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.bin")?;
+            self.set_str("updateUrl", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.json")?;
             self.set_i32("otaRetry", -1)?;
+            self.set_str("wifiKnown", "[]")?;
+        } else if self.get_str("wifiKnown")?.is_none() {
+            self.set_str("wifiKnown", "[]")?;
         }
         Ok(())
     }
 
+    pub fn get_known_networks(&self) -> Result<Vec<(String, String)>> {
+        let known_str = self.get_str("wifiKnown")?.unwrap_or_else(|| "[]".to_string());
+        #[derive(serde::Deserialize)]
+        struct Net {
+            ssid: String,
+            psk: String,
+        }
+        let list: Vec<Net> = serde_json::from_str(&known_str).unwrap_or_default();
+        Ok(list.into_iter().map(|n| (n.ssid, n.psk)).collect())
+    }
+
+    pub fn add_known_network(&mut self, ssid: &str, psk: &str) -> Result<()> {
+        if ssid.is_empty() {
+            return Ok(());
+        }
+        let mut list = self.get_known_networks()?;
+        // Check if already exists, if so update the psk, else append
+        if let Some(pos) = list.iter().position(|(s, _)| s == ssid) {
+            list[pos].1 = psk.to_string();
+        } else {
+            list.push((ssid.to_string(), psk.to_string()));
+        }
+        
+        #[derive(serde::Serialize)]
+        struct Net {
+            ssid: String,
+            psk: String,
+        }
+        let serialized_list: Vec<Net> = list.into_iter().map(|(ssid, psk)| Net { ssid, psk }).collect();
+        let new_str = serde_json::to_string(&serialized_list)?;
+        self.set_str("wifiKnown", &new_str)?;
+        Ok(())
+    }
+
     pub fn get_str(&self, key: &str) -> Result<Option<String>> {
-        // EspNvs get_str writes to a buffer. We'll use a dynamic buffer.
-        let mut buf = [0u8; 256];
+        // EspNvs get_str writes to a buffer. We'll use a larger dynamic buffer to support JSON arrays.
+        let mut buf = vec![0u8; 4000];
         match self.nvs.get_str(key, &mut buf) {
             Ok(Some(s)) => Ok(Some(s.to_string())),
             Ok(None) => Ok(None),
-            Err(e) => {
+            Err(_e) => {
                 // If it is ESP_ERR_NVS_NOT_FOUND, we just return None
                 // In esp-idf-sys, the error code might be checked, but for safety:
                 Ok(None)

@@ -124,6 +124,11 @@ pub const FACTORY_HTML: &str = r#"<!DOCTYPE html>
         .info-value {
             font-weight: 600;
             color: var(--text-primary);
+            text-align: right;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.35rem;
         }
 
         .badge {
@@ -298,6 +303,23 @@ pub const FACTORY_HTML: &str = r#"<!DOCTYPE html>
             margin-right: 0.5rem;
         }
 
+        .status-icon {
+            display: inline-block;
+            width: 1.2rem;
+            height: 1.2rem;
+            vertical-align: middle;
+            margin-left: 0.35rem;
+            flex-shrink: 0;
+            transition: all 0.2s ease;
+        }
+
+        .badge .status-icon {
+            margin-left: 0;
+            margin-right: 0.35rem;
+            width: 1rem;
+            height: 1rem;
+        }
+
         @keyframes pulse {
             0% {
                 transform: scale(0.95);
@@ -331,7 +353,7 @@ pub const FACTORY_HTML: &str = r#"<!DOCTYPE html>
         <div id="status-tab" class="tab-content active">
             <div class="info-group">
                 <span class="info-label">État Système</span>
-                <span class="info-value"><span id="system_status_badge" class="badge badge-success">🟢 Opérationnel</span></span>
+                <span class="info-value"><span id="system_status_badge" class="badge badge-success"><svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill='#10b981'" fill-opacity="0.2" stroke='#10b981' stroke-width="2"/><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Opérationnel</span></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Mode Réseau</span>
@@ -433,6 +455,17 @@ pub const FACTORY_HTML: &str = r#"<!DOCTYPE html>
     </div>
 
     <script>
+        function getStatusSvg(type, titleText = "") {
+            const titleAttr = titleText ? ` title="${titleText}"` : "";
+            if (type === 'green') {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"${titleAttr}><circle cx="12" cy="12" r="10" fill='#10b981' fill-opacity="0.2" stroke='#10b981' stroke-width="2"/><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            } else if (type === 'yellow') {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"${titleAttr}><circle cx="12" cy="12" r="10" fill='#f59e0b' fill-opacity="0.2" stroke='#f59e0b' stroke-width="2"/><path d="M12 8V13M12 16H12.01" stroke='#f59e0b' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            } else {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"${titleAttr}><circle cx="12" cy="12" r="10" fill='#ef4444' fill-opacity="0.2" stroke='#ef4444' stroke-width="2"/><path d="M15 9L9 15M9 9L15 15" stroke='#ef4444' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            }
+        }
+
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -492,31 +525,87 @@ pub const FACTORY_HTML: &str = r#"<!DOCTYPE html>
                 .then(res => res.json())
                 .then(data => {
                     // Dynamic system status calculation
-                    let statusText = "🟢 Opérationnel";
+                    let statusText = getStatusSvg('green') + "Opérationnel";
                     let statusClass = "badge-success";
                     if (data.network_mode === 'AccessPoint') {
-                        statusText = "🟡 Avertissement (Mode AP)";
+                        statusText = getStatusSvg('yellow', 'Mode AP') + "Avertissement";
                         statusClass = "badge-warn";
                     } else if (data.ip_addr === '0.0.0.0' || !data.wifi_ssid || data.wifi_ssid === 'Non connecté') {
-                        statusText = "🔴 Erreur (Déconnecté)";
+                        statusText = getStatusSvg('red', 'Déconnecté') + "Erreur";
                         statusClass = "badge-error";
                     }
                     const statusBadge = document.getElementById('system_status_badge');
                     if (statusBadge) {
-                        statusBadge.innerText = statusText;
+                        statusBadge.innerHTML = statusText;
                         statusBadge.className = `badge ${statusClass}`;
                     }
 
                     document.getElementById('network_mode').innerText = data.network_mode;
                     document.getElementById('network_mode').className = `badge ${data.network_mode === 'Station' ? 'badge-success' : 'badge-cyan'}`;
-                    document.getElementById('wifi_ssid').innerText = data.wifi_ssid || 'Non connecté';
+                    
+                    // 1. SSID Wi-Fi
+                    if (data.wifi_ssid && data.wifi_ssid !== 'Non connecté' && data.wifi_ssid !== '') {
+                        document.getElementById('wifi_ssid').innerHTML = data.wifi_ssid + getStatusSvg('green');
+                    } else {
+                        document.getElementById('wifi_ssid').innerHTML = 'Non connecté' + getStatusSvg('red');
+                    }
+                    
                     document.getElementById('wifi_rssi').innerText = data.wifi_rssi ? `${data.wifi_rssi} dBm` : '- dBm';
                     document.getElementById('ip_addr').innerText = data.ip_addr || '0.0.0.0';
-                    document.getElementById('gateway_addr').innerText = data.gateway_addr || '0.0.0.0';
-                    document.getElementById('sys_time').innerText = data.sys_time || '1970-01-01 00:00:00';
-                    document.getElementById('ntp_server').innerText = data.ntp_server || 'Non configuré';
-                    document.getElementById('prod_version').innerText = data.fw_version || 'Aucun';
-                    document.getElementById('last_ota').innerText = data.last_ota_success || 'Jamais';
+                    
+                    // 2. Gateway (avec ou sans internet)
+                    if (data.gateway_addr && data.gateway_addr !== '0.0.0.0' && data.gateway_addr !== '') {
+                        document.getElementById('gateway_addr').innerHTML = data.gateway_addr + getStatusSvg('green', 'Internet disponible');
+                    } else {
+                        document.getElementById('gateway_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
+                    }
+                    
+                    // 3. Heure système (synchro ou invalide)
+                    let timeSynced = false;
+                    if (data.sys_time && !data.sys_time.startsWith('1970')) {
+                        document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
+                        timeSynced = true;
+                    } else {
+                        document.getElementById('sys_time').innerHTML = (data.sys_time || '1970-01-01 00:00:00') + getStatusSvg('red', 'Invalide / Non synchronisée');
+                    }
+                    
+                    // 4. NTP (accessible, en echec ou injoignable)
+                    if (data.network_mode === 'Station' && timeSynced) {
+                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('green', 'Accessible');
+                    } else if (data.network_mode === 'Station' && !timeSynced) {
+                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('yellow', 'En attente / Échec');
+                    } else {
+                        document.getElementById('ntp_server').innerHTML =  (data.ntp_server || 'wrt.lan') + getStatusSvg('red', 'Hors ligne / AP');
+                    }
+                    
+                    // 5. Firmware (pas de firmware de prod, version deja demarre, derniere version en place)
+                    if (!data.fw_version || data.fw_version === 'empty' || data.fw_version === 'Aucun') {
+                        document.getElementById('prod_version').innerHTML = 'Aucun' + getStatusSvg('yellow', 'En attente de provisionnement');
+                    } else if (data.fw_version.includes('v1.0.0-poc')) {
+                        document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Dernière version en place');
+                    } else {
+                        document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Version démarrée');
+                    }
+                    
+                    // 6. OTA success (jamais, ancien, 12 dernieres heure)
+                    let otaText = 'Jamais' + getStatusSvg('red');
+                    if (data.last_ota_success && !data.last_ota_success.startsWith('1970') && data.last_ota_success !== 'Jamais' && data.last_ota_success !== 'empty') {
+                        try {
+                            const otaDate = new Date(data.last_ota_success);
+                            const sysDate = new Date(data.sys_time);
+                            const diffMs = Math.abs(sysDate - otaDate);
+                            const diffHours = diffMs / (1000 * 60 * 60);
+                            if (diffHours <= 12) {
+                                otaText = data.last_ota_success + getStatusSvg('green', 'Récente, < 12h');
+                            } else {
+                                otaText = data.last_ota_success + getStatusSvg('yellow', 'Ancienne, > 12h');
+                            }
+                        } catch (e) {
+                            otaText = data.last_ota_success + getStatusSvg('yellow');
+                        }
+                    }
+                    document.getElementById('last_ota').innerHTML = otaText;
+
                     
                     if (document.getElementById('update_url') && data.update_url) {
                         document.getElementById('update_url').value = data.update_url;

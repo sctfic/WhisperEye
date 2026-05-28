@@ -43,7 +43,7 @@ Le firmware doit s'assurer du cycle de vie des variables clés suivantes. Si la 
 * `fw_version` (String) : `"empty"`
 * `last_download` (String) : `"1970-01-01T00:00:00Z"`
 * `last_ota_success` (String) : `"1970-01-01T00:00:00Z"`
-* `update_url` (String) : `"https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.bin"`
+* `update_url` (String) : `"https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.json"`
 * `ota_retry` (i32) : `-1`
 
 ---

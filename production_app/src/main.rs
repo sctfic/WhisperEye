@@ -4,13 +4,13 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::http::server::{EspHttpServer, Configuration as ServerConfig};
 use esp_idf_svc::sntp::EspSntp;
-use esp_idf_svc::systime::EspSystemTime;
+// use esp_idf_svc::systime::EspSystemTime;
 use anyhow::{Result, Context};
-use log::{info, error, warn};
+use log::{info, warn};
 use std::time::SystemTime;
 use std::thread;
 use std::sync::{Arc, Mutex};
-use std::io::Read;
+// use std::io::Read;
 
 mod wifi;
 mod sensors;
@@ -26,6 +26,7 @@ struct ConfigPayload {
     wifi_ssid: String,
     wifi_psk: String,
     update_url: String,
+    update_interval: String,
 }
 
 fn main() -> Result<()> {
@@ -58,12 +59,35 @@ fn main() -> Result<()> {
     // Initialize Wi-Fi
     let mut wifi_manager = WifiManager::new(peripherals, sys_loop.clone(), nvs_default)?;
     
-    let connected = wifi_manager.start_sta(&ssid, &psk)?;
+    // Perform initial scan before any connection attempts
+    let _ = wifi_manager.perform_initial_scan();
+    
+    let mut connected = wifi_manager.start_sta(&ssid, &psk).unwrap_or(false);
+    
+    if connected {
+        if let Ok(mut storage) = nvs_storage.lock() {
+            let _ = storage.add_known_network(&ssid, &psk);
+        }
+    } else {
+        info!("Default Wi-Fi failed. Trying known networks from NVS...");
+        let known_networks = {
+            let storage = nvs_storage.lock().unwrap();
+            storage.get_known_networks().unwrap_or_default()
+        };
+        for (known_ssid, known_psk) in known_networks {
+            if known_ssid == ssid { continue; }
+            info!("Trying known network: {}", known_ssid);
+            if wifi_manager.start_sta(&known_ssid, &known_psk).unwrap_or(false) {
+                connected = true;
+                break;
+            }
+        }
+    }
     
     let network_mode = if connected {
         "Station"
     } else {
-        warn!("STA Connection failed. Falling back to Access Point captive mode...");
+        warn!("All STA Connections failed. Falling back to Access Point captive mode...");
         wifi_manager.start_ap()?;
         "AccessPoint"
     };
@@ -147,8 +171,9 @@ fn main() -> Result<()> {
         let wifi_ssid = storage.get_str("wifiSsid")?.unwrap_or_default();
         let ntp_server = storage.get_str("ntpServer")?.unwrap_or_default();
         let fw_version = storage.get_str("fwVersion")?.unwrap_or_else(|| "v1.0.0-poc".to_string());
-        let last_ota_success = storage.get_str("lastOtaOk")?.unwrap_or_default();
+        let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
         let update_url = storage.get_str("updateUrl")?.unwrap_or_default();
+        let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "30j".to_string());
 
         let json = serde_json::json!({
             "network_mode": network_mode,
@@ -160,7 +185,8 @@ fn main() -> Result<()> {
             "ntp_server": ntp_server,
             "fw_version": fw_version,
             "last_ota_success": last_ota_success,
-            "update_url": update_url
+            "update_url": update_url,
+            "update_interval": update_interval
         });
 
         let response_data = serde_json::to_string(&json)?;
@@ -173,7 +199,6 @@ fn main() -> Result<()> {
     let wifi_scan_clone = Arc::clone(&wifi_manager);
     server.fn_handler("/api/ssids", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let mut wifi = wifi_scan_clone.lock().unwrap();
-        info!("Initiating active Wi-Fi scan...");
         let ssids = match wifi.wifi.scan() {
             Ok(ap_list) => {
                 let mut list: Vec<String> = ap_list.into_iter()
@@ -182,12 +207,16 @@ fn main() -> Result<()> {
                     .collect();
                 list.sort();
                 list.dedup();
-                info!("Scan successful: found {} networks.", list.len());
+                wifi.scan_cache = list.clone();
                 list
             }
-            Err(e) => {
-                warn!("Active Wi-Fi scan failed: {:?}. Returning mock fallback list.", e);
-                vec!["IoT".to_string(), "Maison_WiFi".to_string(), "WhisperEye-Mesh".to_string(), "Freebox-Private".to_string()]
+            Err(_) => {
+                // In AP mode, active scan fails (ESP_FAIL). Return the boot-time cache quietly.
+                let mut fallback = wifi.scan_cache.clone();
+                if fallback.is_empty() {
+                    fallback = vec!["IoT".to_string(), "Maison_WiFi".to_string(), "WhisperEye-Mesh".to_string(), "Freebox-Private".to_string()];
+                }
+                fallback
             }
         };
         let response_data = serde_json::to_string(&ssids)?;
@@ -239,6 +268,7 @@ fn main() -> Result<()> {
             storage.set_str("wifiSsid", &payload.wifi_ssid)?;
             storage.set_str("wifiPsk", &payload.wifi_psk)?;
             storage.set_str("updateUrl", &payload.update_url)?;
+            storage.set_str("updateInterval", &payload.update_interval)?;
             
             // Restart condition: different or new update URL is set
             !payload.update_url.is_empty() && payload.update_url != current_url

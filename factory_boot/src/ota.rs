@@ -2,8 +2,8 @@ use esp_idf_svc::ota::EspOta;
 use esp_idf_svc::http::client::{EspHttpConnection, Configuration};
 use embedded_svc::http::Headers;
 use anyhow::{Result, Context, anyhow};
-use log::{info, error};
-use std::io::Read;
+use log::{info};
+// use std::io::Read;
 
 pub fn perform_ota(update_url: &str) -> Result<()> {
     info!("Starting automatic OTA from URL: {}", update_url);

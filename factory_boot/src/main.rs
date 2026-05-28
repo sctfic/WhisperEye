@@ -4,14 +4,14 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::http::server::{EspHttpServer, Configuration as ServerConfig};
 use esp_idf_svc::sntp::EspSntp;
-use esp_idf_svc::systime::EspSystemTime;
+// use esp_idf_svc::systime::EspSystemTime;
 use esp_idf_svc::ota::EspOta;
 use anyhow::{Result, Context, anyhow};
 use log::{info, error, warn};
 use std::time::SystemTime;
 use std::thread;
 use std::sync::{Arc, Mutex};
-use std::io::Read;
+// use std::io::Read;
 
 mod wifi;
 mod ota;
@@ -50,12 +50,35 @@ fn main() -> Result<()> {
     // Initialize Wi-Fi
     let mut wifi_manager = WifiManager::new(peripherals, sys_loop.clone(), nvs_default)?;
     
-    let connected = wifi_manager.start_sta(&ssid, &psk)?;
+    // Perform initial scan before any connection attempts
+    let _ = wifi_manager.perform_initial_scan();
+    
+    let mut connected = wifi_manager.start_sta(&ssid, &psk).unwrap_or(false);
+    
+    if connected {
+        if let Ok(mut storage) = nvs_storage.lock() {
+            let _ = storage.add_known_network(&ssid, &psk);
+        }
+    } else {
+        info!("Default Wi-Fi failed. Trying known networks from NVS...");
+        let known_networks = {
+            let storage = nvs_storage.lock().unwrap();
+            storage.get_known_networks().unwrap_or_default()
+        };
+        for (known_ssid, known_psk) in known_networks {
+            if known_ssid == ssid { continue; }
+            info!("Trying known network: {}", known_ssid);
+            if wifi_manager.start_sta(&known_ssid, &known_psk).unwrap_or(false) {
+                connected = true;
+                break;
+            }
+        }
+    }
     
     let network_mode = if connected {
         "Station"
     } else {
-        warn!("STA Connection failed. Falling back to Access Point captive mode...");
+        warn!("All STA Connections failed. Falling back to Access Point captive mode...");
         wifi_manager.start_ap()?;
         "AccessPoint"
     };
@@ -93,8 +116,8 @@ fn main() -> Result<()> {
                             // Update NVS keys
                             if let Ok(mut storage) = nvs_clone.lock() {
                                 let now_str = get_formatted_time();
-                                let _ = storage.set_str("lastDownload", &now_str);
-                                let _ = storage.set_str("lastOtaOk", "1970-01-01T00:00:00Z");
+                                 let _ = storage.set_str("lastOtaDl", &now_str);
+                                 let _ = storage.set_str("lastOtaSuccess", "1970-01-01T00:00:00Z");
                                 let _ = storage.set_str("fwVersion", "empty");
                             }
                             info!("OTA completed successfully. Rebooting into Production Firmware!");
@@ -112,8 +135,10 @@ fn main() -> Result<()> {
         });
     }
 
-    // Start HTTP Web Server
-    let mut server = EspHttpServer::new(&ServerConfig::default())
+    // Start HTTP Web Server with wildcard URI matching enabled
+    let mut server_config = ServerConfig::default();
+    server_config.uri_match_wildcard = true;
+    let mut server = EspHttpServer::new(&server_config)
         .context("Failed to start HTTP server")?;
 
     // GET / (Main HTML Dashboard)
@@ -125,25 +150,25 @@ fn main() -> Result<()> {
 
     // Captive Portal HTTP Redirects for Mobile Auto-Popup (iOS, Android, Windows)
     server.fn_handler("/generate_204", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/hotspot-detect.html", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/ncsi.txt", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/connecttest.txt", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
@@ -174,7 +199,7 @@ fn main() -> Result<()> {
         let wifi_ssid = storage.get_str("wifiSsid")?.unwrap_or_default();
         let ntp_server = storage.get_str("ntpServer")?.unwrap_or_default();
         let fw_version = storage.get_str("fwVersion")?.unwrap_or_default();
-        let last_ota_success = storage.get_str("lastOtaOk")?.unwrap_or_default();
+        let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
         let update_url = storage.get_str("updateUrl")?.unwrap_or_default();
 
         let json = serde_json::json!({
@@ -200,7 +225,6 @@ fn main() -> Result<()> {
     let wifi_scan_clone = Arc::clone(&wifi_manager);
     server.fn_handler("/api/ssids", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let mut wifi = wifi_scan_clone.lock().unwrap();
-        info!("Initiating active Wi-Fi scan...");
         let ssids = match wifi.wifi.scan() {
             Ok(ap_list) => {
                 let mut list: Vec<String> = ap_list.into_iter()
@@ -209,17 +233,28 @@ fn main() -> Result<()> {
                     .collect();
                 list.sort();
                 list.dedup();
-                info!("Scan successful: found {} networks.", list.len());
+                wifi.scan_cache = list.clone();
                 list
             }
-            Err(e) => {
-                warn!("Active Wi-Fi scan failed: {:?}. Returning mock fallback list.", e);
-                vec!["IoT".to_string(), "Maison_WiFi".to_string(), "WhisperEye-Mesh".to_string(), "Freebox-Private".to_string()]
+            Err(_) => {
+                // In AP mode, active scan fails (ESP_FAIL). Return the boot-time cache quietly.
+                let mut fallback = wifi.scan_cache.clone();
+                if fallback.is_empty() {
+                    fallback = vec!["IoT".to_string(), "Maison_WiFi".to_string(), "WhisperEye-Mesh".to_string(), "Freebox-Private".to_string()];
+                }
+                fallback
             }
         };
         let response_data = serde_json::to_string(&ssids)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
+    // GET /* Catch-all wildcard redirect to captive portal for any other GET requests
+    server.fn_handler("/*", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
+        response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
@@ -247,7 +282,7 @@ fn main() -> Result<()> {
                 Ok(_) => {
                     if let Ok(mut storage) = nvs_thread.lock() {
                         let now_str = get_formatted_time();
-                        let _ = storage.set_str("lastDownload", &now_str);
+                        let _ = storage.set_str("lastOtaDl", &now_str);
                     }
                     info!("OTA Succeeded. Rebooting...");
                     thread::sleep(std::time::Duration::from_secs(1));
@@ -324,7 +359,7 @@ fn get_formatted_time() -> String {
     let secs = total_secs % 60;
     let mins = (total_secs / 60) % 60;
     let hours = (total_secs / 3600) % 24;
-    let days = total_secs / 86400;
+    // let days = total_secs / 86400;
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }

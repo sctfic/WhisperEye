@@ -10,6 +10,7 @@ use std::thread;
 
 pub struct WifiManager {
     pub wifi: BlockingWifi<EspWifi<'static>>,
+    pub scan_cache: Vec<String>,
 }
 
 impl WifiManager {
@@ -17,7 +18,30 @@ impl WifiManager {
         let esp_wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))
             .context("Failed to create EspWifi")?;
         let wifi = BlockingWifi::wrap(esp_wifi, sys_loop)?;
-        Ok(Self { wifi })
+        Ok(Self { wifi, scan_cache: Vec::new() })
+    }
+
+    pub fn perform_initial_scan(&mut self) -> Result<()> {
+        info!("Performing boot-time active Wi-Fi scan...");
+        let config = Configuration::Client(ClientConfiguration::default());
+        let _ = self.wifi.set_configuration(&config);
+        let _ = self.wifi.start();
+        match self.wifi.scan() {
+            Ok(list) => {
+                let mut ssids: Vec<String> = list.into_iter()
+                    .map(|n| n.ssid.to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                ssids.sort();
+                ssids.dedup();
+                info!("Boot-time scan successful: found {} networks.", ssids.len());
+                self.scan_cache = ssids;
+            }
+            Err(e) => {
+                warn!("Boot-time active Wi-Fi scan failed: {:?}", e);
+            }
+        }
+        Ok(())
     }
 
     pub fn start_sta(&mut self, ssid: &str, psk: &str) -> Result<bool> {
@@ -85,7 +109,7 @@ impl WifiManager {
     }
 }
 
-/// Simple UDP DNS server that intercepts all queries and responds with 192.168.4.1
+/// Simple UDP DNS server that intercepts all queries and responds with 192.168.71.1
 fn run_captive_dns_server() -> Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:53").context("Could not bind DNS port 53")?;
     info!("Captive DNS Server running on UDP port 53...");
@@ -138,7 +162,7 @@ fn run_captive_dns_server() -> Result<()> {
                 // Copy queries (questions section)
                 response.extend_from_slice(&buf[12..q_idx]);
                 
-                // Append answers for each question pointing to 192.168.4.1
+                // Append answers for each question pointing to 192.168.71.1
                 let mut current_offset = 12;
                 for _ in 0..questions {
                     // Answer name pointer to the corresponding query name
@@ -150,8 +174,8 @@ fn run_captive_dns_server() -> Result<()> {
                     response.extend_from_slice(&[0x00, 0x00, 0x00, 0x3c]);
                     // Data length: 4 bytes
                     response.extend_from_slice(&[0x00, 0x04]);
-                    // Address: 192.168.4.1
-                    response.extend_from_slice(&[192, 168, 4, 1]);
+                    // Address: 192.168.71.1
+                    response.extend_from_slice(&[192, 168, 71, 1]);
                     
                     // Advance pointer offset
                     while current_offset < size && buf[current_offset] != 0 {
