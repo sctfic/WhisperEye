@@ -11,6 +11,7 @@ pub fn perform_ota(update_url: &str) -> Result<()> {
     // 1. Initialize HTTP Connection
     let config = Configuration {
         buffer_size: Some(2048), // Keep memory footprint small
+        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
         ..Default::default()
     };
     

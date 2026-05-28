@@ -102,4 +102,49 @@ impl NvsStorage {
         self.nvs.set_i32(key, val).context(format!("Failed to set NVS i32 key {}", key))?;
         Ok(())
     }
+
+    pub fn dump_to_log(&self) -> Result<()> {
+        info!("=== NVS STORAGE DUMP ===");
+        let keys_str = &[
+            "wifiSsid",
+            "wifiPsk",
+            "totpSecret",
+            "ntpServer",
+            "fwVersion",
+            "lastOtaDl",
+            "lastOtaSuccess",
+            "updateAvailable",
+            "updateDlUrl",
+            "wifiKnown",
+            "nextCheck",
+        ];
+        for key in keys_str {
+            match self.get_str(key) {
+                Ok(Some(val)) => {
+                    if *key == "wifiPsk" || *key == "totpSecret" {
+                        if val.len() > 4 {
+                            info!("  {} : \"{}***{}\"", key, &val[..2], &val[val.len()-2..]);
+                        } else {
+                            info!("  {} : \"[hidden]\"", key);
+                        }
+                    } else {
+                        info!("  {} : \"{}\"", key, val);
+                    }
+                }
+                Ok(None) => info!("  {} : [not set]", key),
+                Err(e) => info!("  {} : Error({:?})", key, e),
+            }
+        }
+        
+        let keys_i32 = &["otaRetry"];
+        for key in keys_i32 {
+            match self.get_i32(key) {
+                Ok(Some(val)) => info!("  {} : {}", key, val),
+                Ok(None) => info!("  {} : [not set]", key),
+                Err(e) => info!("  {} : Error({:?})", key, e),
+            }
+        }
+        info!("========================");
+        Ok(())
+    }
 }

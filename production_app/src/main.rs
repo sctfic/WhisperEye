@@ -42,12 +42,13 @@ fn main() -> Result<()> {
     // Initialize NVS Storage helper
     let nvs_storage = Arc::new(Mutex::new(NvsStorage::new(nvs_default.clone())?));
     
-    // Set version name in NVS if it is still empty
+    // Set version name in NVS if it is still empty & dump values to logs
     {
         let mut storage = nvs_storage.lock().unwrap();
         if storage.get_str("fwVersion")?.unwrap_or_else(|| "empty".to_string()) == "empty" {
             let _ = storage.set_str("fwVersion", "v1.0.0-poc");
         }
+        let _ = storage.dump_to_log();
     }
 
     // Read SSID, PSK from NVS
@@ -104,14 +105,17 @@ fn main() -> Result<()> {
             warn!("Failed to initialize SNTP service");
         }
         
-        // Spawn background update check on successful boot connection
+        // Spawn background update check on successful boot connection with a robust stack size (32KB) to prevent stack overflow
         let nvs_clone = Arc::clone(&nvs_storage);
-        thread::spawn(move || {
-            thread::sleep(std::time::Duration::from_secs(5));
-            if let Err(e) = check_and_trigger_ota(nvs_clone) {
-                warn!("Error in background update check: {:?}", e);
-            }
-        });
+        let _ = thread::Builder::new()
+            .name("boot_ota_check".to_string())
+            .stack_size(32768)
+            .spawn(move || {
+                thread::sleep(std::time::Duration::from_secs(5));
+                if let Err(e) = check_and_trigger_ota(nvs_clone) {
+                    warn!("Error in background update check: {:?}", e);
+                }
+            });
 
         sntp.ok()
     } else {
@@ -230,6 +234,7 @@ fn main() -> Result<()> {
         // Fetch JSON from update_url on ESP32 side to bypass CORS!
         let config = esp_idf_svc::http::client::Configuration {
             buffer_size: Some(2048),
+            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
             ..Default::default()
         };
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
@@ -459,12 +464,15 @@ fn main() -> Result<()> {
 
         if should_restart {
             info!("Configuration updated. Restaring ESP32 back to factory_boot to execute update...");
-            thread::spawn(|| {
-                thread::sleep(std::time::Duration::from_secs(2));
-                unsafe {
-                    esp_idf_sys::esp_restart();
-                }
-            });
+            let _ = thread::Builder::new()
+                .name("restart_worker".to_string())
+                .stack_size(4096)
+                .spawn(|| {
+                    thread::sleep(std::time::Duration::from_secs(2));
+                    unsafe {
+                        esp_idf_sys::esp_restart();
+                    }
+                });
         } else {
             info!("Configuration updated. No OTA URL modification, running in place.");
         }
@@ -506,6 +514,7 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
 
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(2048),
+        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
         ..Default::default()
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)

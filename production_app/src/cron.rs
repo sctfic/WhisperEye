@@ -3,7 +3,7 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
 use std::time::{SystemTime, Duration};
 use log::{info, warn};
-use anyhow::Result;
+use anyhow::{Result, Context};
 use common::nvs_storage::NvsStorage;
 use crate::sensors::{read_sensors, SensorReadings};
 
@@ -146,6 +146,7 @@ impl CronWorker {
         
         let config = esp_idf_svc::http::client::Configuration {
             buffer_size: Some(2048),
+            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
             ..Default::default()
         };
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
@@ -248,12 +249,16 @@ impl CronHandle {
 pub fn spawn_cron_scheduler(nvs: Arc<Mutex<NvsStorage>>) -> Result<CronHandle> {
     let (tx, rx) = channel();
     
-    // 1. Spawn Worker Thread
+    // 1. Spawn Worker Thread with a larger stack size (32KB) to prevent stack overflow
     let worker_nvs = Arc::clone(&nvs);
-    thread::spawn(move || {
-        let worker = CronWorker::new(rx, worker_nvs);
-        worker.run();
-    });
+    thread::Builder::new()
+        .name("cron_worker".to_string())
+        .stack_size(32768)
+        .spawn(move || {
+            let worker = CronWorker::new(rx, worker_nvs);
+            worker.run();
+        })
+        .context("Failed to spawn cron worker thread")?;
     
     // 2. Spawn Tick generator thread (sends a Tick message every second)
     let tick_tx = tx.clone();

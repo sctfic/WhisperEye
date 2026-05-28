@@ -395,9 +395,18 @@
         <div id="config-tab" class="tab-content">
             <div class="form-group">
                 <label for="ssid_select">Réseau Wi-Fi (SSID)</label>
-                <select id="ssid_select" onchange="toggleCustomSsid()">
-                    <option value="custom">-- Saisir un SSID --</option>
-                </select>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <select id="ssid_select" onchange="toggleCustomSsid()">
+                        <option value="custom">-- Saisir un SSID --</option>
+                    </select>
+                    <button type="button" onclick="scanSsids()" id="ssid_refresh_btn" style="width: auto; padding: 0.75rem 1rem; background-color: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;" onmouseover="this.style.borderColor='var(--accent-color)'; this.style.color='var(--accent-color)'" onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-primary)'" title="Actualiser la liste des réseaux">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
 
             <div class="form-group" id="ssid_custom_group" style="display: block;">
@@ -567,9 +576,9 @@
             }
         }
 
-        function showMessage(elementId, text, type) {
+        function showMessage(elementId, html, type) {
             const el = document.getElementById(elementId);
-            el.innerText = text;
+            el.innerHTML = html;
             el.style.display = 'block';
             el.className = `status-message ${type === 'success' ? 'status-success' : 'status-error'}`;
         }
@@ -677,6 +686,7 @@
             const passwordInput = document.getElementById('password');
             const applyBtn = document.getElementById('wifi_apply_btn');
             const otaBtn = document.getElementById('wifi_ota_btn');
+            const refreshBtn = document.getElementById('ssid_refresh_btn');
 
             // Griser les champs Wi-Fi pendant le scan
             select.disabled = true;
@@ -684,6 +694,7 @@
             passwordInput.disabled = true;
             if (applyBtn) applyBtn.disabled = true;
             if (otaBtn) otaBtn.disabled = true;
+            if (refreshBtn) refreshBtn.disabled = true;
 
             fetch('/api/ssids')
                 .then(res => res.json())
@@ -716,6 +727,7 @@
                     passwordInput.disabled = false;
                     if (applyBtn) applyBtn.disabled = false;
                     if (otaBtn) otaBtn.disabled = false;
+                    if (refreshBtn) refreshBtn.disabled = false;
                 });
         }
 
@@ -752,7 +764,7 @@
                     if (res.ok) {
                         const successMsg = rebootOrOta
                             ? 'Configuration enregistrée. L\'ESP32 tente de se connecter et lance la mise à jour OTA !'
-                            : 'Configuration Wi-Fi appliquée avec succès !';
+                            : `Configuration Wi-Fi appliquée avec succès ! Reconnectez-vous sur le réseau <strong>"${ssid}"</strong> pour accéder à ce WhisperEye.`;
                         showMessage('config_status', successMsg, 'success');
                     } else {
                         showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
@@ -906,6 +918,7 @@
 
         // Initial fetch
         fetchStatus();
+        scanSsids();
         setInterval(fetchStatus, 5000);
     </script>
 </body>

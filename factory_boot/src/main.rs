@@ -41,6 +41,12 @@ fn main() -> Result<()> {
     // Initialize NVS Storage helper
     let nvs_storage = Arc::new(Mutex::new(NvsStorage::new(nvs_default.clone())?));
     
+    // Dump NVS variables to logs
+    {
+        let storage = nvs_storage.lock().unwrap();
+        let _ = storage.dump_to_log();
+    }
+    
     // Read SSID, PSK from NVS
     let (ssid, psk) = {
         let storage = nvs_storage.lock().unwrap();
@@ -102,9 +108,12 @@ fn main() -> Result<()> {
     // Spawn automatic OTA update thread if connected in STA mode
     if connected {
         let nvs_clone = Arc::clone(&nvs_storage);
-        thread::spawn(move || {
-            // Wait a few seconds for NTP/Time sync and stable networking
-            thread::sleep(std::time::Duration::from_secs(5));
+        let _ = thread::Builder::new()
+            .name("auto_ota_worker".to_string())
+            .stack_size(32768)
+            .spawn(move || {
+                // Wait a few seconds for NTP/Time sync and stable networking
+                thread::sleep(std::time::Duration::from_secs(5));
             
             let mut retry_data = None;
             {
@@ -256,6 +265,7 @@ fn main() -> Result<()> {
         // Fetch JSON from update_url on ESP32 side to bypass CORS!
         let config = esp_idf_svc::http::client::Configuration {
             buffer_size: Some(2048),
+            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
             ..Default::default()
         };
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
@@ -441,37 +451,40 @@ fn main() -> Result<()> {
         if !apply_only {
             info!("New configuration saved to NVS. Starting flash OTA in background...");
             
-            // Spawn OTA in a detached thread, wait 1s before starting to send HTTP 200 ok first
+            // Spawn OTA in a detached thread with a robust stack size (32KB), wait 1s before starting to send HTTP 200 ok first
             let nvs_thread = Arc::clone(&nvs_clone);
-            thread::spawn(move || {
-                thread::sleep(std::time::Duration::from_millis(1000));
-                let update_bin_url = {
-                    let storage = nvs_thread.lock().unwrap();
-                    storage.get_str("updateDlUrl").unwrap_or(None).unwrap_or_default()
-                };
-                if !update_bin_url.is_empty() {
-                    match ota::perform_ota(&update_bin_url) {
-                        Ok(_) => {
-                            if let Ok(mut storage) = nvs_thread.lock() {
-                                let now_str = get_formatted_time();
-                                let _ = storage.set_str("lastOtaDl", &now_str);
-                                let _ = storage.set_str("lastOtaSuccess", &now_str);
-                                let _ = storage.set_i32("otaRetry", -1);
+            let _ = thread::Builder::new()
+                .name("manual_ota_worker".to_string())
+                .stack_size(32768)
+                .spawn(move || {
+                    thread::sleep(std::time::Duration::from_millis(1000));
+                    let update_bin_url = {
+                        let storage = nvs_thread.lock().unwrap();
+                        storage.get_str("updateDlUrl").unwrap_or(None).unwrap_or_default()
+                    };
+                    if !update_bin_url.is_empty() {
+                        match ota::perform_ota(&update_bin_url) {
+                            Ok(_) => {
+                                if let Ok(mut storage) = nvs_thread.lock() {
+                                    let now_str = get_formatted_time();
+                                    let _ = storage.set_str("lastOtaDl", &now_str);
+                                    let _ = storage.set_str("lastOtaSuccess", &now_str);
+                                    let _ = storage.set_i32("otaRetry", -1);
+                                }
+                                info!("OTA Succeeded. Rebooting...");
+                                thread::sleep(std::time::Duration::from_secs(1));
+                                unsafe {
+                                    esp_idf_sys::esp_restart();
+                                }
                             }
-                            info!("OTA Succeeded. Rebooting...");
-                            thread::sleep(std::time::Duration::from_secs(1));
-                            unsafe {
-                                esp_idf_sys::esp_restart();
+                            Err(e) => {
+                                error!("OTA failed after config update: {:?}", e);
                             }
                         }
-                        Err(e) => {
-                            error!("OTA failed after config update: {:?}", e);
-                        }
+                    } else {
+                        error!("No updateDlUrl configured for manual OTA triggering!");
                     }
-                } else {
-                    error!("No updateDlUrl configured for manual OTA triggering!");
-                }
-            });
+                });
         } else {
             info!("Configuration saved to NVS. No OTA run in progress.");
         }
