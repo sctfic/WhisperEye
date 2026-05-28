@@ -16,6 +16,7 @@ mod wifi;
 mod sensors;
 mod actuators;
 mod web_pages;
+mod cron;
 
 use wifi::WifiManager;
 use common::nvs_storage::NvsStorage;
@@ -26,7 +27,8 @@ struct ConfigPayload {
     wifi_ssid: String,
     wifi_psk: String,
     update_url: String,
-    update_interval: String,
+    update_interval: Option<String>,
+    apply_only: Option<bool>,
 }
 
 fn main() -> Result<()> {
@@ -101,10 +103,24 @@ fn main() -> Result<()> {
         if sntp.is_err() {
             warn!("Failed to initialize SNTP service");
         }
+        
+        // Spawn background update check on successful boot connection
+        let nvs_clone = Arc::clone(&nvs_storage);
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_secs(5));
+            if let Err(e) = check_and_trigger_ota(nvs_clone) {
+                warn!("Error in background update check: {:?}", e);
+            }
+        });
+
         sntp.ok()
     } else {
         None
     };
+
+    // Spawn robust periodic task scheduler
+    let cron_handle = cron::spawn_cron_scheduler(Arc::clone(&nvs_storage))
+        .context("Failed to spawn cron periodic task scheduler")?;
 
     // Shared actuator state
     let actuators_state = Arc::new(Mutex::new(ActuatorsState::default()));
@@ -172,8 +188,8 @@ fn main() -> Result<()> {
         let ntp_server = storage.get_str("ntpServer")?.unwrap_or_default();
         let fw_version = storage.get_str("fwVersion")?.unwrap_or_else(|| "v1.0.0-poc".to_string());
         let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
-        let update_url = storage.get_str("updateUrl")?.unwrap_or_default();
-        let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "30j".to_string());
+        let update_url = storage.get_str("updateAvailable")?.unwrap_or_default();
+        let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
 
         let json = serde_json::json!({
             "network_mode": network_mode,
@@ -186,7 +202,9 @@ fn main() -> Result<()> {
             "fw_version": fw_version,
             "last_ota_success": last_ota_success,
             "update_url": update_url,
-            "update_interval": update_interval
+            "update_interval": update_interval,
+            "board_type": "v1.0",
+            "chip_type": "ESP32"
         });
 
         let response_data = serde_json::to_string(&json)?;
@@ -195,8 +213,89 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+    // GET /api/check_updates (proxies firmware.json from updateAvailable NVS key to bypass CORS!)
+    let nvs_updates_clone = Arc::clone(&nvs_storage);
+    server.fn_handler("/api/check_updates", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let update_url = {
+            let storage = nvs_updates_clone.lock().unwrap();
+            storage.get_str("updateAvailable")?.unwrap_or_default()
+        };
+
+        if update_url.is_empty() {
+            let mut response = req.into_status_response(400)?;
+            response.write(b"No update URL configured")?;
+            return Ok(());
+        }
+
+        // Fetch JSON from update_url on ESP32 side to bypass CORS!
+        let config = esp_idf_svc::http::client::Configuration {
+            buffer_size: Some(2048),
+            ..Default::default()
+        };
+        let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
+        connection.initiate_request(esp_idf_svc::http::Method::Get, &update_url, &[])?;
+        connection.initiate_response()?;
+
+        let status = connection.status();
+        if status != 200 {
+            let mut response = req.into_status_response(502)?;
+            response.write(format!("Upstream error: HTTP {}", status).as_bytes())?;
+            return Ok(());
+        }
+
+        let mut body = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            match connection.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => body.extend_from_slice(&chunk[..n]),
+                Err(e) => {
+                    let mut response = req.into_status_response(500)?;
+                    response.write(format!("Read error: {:?}", e).as_bytes())?;
+                    return Ok(());
+                }
+            }
+        }
+
+        let list: serde_json::Value = serde_json::from_slice(&body)?;
+        let mut matched_entry = serde_json::Value::Null;
+        
+        if let Some(arr) = list.as_array() {
+            for entry in arr {
+                let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
+                let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
+                if b_type == "v1.0" && c_type == "ESP32" {
+                    matched_entry = entry.clone();
+                    break;
+                }
+            }
+        }
+
+        let response_data = serde_json::to_string(&matched_entry)?;
+        let mut response = req.into_response(200, Some("OK"), &[
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*")
+        ])?;
+        response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
+    // GET /api/history (returns the sliding metrics history from cron scheduler)
+    let cron_history_clone = cron_handle.clone();
+    server.fn_handler("/api/history", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let history = cron_history_clone.get_sensor_history();
+        let response_data = serde_json::to_string(&history)?;
+        let mut response = req.into_response(200, Some("OK"), &[
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*")
+        ])?;
+        response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
     // GET /api/ssids (Active hardware Wi-Fi scan)
     let wifi_scan_clone = Arc::clone(&wifi_manager);
+    let nvs_ssids_clone = Arc::clone(&nvs_storage);
     server.fn_handler("/api/ssids", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let mut wifi = wifi_scan_clone.lock().unwrap();
         let ssids = match wifi.wifi.scan() {
@@ -219,7 +318,15 @@ fn main() -> Result<()> {
                 fallback
             }
         };
-        let response_data = serde_json::to_string(&ssids)?;
+        let wifi_ssid = {
+            let storage = nvs_ssids_clone.lock().unwrap();
+            storage.get_str("wifiSsid")?.unwrap_or_default()
+        };
+        let response_json = serde_json::json!({
+            "ssids": ssids,
+            "active": wifi_ssid
+        });
+        let response_data = serde_json::to_string(&response_json)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
         Ok(())
@@ -256,22 +363,98 @@ fn main() -> Result<()> {
 
     // POST /api/config (triggers immediate restart to factory_boot if update_url differs)
     let nvs_clone = Arc::clone(&nvs_storage);
+    let wifi_clone = Arc::clone(&wifi_manager);
     server.fn_handler("/api/config", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
         let mut buf = vec![0u8; 512];
         let bytes_read = req.read(&mut buf)?;
         let payload: ConfigPayload = serde_json::from_slice(&buf[..bytes_read])?;
         
+        let ssid = payload.wifi_ssid.trim();
+        let psk = payload.wifi_psk.trim();
+        
+        let mut success = false;
+        let mut final_psk = "".to_string();
+
+        {
+            let mut wifi = wifi_clone.lock().unwrap();
+            let mut storage = nvs_clone.lock().unwrap();
+            
+            if psk.is_empty() {
+                // Check if it is in known networks
+                let known_networks = storage.get_known_networks().unwrap_or_default();
+                if let Some((_, saved_psk)) = known_networks.iter().find(|(s, _)| s == ssid) {
+                    info!("SSID '{}' is known. Testing connection with saved key.", ssid);
+                    final_psk = saved_psk.clone();
+                    if wifi.start_sta(ssid, &final_psk).unwrap_or(false) {
+                        success = true;
+                    }
+                }
+                if !success {
+                    info!("Saved key failed or not found. Testing connection to SSID '{}' without key.", ssid);
+                    final_psk = "".to_string();
+                    if wifi.start_sta(ssid, "").unwrap_or(false) {
+                        success = true;
+                    }
+                }
+            } else {
+                // PSK is provided
+                info!("Testing connection to SSID '{}' with provided key.", ssid);
+                final_psk = psk.to_string();
+                if wifi.start_sta(ssid, &final_psk).unwrap_or(false) {
+                    success = true;
+                } else {
+                    info!("Provided key failed. Testing connection to SSID '{}' without key.", ssid);
+                    final_psk = "".to_string();
+                    if wifi.start_sta(ssid, "").unwrap_or(false) {
+                        success = true;
+                    }
+                }
+            }
+            
+            if success {
+                info!("Connection successful to SSID '{}'. Saving to NVS...", ssid);
+                storage.set_str("wifiSsid", ssid)?;
+                storage.set_str("wifiPsk", &final_psk)?;
+                
+                // Add to wifiKnown if not already known
+                let known_networks = storage.get_known_networks().unwrap_or_default();
+                let already_known = known_networks.iter().any(|(s, _)| s == ssid);
+                if !already_known {
+                    info!("SSID '{}' was not known. Adding to known networks.", ssid);
+                    storage.add_known_network(ssid, &final_psk)?;
+                }
+            } else {
+                warn!("Wi-Fi connection to '{}' failed. Restarting Access Point...", ssid);
+                let _ = wifi.start_ap();
+            }
+        }
+        
+        if !success {
+            let mut response = req.into_status_response(400)?;
+            response.write(b"WiFi Connection Failed")?;
+            return Ok(());
+        }
+
         let should_restart = {
             let mut storage = nvs_clone.lock().unwrap();
-            let current_url = storage.get_str("updateUrl")?.unwrap_or_default();
+            let current_url = storage.get_str("updateAvailable")?.unwrap_or_default();
             
-            storage.set_str("wifiSsid", &payload.wifi_ssid)?;
-            storage.set_str("wifiPsk", &payload.wifi_psk)?;
-            storage.set_str("updateUrl", &payload.update_url)?;
-            storage.set_str("updateInterval", &payload.update_interval)?;
+            let is_bin = payload.update_url.ends_with(".bin");
+            if is_bin {
+                storage.set_str("updateDlUrl", &payload.update_url)?;
+                storage.set_i32("otaRetry", 3)?;
+            } else {
+                storage.set_str("updateAvailable", &payload.update_url)?;
+            }
+            storage.set_str("updateInterval", "7j")?;
             
-            // Restart condition: different or new update URL is set
-            !payload.update_url.is_empty() && payload.update_url != current_url
+            // Restart condition: different or new update URL is set, and NOT apply_only
+            let apply_only = payload.apply_only.unwrap_or(false);
+            if apply_only {
+                false
+            } else {
+                !payload.update_url.is_empty() && (is_bin || payload.update_url != current_url)
+            }
         };
 
         if should_restart {
@@ -295,6 +478,111 @@ fn main() -> Result<()> {
     loop {
         thread::sleep(std::time::Duration::from_secs(60));
     }
+}
+
+fn parse_version(v: &str) -> (u32, u32, u32) {
+    let clean = v.trim().trim_start_matches('v');
+    let parts: Vec<&str> = clean.split(|c| c == '.' || c == '-').collect();
+    let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (major, minor, patch)
+}
+
+fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
+    let (update_available_url, current_fw) = {
+        let storage = nvs.lock().unwrap();
+        let url = storage.get_str("updateAvailable")?.unwrap_or_default();
+        let fw = storage.get_str("fwVersion")?.unwrap_or_else(|| "v1.0.0-poc".to_string());
+        (url, fw)
+    };
+
+    if update_available_url.is_empty() {
+        info!("No updateAvailable URL configured in NVS.");
+        return Ok(());
+    }
+
+    info!("Checking for updates at: {}", update_available_url);
+
+    let config = esp_idf_svc::http::client::Configuration {
+        buffer_size: Some(2048),
+        ..Default::default()
+    };
+    let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)
+        .context("Failed to create HTTP connection")?;
+    
+    connection.initiate_request(esp_idf_svc::http::Method::Get, &update_available_url, &[])
+        .context("Failed to initiate request")?;
+    
+    connection.initiate_response()
+        .context("Failed to get response")?;
+    
+    let status = connection.status();
+    if status != 200 {
+        return Err(anyhow::anyhow!("Failed fetching update JSON: HTTP {}", status));
+    }
+
+    let mut body = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        match connection.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => body.extend_from_slice(&chunk[..n]),
+            Err(e) => return Err(anyhow::anyhow!("Error reading JSON: {:?}", e)),
+        }
+    }
+
+    let list: serde_json::Value = serde_json::from_slice(&body)
+        .context("Failed to parse updateAvailable JSON")?;
+    
+    let mut new_stable_url = None;
+    let mut new_version = None;
+
+    if let Some(arr) = list.as_array() {
+        for entry in arr {
+            let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
+            let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
+            if b_type == "v1.0" && c_type == "ESP32" {
+                if let Some(obj) = entry.as_object() {
+                    for (key, val) in obj {
+                        if key != "boardType" && key != "ChipType" && key != "peripheriques" {
+                            if let Some(stable) = val.get("stable").and_then(|v| v.as_bool()) {
+                                if stable {
+                                    if let Some(ver_str) = val.get("version").and_then(|v| v.as_str()) {
+                                        if let Some(url_str) = val.get("url").and_then(|v| v.as_str()) {
+                                            if parse_version(ver_str) > parse_version(&current_fw) {
+                                                new_stable_url = Some(url_str.to_string());
+                                                new_version = Some(ver_str.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let (Some(url), Some(ver)) = (new_stable_url, new_version) {
+        info!("New stable version found: {} (URL: {}). Triggering reboot to factory...", ver, url);
+        {
+            let mut storage = nvs.lock().unwrap();
+            storage.set_str("updateDlUrl", &url)?;
+            storage.set_i32("otaRetry", 3)?;
+        }
+        
+        info!("OTA Retry set to 3. Rebooting ESP32 into factory partition in 2 seconds...");
+        thread::sleep(std::time::Duration::from_secs(2));
+        unsafe {
+            esp_idf_sys::esp_restart();
+        }
+    } else {
+        info!("No newer stable version found. Current: {}", current_fw);
+    }
+
+    Ok(())
 }
 
 fn get_formatted_time() -> String {

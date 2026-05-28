@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhisperEye - Secours & Provisionnement</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --accent-color: #06b6d4;
+            --accent-hover: #0891b2;
+            --secondary-accent: #3b82f6;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --border-color: #334155;
+            --success: #10b981;
+            --error: #ef4444;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-color) 0%, var(--secondary-accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .tabs {
+            display: flex;
+            background-color: rgba(15, 23, 42, 0.5);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 1rem;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+            border-bottom: 2px solid transparent;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-primary);
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .tab-btn.active {
+            color: var(--accent-color);
+            border-bottom-color: var(--accent-color);
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-content {
+            padding: 2rem;
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .info-group {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.8rem 0;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+        }
+
+        .info-group:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .info-value {
+            font-weight: 600;
+            color: var(--text-primary);
+            text-align: right;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.35rem;
+        }
+
+        .badge {
+            padding: 0.25rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .badge-cyan {
+            background-color: rgba(6, 182, 212, 0.15);
+            color: var(--accent-color);
+        }
+
+        .badge-success {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+        }
+
+        .badge-error {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+        }
+
+        .badge-warn {
+            background-color: rgba(245, 158, 11, 0.15);
+            color: var(--warning);
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: var(--accent-color);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 0.85rem 1.5rem;
+            background-color: var(--accent-color);
+            color: #000;
+            font-weight: 700;
+            font-size: 1rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .file-upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 2.5rem 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s ease;
+            position: relative;
+        }
+
+        .file-upload-area:hover {
+            border-color: var(--accent-color);
+        }
+
+        .file-upload-area input[type="file"] {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .progress-container {
+            margin-top: 1.5rem;
+            display: none;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 8px;
+            background-color: var(--border-color);
+            border-radius: 9999px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background-color: var(--accent-color);
+            border-radius: 9999px;
+            transition: width 0.1s ease;
+        }
+
+        .status-message {
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .status-success {
+            background-color: rgba(16, 185, 129, 0.15);
+            border: 1px solid var(--success);
+            color: var(--success);
+            display: block;
+        }
+
+        .status-error {
+            background-color: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--error);
+            color: var(--error);
+            display: block;
+        }
+
+        .pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--accent-color);
+            box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.7);
+            animation: pulse 1.5s infinite;
+            margin-right: 0.5rem;
+        }
+
+        .status-icon {
+            display: inline-block;
+            width: 1.2rem;
+            height: 1.2rem;
+            vertical-align: middle;
+            margin-left: 0.35rem;
+            flex-shrink: 0;
+            transition: all 0.2s ease;
+        }
+
+        .badge .status-icon {
+            margin-left: 0;
+            margin-right: 0.35rem;
+            width: 1rem;
+            height: 1rem;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.7);
+            }
+
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 6px rgba(6, 182, 212, 0);
+            }
+
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(6, 182, 212, 0);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>WhisperEye</h1>
+        <p><span class="pulse"></span>Firmware Secours & Provisionnement (Factory)</p>
+    </header>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('status-tab')">Statut ESP32</button>
+            <button class="tab-btn" onclick="switchTab('config-tab')">Configuration</button>
+            <button class="tab-btn" onclick="switchTab('upload-tab')">Flash Direct</button>
+        </div>
+
+        <!-- TAB 1: STATUS -->
+        <div id="status-tab" class="tab-content active">
+            <div class="info-group">
+                <span class="info-label">État Système</span>
+                <span class="info-value"><span id="system_status_badge" class="badge badge-success"><svg
+                            class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" fill='#10b981' fill-opacity="0.2" stroke='#10b981'
+                                stroke-width="2" />
+                            <path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>Opérationnel</span></span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Mode Réseau</span>
+                <span class="info-value"><span id="network_mode" class="badge badge-cyan">Station</span></span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">SSID Wi-Fi</span>
+                <span class="info-value" id="wifi_ssid">Chargement...</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Force Signal (RSSI)</span>
+                <span class="info-value" id="wifi_rssi_container"><span id="wifi_rssi">- dBm</span></span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Adresse IP</span>
+                <span class="info-value" id="ip_addr">0.0.0.0</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Passerelle (Gateway)</span>
+                <span class="info-value" id="gateway_addr">0.0.0.0</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Heure Système</span>
+                <span class="info-value" id="sys_time">1970-01-01 00:00:00</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">NTP Serveur</span>
+                <span class="info-value" id="ntp_server">wrt.lan</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Firmware Production Actif</span>
+                <span class="info-value" id="prod_version">empty</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Dernière OTA Success</span>
+                <span class="info-value" id="last_ota">1970-01-01 00:00:00</span>
+            </div>
+        </div>
+
+        <!-- TAB 2: CONFIGURATION -->
+        <div id="config-tab" class="tab-content">
+            <div class="form-group">
+                <label for="ssid_select">Réseau Wi-Fi (SSID)</label>
+                <select id="ssid_select" onchange="toggleCustomSsid()">
+                    <option value="custom">-- Saisir un SSID --</option>
+                </select>
+            </div>
+
+            <div class="form-group" id="ssid_custom_group" style="display: block;">
+                <label for="ssid_custom">SSID Wi-Fi Personnalisé</label>
+                <input type="text" id="ssid_custom" placeholder="MonSSIDPerso">
+            </div>
+
+            <div class="form-group">
+                <label for="password">Mot de passe</label>
+                <div style="position: relative; display: flex; align-items: center;">
+                    <input type="password" id="password" placeholder="••••••••" style="padding-right: 2.5rem;">
+                    <span id="toggle_password_icon" onclick="togglePasswordVisibility()" style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;" onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'" onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'" title="Afficher le mot de passe">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                    </span>
+                </div>
+            </div>
+
+            <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 0.75rem;"
+                onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
+            <button id="wifi_ota_btn" class="btn" type="button"
+                style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 2rem;"
+                onclick="saveConfiguration(true)">Sauvegarder & Démarrer l'OTA</button>
+
+            <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+                <label>Mise à Jour du Firmware</label>
+                <button type="button" class="btn"
+                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;"
+                    onclick="checkUpdates()">Vérifier maintenant</button>
+                <div id="updates_list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+
+            <div id="config_status" class="status-message"></div>
+        </div>
+
+        <!-- TAB 3: FLASH DIRECT -->
+        <div id="upload-tab" class="tab-content">
+            <div class="file-upload-area">
+                <p style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">
+                    Glissez & Déposez le fichier de production .bin
+                </p>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem;">
+                    ou cliquez pour parcourir vos fichiers
+                </p>
+                <input type="file" id="firmware_file" accept=".bin" onchange="handleFileSelected()">
+                <div class="badge badge-cyan" id="selected_filename"
+                    style="display: none; width: fit-content; margin: 0 auto;"></div>
+            </div>
+
+            <div class="progress-container" id="progress_container">
+                <div class="progress-bar-bg">
+                    <div class="progress-bar" id="progress_bar"></div>
+                </div>
+                <div
+                    style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-secondary);">
+                    <span id="upload_percentage">0%</span>
+                    <span id="upload_bytes">0 / 0 KB</span>
+                </div>
+            </div>
+
+            <button class="btn" id="upload_btn" style="margin-top: 1.5rem; display: none;" onclick="startManualFlash()">
+                Lancer le Flashage
+            </button>
+            <div id="upload_status" class="status-message"></div>
+        </div>
+    </div>
+
+    <script>
+        function getStatusSvg(type, titleText = "") {
+            const titleAttr = titleText ? ` title="${titleText}"` : "";
+            if (type === 'green') {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"${titleAttr}><circle cx="12" cy="12" r="10" fill='#10b981' fill-opacity="0.2" stroke='#10b981' stroke-width="2"/><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            } else if (type === 'yellow') {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"${titleAttr}><circle cx="12" cy="12" r="10" fill='#f59e0b' fill-opacity="0.2" stroke='#f59e0b' stroke-width="2"/><path d="M12 8V13M12 16H12.01" stroke='#f59e0b' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            } else {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"${titleAttr}><circle cx="12" cy="12" r="10" fill='#ef4444' fill-opacity="0.2" stroke='#ef4444' stroke-width="2"/><path d="M15 9L9 15M9 9L15 15" stroke='#ef4444' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            }
+        }
+
+        function getRssiSvg(rssi) {
+            let color = "#ef4444";
+            let titleText = "Signal faible (1/4)";
+            let bars = 1;
+
+            if (rssi === null || rssi === undefined || rssi === 0 || rssi === "" || rssi === "- dBm" || rssi === "dBm") {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Aucun signal (0/4)"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.5M5 12.5a10.94 10.94 0 0 1 5.83-2.84M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`;
+            }
+
+            const rVal = parseInt(rssi);
+            if (isNaN(rVal)) {
+                return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Aucun signal (0/4)"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.5M5 12.5a10.94 10.94 0 0 1 5.83-2.84M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`;
+            }
+
+            if (rVal >= -60) {
+                color = "#10b981";
+                titleText = `Signal excellent (4/4, ${rVal} dBm)`;
+                bars = 4;
+            } else if (rVal >= -70) {
+                color = "#84cc16";
+                titleText = `Signal bon (3/4, ${rVal} dBm)`;
+                bars = 3;
+            } else if (rVal >= -80) {
+                color = "#f59e0b";
+                titleText = `Signal moyen (2/4, ${rVal} dBm)`;
+                bars = 2;
+            } else {
+                color = "#ef4444";
+                titleText = `Signal faible (1/4, ${rVal} dBm)`;
+                bars = 1;
+            }
+
+            return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="${titleText}">
+                <path d="M4 20v-2" stroke="${bars >= 1 ? color : '#334155'}"/>
+                <path d="M9 20v-6" stroke="${bars >= 2 ? color : '#334155'}"/>
+                <path d="M14 20v-10" stroke="${bars >= 3 ? color : '#334155'}"/>
+                <path d="M19 20V4" stroke="${bars >= 4 ? color : '#334155'}"/>
+            </svg>`;
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+            document.getElementById(tabId).classList.add('active');
+            event.currentTarget.classList.add('active');
+
+            if (tabId === 'status-tab') {
+                fetchStatus();
+            } else if (tabId === 'config-tab') {
+                scanSsids();
+            }
+        }
+
+        function toggleCustomSsid() {
+            const select = document.getElementById('ssid_select');
+            const customGroup = document.getElementById('ssid_custom_group');
+            customGroup.style.display = select.value === 'custom' ? 'block' : 'none';
+        }
+
+        const EYE_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+        const EYE_OFF_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+
+        function togglePasswordVisibility() {
+            const psk = document.getElementById('password');
+            const toggleIcon = document.getElementById('toggle_password_icon');
+            if (psk.type === 'password') {
+                psk.type = 'text';
+                toggleIcon.innerHTML = EYE_OFF_SVG;
+                toggleIcon.setAttribute('title', 'Masquer le mot de passe');
+            } else {
+                psk.type = 'password';
+                toggleIcon.innerHTML = EYE_SVG;
+                toggleIcon.setAttribute('title', 'Afficher le mot de passe');
+            }
+        }
+
+        function handleFileSelected() {
+            const fileInput = document.getElementById('firmware_file');
+            const file = fileInput.files[0];
+            if (file) {
+                const label = document.getElementById('selected_filename');
+                label.innerText = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                label.style.display = 'inline-block';
+                document.getElementById('upload_btn').style.display = 'block';
+            }
+        }
+
+        function showMessage(elementId, text, type) {
+            const el = document.getElementById(elementId);
+            el.innerText = text;
+            el.style.display = 'block';
+            el.className = `status-message ${type === 'success' ? 'status-success' : 'status-error'}`;
+        }
+
+        function fetchStatus() {
+            fetch('/api/status')
+                .then(res => res.json())
+                .then(data => {
+                    window.latestStatusData = data;
+                    window.currentWifiSsid = data.wifi_ssid;
+
+                    // Dynamic system status calculation
+                    let statusText = getStatusSvg('green') + "Opérationnel";
+                    let statusClass = "badge-success";
+                    if (data.network_mode === 'AccessPoint') {
+                        statusText = getStatusSvg('yellow', 'Mode AP') + "Avertissement";
+                        statusClass = "badge-warn";
+                    } else if (data.ip_addr === '0.0.0.0' || !data.wifi_ssid || data.wifi_ssid === 'Non connecté') {
+                        statusText = getStatusSvg('red', 'Déconnecté') + "Erreur";
+                        statusClass = "badge-error";
+                    }
+                    const statusBadge = document.getElementById('system_status_badge');
+                    if (statusBadge) {
+                        statusBadge.innerHTML = statusText;
+                        statusBadge.className = `badge ${statusClass}`;
+                    }
+
+                    document.getElementById('network_mode').innerText = data.network_mode;
+                    document.getElementById('network_mode').className = `badge ${data.network_mode === 'Station' ? 'badge-success' : 'badge-cyan'}`;
+
+                    // SSID Wi-Fi
+                    if (data.wifi_ssid && data.wifi_ssid !== 'Non connecté' && data.wifi_ssid !== '') {
+                        document.getElementById('wifi_ssid').innerHTML = data.wifi_ssid + getStatusSvg('green');
+                    } else {
+                        document.getElementById('wifi_ssid').innerHTML = 'Non connecté' + getStatusSvg('red');
+                    }
+
+                    document.getElementById('wifi_rssi_container').innerHTML = (data.wifi_rssi ? `${data.wifi_rssi} dBm` : '- dBm') + getRssiSvg(data.wifi_rssi);
+
+                    if (data.ip_addr && data.ip_addr !== data.gateway_addr) {
+                        document.getElementById('ip_addr').innerHTML = data.ip_addr + getStatusSvg('green', 'Internet disponible');
+                    } else {
+                        document.getElementById('ip_addr').innerHTML = (data.ip_addr || '0.0.0.0') + getStatusSvg('red', 'Hors ligne');
+                    }
+
+                    // Passerelle (Gateway)
+                    if (data.gateway_addr && data.gateway_addr !== '0.0.0.0' && data.gateway_addr !== '') {
+                        document.getElementById('gateway_addr').innerHTML = data.gateway_addr + getStatusSvg('green', 'Internet disponible');
+                    } else {
+                        document.getElementById('gateway_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
+                    }
+
+                    // Heure Système
+                    let timeSynced = false;
+                    if (data.sys_time && !data.sys_time.startsWith('1970')) {
+                        document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
+                        timeSynced = true;
+                    } else {
+                        document.getElementById('sys_time').innerHTML = (data.sys_time || '1970-01-01 00:00:00') + getStatusSvg('red', 'Invalide / Non synchronisée');
+                    }
+
+                    // NTP Serveur
+                    if (data.network_mode === 'Station' && timeSynced) {
+                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('green', 'Accessible');
+                    } else if (data.network_mode === 'Station' && !timeSynced) {
+                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('yellow', 'En attente / Échec');
+                    } else {
+                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('red', 'Hors ligne / AP');
+                    }
+
+                    // Firmware Production Actif
+                    if (!data.fw_version || data.fw_version === 'empty' || data.fw_version === 'Aucun') {
+                        document.getElementById('prod_version').innerHTML = 'Aucun' + getStatusSvg('yellow', 'En attente de provisionnement');
+                    } else if (data.fw_version.includes('v1.0.0-poc')) {
+                        document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Dernière version en place');
+                    } else {
+                        document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Version démarrée');
+                    }
+
+                    // Dernière OTA Success
+                    let otaText = 'Jamais' + getStatusSvg('red');
+                    if (data.last_ota_success && !data.last_ota_success.startsWith('1970') && data.last_ota_success !== 'Jamais' && data.last_ota_success !== 'empty') {
+                        try {
+                            const otaDate = new Date(data.last_ota_success);
+                            const sysDate = new Date(data.sys_time);
+                            const diffMs = Math.abs(sysDate - otaDate);
+                            const diffHours = diffMs / (1000 * 60 * 60);
+                            if (diffHours <= 12) {
+                                otaText = data.last_ota_success + getStatusSvg('green', 'Récente, < 12h');
+                            } else {
+                                otaText = data.last_ota_success + getStatusSvg('yellow', 'Ancienne, > 12h');
+                            }
+                        } catch (e) {
+                            otaText = data.last_ota_success + getStatusSvg('yellow');
+                        }
+                    }
+                    document.getElementById('last_ota').innerHTML = otaText;
+                })
+                .catch(err => console.error('Erreur status:', err));
+        }
+
+        function scanSsids() {
+            const select = document.getElementById('ssid_select');
+            const customInput = document.getElementById('ssid_custom');
+            const passwordInput = document.getElementById('password');
+            const applyBtn = document.getElementById('wifi_apply_btn');
+            const otaBtn = document.getElementById('wifi_ota_btn');
+
+            // Griser les champs Wi-Fi pendant le scan
+            select.disabled = true;
+            customInput.disabled = true;
+            passwordInput.disabled = true;
+            if (applyBtn) applyBtn.disabled = true;
+            if (otaBtn) otaBtn.disabled = true;
+
+            fetch('/api/ssids')
+                .then(res => res.json())
+                .then(data => {
+                    const ssids = data.ssids || [];
+                    const activeSsid = data.active || window.currentWifiSsid;
+                    if (activeSsid && activeSsid !== 'custom' && activeSsid !== 'Non connecté' && activeSsid !== '') {
+                        if (!ssids.includes(activeSsid)) {
+                            ssids.push(activeSsid);
+                        }
+                    }
+                    select.innerHTML = '<option value="custom">-- Saisir un SSID --</option>';
+                    ssids.forEach(ssid => {
+                        const opt = document.createElement('option');
+                        opt.value = ssid;
+                        opt.innerText = ssid;
+                        if (ssid === activeSsid) {
+                            opt.selected = true;
+                            opt.setAttribute('selected', 'selected');
+                        }
+                        select.appendChild(opt);
+                    });
+                    toggleCustomSsid();
+                })
+                .catch(err => console.error('Erreur scan:', err))
+                .finally(() => {
+                    // Dégraiser les champs Wi-Fi après le scan
+                    select.disabled = false;
+                    customInput.disabled = false;
+                    passwordInput.disabled = false;
+                    if (applyBtn) applyBtn.disabled = false;
+                    if (otaBtn) otaBtn.disabled = false;
+                });
+        }
+
+        function saveConfiguration(rebootOrOta = false) {
+            const select = document.getElementById('ssid_select');
+            let ssid = select.value;
+            if (ssid === 'custom') {
+                ssid = document.getElementById('ssid_custom').value;
+            }
+            const password = document.getElementById('password').value;
+            const currentUpdateUrl = window.latestStatusData ? window.latestStatusData.update_url : "";
+
+            if (!ssid) {
+                showMessage('config_status', 'Le SSID est requis !', 'error');
+                return;
+            }
+
+            const msg = rebootOrOta
+                ? 'Enregistrement en cours et démarrage de la procédure OTA...'
+                : 'Configuration en cours d\'enregistrement...';
+            showMessage('config_status', msg, 'success');
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    wifi_ssid: ssid,
+                    wifi_psk: password,
+                    update_url: currentUpdateUrl,
+                    apply_only: !rebootOrOta
+                })
+            })
+                .then(res => {
+                    if (res.ok) {
+                        const successMsg = rebootOrOta
+                            ? 'Configuration enregistrée. L\'ESP32 tente de se connecter et lance la mise à jour OTA !'
+                            : 'Configuration Wi-Fi appliquée avec succès !';
+                        showMessage('config_status', successMsg, 'success');
+                    } else {
+                        showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
+                    }
+                })
+                .catch(err => showMessage('config_status', 'Erreur réseau : ' + err, 'error'));
+        }
+
+        function checkUpdates() {
+            const updatesList = document.getElementById('updates_list');
+            updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Recherche de mises à jour en cours...</p>';
+
+            fetch('/api/check_updates')
+                .then(res => {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.json();
+                })
+                .then(entry => {
+                    if (!entry || Object.keys(entry).length === 0) {
+                        updatesList.innerHTML = '<p style="color: var(--warning); font-size: 0.9rem;">Aucun firmware disponible pour cette carte.</p>';
+                        return;
+                    }
+
+                    const versionKeys = Object.keys(entry).filter(k => k !== 'boardType' && k !== 'ChipType' && k !== 'peripheriques');
+                    if (versionKeys.length === 0) {
+                        updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Aucune version trouvée.</p>';
+                        return;
+                    }
+
+                    updatesList.innerHTML = '';
+                    versionKeys.forEach(vKey => {
+                        const vInfo = entry[vKey];
+                        const versionCard = document.createElement('div');
+                        versionCard.style = 'background-color: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;';
+
+                        const left = document.createElement('div');
+                        left.style = 'display: flex; flex-direction: column;';
+
+                        const title = document.createElement('span');
+                        title.style = 'font-weight: 700; color: var(--text-primary); font-size: 0.95rem;';
+                        title.innerText = 'Version ' + vInfo.version;
+
+                        const badge = document.createElement('span');
+                        badge.className = vInfo.stable ? 'badge badge-success' : 'badge badge-warn';
+                        badge.style = 'width: fit-content; margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem;';
+                        badge.innerText = vInfo.stable ? 'Stable' : 'Bêta / Instable';
+
+                        left.appendChild(title);
+                        left.appendChild(badge);
+
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'btn';
+                        btn.style = 'width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem; height: fit-content;';
+                        btn.innerText = 'Installer';
+                        btn.onclick = () => installFirmware(vInfo.url);
+
+                        versionCard.appendChild(left);
+                        versionCard.appendChild(btn);
+                        updatesList.appendChild(versionCard);
+                    });
+                })
+                .catch(err => {
+                    console.error(err);
+                    updatesList.innerHTML = '<p style="color: var(--danger); font-size: 0.9rem;">Erreur de connexion lors de la recherche : ' + err.message + '</p>';
+                });
+        }
+
+        function installFirmware(binUrl) {
+            const select = document.getElementById('ssid_select');
+            let ssid = select.value;
+            if (ssid === 'custom') {
+                ssid = document.getElementById('ssid_custom').value;
+            }
+            const password = document.getElementById('password').value;
+
+            if (!ssid) {
+                showMessage('config_status', 'Le SSID est requis pour installer la mise à jour !', 'error');
+                return;
+            }
+
+            if (!confirm('Voulez-vous vraiment installer la version ' + binUrl.split('/').pop() + ' ? L\'appareil va télécharger le binaire de production et redémarrer.')) {
+                return;
+            }
+
+            showMessage('config_status', 'Démarrage de la procédure d\'installation du firmware...', 'success');
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    wifi_ssid: ssid,
+                    wifi_psk: password,
+                    update_url: binUrl,
+                    apply_only: false
+                })
+            })
+                .then(res => {
+                    if (res.ok) {
+                        showMessage('config_status', 'Installation lancée avec succès ! Redémarrage ou téléchargement en cours...', 'success');
+                    } else {
+                        showMessage('config_status', 'Erreur lors du lancement de l\'installation.', 'error');
+                    }
+                })
+                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+        }
+
+        function startManualFlash() {
+            const fileInput = document.getElementById('firmware_file');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const progressContainer = document.getElementById('progress_container');
+            const progressBar = document.getElementById('progress_bar');
+            const percentageText = document.getElementById('upload_percentage');
+            const bytesText = document.getElementById('upload_bytes');
+            const uploadBtn = document.getElementById('upload_btn');
+
+            progressContainer.style.display = 'block';
+            uploadBtn.disabled = true;
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload-ota', true);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+            xhr.upload.onprogress = function (e) {
+                if (e.lengthComputable) {
+                    const percentage = Math.round((e.loaded / e.total) * 100);
+                    progressBar.style.width = `${percentage}%`;
+                    percentageText.innerText = `${percentage}%`;
+                    bytesText.innerText = `${(e.loaded / 1024).toFixed(1)} / ${(e.total / 1024).toFixed(1)} KB`;
+                }
+            };
+
+            xhr.onload = function () {
+                uploadBtn.disabled = false;
+                if (xhr.status === 200) {
+                    showMessage('upload_status', 'Flashage réussi ! Redémarrage sur le firmware de production en cours...', 'success');
+                } else {
+                    showMessage('upload_status', `Erreur de flashage (${xhr.status}) : ${xhr.responseText}`, 'error');
+                }
+            };
+
+            xhr.onerror = function () {
+                uploadBtn.disabled = false;
+                showMessage('upload_status', 'Erreur réseau durant l\'upload.', 'error');
+            };
+
+            xhr.send(file);
+        }
+
+        // Initial fetch
+        fetchStatus();
+        setInterval(fetchStatus, 5000);
+    </script>
+</body>
+
+</html>

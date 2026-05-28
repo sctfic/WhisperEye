@@ -1,8 +1,8 @@
 # PowerShell Utility script for WhisperEye Workspace compilation and upload
 param (
     [Parameter(Mandatory = $false)]
-    [ValidateSet("factory", "production")]
-    [string]$Target = "factory",
+    [ValidateSet("factory", "production", "nvs", "all")]
+    [string]$Target = "all",
 
     [Parameter(Mandatory = $false)]
     [string]$Port = "",
@@ -36,6 +36,98 @@ else {
 }
 
 # 2. Setup targets
+if ($Target -eq "nvs") {
+    Write-Host "[*] Initiating NVS erase process..." -ForegroundColor Cyan
+    $FlashCommand = "cargo +esp espflash erase-parts --package factory_boot --partition-table partitions.csv nvs"
+    if ($Port) {
+        $FlashCommand += " --port $Port"
+    }
+    Write-Host "    -> Invoking command: $FlashCommand" -ForegroundColor DarkGray
+    try {
+        Invoke-Expression $FlashCommand
+    }
+    catch {
+        # Failures handled below
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] NVS erase failed!" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[+] NVS erase successful!" -ForegroundColor Green
+    exit 0
+}
+
+if ($Target -eq "all") {
+    Write-Host "[*] Initiating build and flash for ALL targets (factory & production)..." -ForegroundColor Cyan
+    
+    # 3. Clean Cache (if requested)
+    if ($Clean) {
+        Write-Host "[*] Cleaning Cargo cache..." -ForegroundColor Gray
+        cargo +esp clean
+    }
+
+    # Compilation 1/2: factory_boot
+    $BuildProfile = if ($Debug) { "debug" } else { "release" }
+    Write-Host "[*] [1/2] Compiling factory_boot ($BuildProfile)..." -ForegroundColor Cyan
+    if ($Debug) {
+        cargo +esp build --package factory_boot
+    } else {
+        cargo +esp build --package factory_boot --release
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Compilation of factory_boot failed!" -ForegroundColor Red
+        exit 1
+    }
+
+    # Compilation 2/2: production_app
+    Write-Host "[*] [2/2] Compiling production_app ($BuildProfile)..." -ForegroundColor Cyan
+    if ($Debug) {
+        cargo +esp build --package production_app
+    } else {
+        cargo +esp build --package production_app --release
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Compilation of production_app failed!" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "[+] All target packages compiled successfully. Ready to flash." -ForegroundColor Green
+
+    # Flashing 1/2: factory_boot (NO monitor, keep in bootloader)
+    Write-Host "[*] [1/2] Flashing factory_boot onto 'factory' partition (keeping bootloader active)..." -ForegroundColor Cyan
+    $FlashFactory = "cargo +esp espflash flash --package factory_boot --partition-table partitions.csv --target-app-partition factory --after no-reset"
+    if (-not $Debug) { $FlashFactory += " --release" }
+    if ($Port) { $FlashFactory += " --port $Port" }
+    Write-Host "    -> Invoking command: $FlashFactory" -ForegroundColor DarkGray
+    try {
+        Invoke-Expression $FlashFactory
+    } catch {}
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Flashing of factory_boot failed!" -ForegroundColor Red
+        exit 1
+    }
+
+    # Short delay to allow serial port driver to settle under Windows
+    Write-Host "[*] Waiting 2 seconds for serial port driver to settle..." -ForegroundColor Gray
+    Start-Sleep -Seconds 2
+
+    # Flashing 2/2: production_app (WITH monitor)
+    Write-Host "[*] [2/2] Flashing production_app onto 'production' partition..." -ForegroundColor Cyan
+    $FlashProd = "cargo +esp espflash flash --package production_app --partition-table partitions.csv --target-app-partition production --before no-reset --monitor"
+    if (-not $Debug) { $FlashProd += " --release" }
+    if ($Port) { $FlashProd += " --port $Port" }
+    Write-Host "    -> Invoking command: $FlashProd" -ForegroundColor DarkGray
+    try {
+        Invoke-Expression $FlashProd
+    } catch {}
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Flashing of production_app failed!" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[+] All builds and flashing completed successfully!" -ForegroundColor Green
+    exit 0
+}
+
 $Package = if ($Target -eq "factory") { "factory_boot" } else { "production_app" }
 $BuildProfile = if ($Debug) { "debug" } else { "release" }
 $ProfileFlag = if ($Debug) { "" } else { "--release" }
@@ -65,6 +157,12 @@ Write-Host "[+] Compilation successful!" -ForegroundColor Green
 # 5. Flash Upload
 Write-Host "[*] Initiating upload process for $Package..." -ForegroundColor Cyan
 $FlashCommand = "cargo +esp espflash flash --package $Package --partition-table partitions.csv"
+if ($Target -eq "production") {
+    $FlashCommand += " --target-app-partition production"
+}
+else {
+    $FlashCommand += " --target-app-partition factory"
+}
 if (-not $Debug) {
     $FlashCommand += " --release"
 }

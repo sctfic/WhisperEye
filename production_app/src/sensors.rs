@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::time::SystemTime;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub struct SensorReadings {
     pub temperature_sht45: f32,
     pub humidity_sht45: f32,
