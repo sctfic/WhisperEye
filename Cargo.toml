@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "common",
+    "factory_boot",
+    "production_app"
+]
+resolver = "2"
+
+[profile.release]
+opt-level = "s"       # Optimize for size
+lto = true             # Link-Time Optimization
+panic = "abort"        # Abort on panic to save space
+codegen-units = 1      # Maximize optimizations
+strip = true           # Strip symbols to minimize binary size
