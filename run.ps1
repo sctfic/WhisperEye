@@ -35,6 +35,78 @@ else {
     Write-Host "    [!] Warning: Espressif environment script not found at standard path. Relying on PATH variables." -ForegroundColor Yellow
 }
 
+# Helper functions for versioning and catalog update
+function Increment-ProductionVersion {
+    # Pattern: firmware-wroom-1.0.1-0125.bin  =>  base=1.0.1, build=125
+    $BinFiles = Get-ChildItem "boards\board_default\firmware-wroom-*.bin" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+    $BaseVersion = "1.0.1"
+    $HighestBuild = 0
+
+    if ($BinFiles) {
+        foreach ($f in $BinFiles) {
+            if ($f -match "firmware-wroom-(\d+\.\d+\.\d+)-(\d+)\.bin") {
+                $build = [int]$Matches[2]
+                if ($build -gt $HighestBuild) {
+                    $HighestBuild = $build
+                    $BaseVersion = $Matches[1]
+                }
+            }
+        }
+    }
+
+    $NewBuild = $HighestBuild + 1
+    $NewVersion = "{0}-{1:D4}" -f $BaseVersion, $NewBuild
+    Write-Host "[+] New WhisperEye build version: $NewVersion" -ForegroundColor Green
+    return $NewVersion
+}
+
+function Update-FirmwareJson {
+    param([string]$NewVersion)
+    $JsonPath = "boards\board_default\firmware.json"
+    if (-not (Test-Path $JsonPath)) {
+        Write-Host "    [!] Warning: firmware.json not found at $JsonPath" -ForegroundColor Yellow
+        return
+    }
+
+    $JsonContent = Get-Content $JsonPath -Raw | ConvertFrom-Json
+
+    foreach ($board in $JsonContent) {
+        $chipType = $board.ChipType
+
+        # Only update the ESP32 / WROOM entries automatically (the chip we just compiled)
+        if ($chipType -ne "ESP32") { continue }
+
+        $prefix = "firmware-wroom-"
+        $pattern = "$prefix*.bin"
+        $files = Get-ChildItem "boards\board_default\$pattern" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+        if (-not $files) { continue }
+
+        # Collect all builds from disk (format: 1.0.1-0125)
+        $allBuilds = @()
+        foreach ($file in $files) {
+            if ($file -match "$prefix(\d+\.\d+\.\d+)-(\d+)\.bin") {
+                $verStr = $Matches[1] + "-" + $Matches[2]
+                $buildNum = [int]$Matches[2]
+                $url = "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/$file"
+                $allBuilds += [PSCustomObject]@{ version = $verStr; url = $url; build = $buildNum }
+            }
+        }
+
+        # Sort descending by build number, keep only 2 most recent as unstable
+        $sortedUnstable = $allBuilds | Sort-Object build -Descending | Select-Object -First 2 | ForEach-Object {
+            [PSCustomObject]@{ version = $_.version; url = $_.url }
+        }
+
+        # Preserve stable as-is (user manages stable entries manually)
+        $board.unstable = if ($sortedUnstable) { @($sortedUnstable) } else { @() }
+    }
+
+    $updatedJson = $JsonContent | ConvertTo-Json -Depth 4
+    Set-Content $JsonPath $updatedJson
+    Write-Host "    [+] boards/board_default/firmware.json successfully updated!" -ForegroundColor Green
+}
+
+
 # 2. Setup targets
 if ($Target -eq "nvs") {
     Write-Host "[*] Initiating NVS erase process..." -ForegroundColor Cyan
@@ -90,6 +162,23 @@ if ($Target -eq "all") {
         Write-Host "[-] Compilation of production_app failed!" -ForegroundColor Red
         exit 1
     }
+    
+    # Automated version incrementation and packaging pipeline
+    $NewVersion = Increment-ProductionVersion
+    $BinPath = "boards\board_default\firmware-wroom-$NewVersion.bin"
+    Write-Host "[*] Exporting flashable binary image to $BinPath..." -ForegroundColor Cyan
+    $SaveCmd = "cargo +esp espflash save-image --chip esp32 --package production_app --partition-table partitions.csv --target-app-partition production"
+    if ($BuildProfile -eq "release") {
+        $SaveCmd += " --release"
+    }
+    $SaveCmd += " $BinPath"
+    Write-Host "    -> Invoking command: $SaveCmd" -ForegroundColor DarkGray
+    Invoke-Expression $SaveCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Failed to save ESP32 binary image!" -ForegroundColor Red
+        exit 1
+    }
+    Update-FirmwareJson -NewVersion $NewVersion
 
     Write-Host "[+] All target packages compiled successfully. Ready to flash." -ForegroundColor Green
 
@@ -152,6 +241,25 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Write-Host "[+] Compilation successful!" -ForegroundColor Green
+
+if ($Package -eq "production_app") {
+    # Automated version incrementation and packaging pipeline
+    $NewVersion = Increment-ProductionVersion
+    $BinPath = "boards\board_default\firmware-wroom-$NewVersion.bin"
+    Write-Host "[*] Exporting flashable binary image to $BinPath..." -ForegroundColor Cyan
+    $SaveCmd = "cargo +esp espflash save-image --chip esp32 --package production_app --partition-table partitions.csv --target-app-partition production"
+    if ($BuildProfile -eq "release") {
+        $SaveCmd += " --release"
+    }
+    $SaveCmd += " $BinPath"
+    Write-Host "    -> Invoking command: $SaveCmd" -ForegroundColor DarkGray
+    Invoke-Expression $SaveCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Failed to save ESP32 binary image!" -ForegroundColor Red
+        exit 1
+    }
+    Update-FirmwareJson -NewVersion $NewVersion
+}
 
 
 # 5. Flash Upload

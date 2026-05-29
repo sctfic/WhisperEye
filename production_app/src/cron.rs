@@ -177,18 +177,15 @@ impl CronWorker {
                 let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
                 let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
                 if b_type == "v1.0" && c_type == "ESP32" {
-                    if let Some(obj) = entry.as_object() {
-                        for (key, val) in obj {
-                            if key != "boardType" && key != "ChipType" && key != "peripheriques" {
-                                if let Some(stable) = val.get("stable").and_then(|v| v.as_bool()) {
-                                    if stable {
-                                        if let Some(ver_str) = val.get("version").and_then(|v| v.as_str()) {
-                                            if let Some(url_str) = val.get("url").and_then(|v| v.as_str()) {
-                                                if parse_version(ver_str) > parse_version(&fw) {
-                                                    new_stable_url = Some(url_str.to_string());
-                                                    new_version = Some(ver_str.to_string());
-                                                }
-                                            }
+                    if let Some(stable_val) = entry.get("stable") {
+                        for v_obj in version_entries(stable_val) {
+                            if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
+                                if let Some(url_str) = v_obj.get("url").and_then(|v| v.as_str()) {
+                                    if parse_version(ver_str) > parse_version(&fw) {
+                                        let current_best = new_version.as_deref().unwrap_or(fw.as_str());
+                                        if parse_version(ver_str) > parse_version(current_best) {
+                                            new_stable_url = Some(url_str.to_string());
+                                            new_version = Some(ver_str.to_string());
                                         }
                                     }
                                 }
@@ -216,13 +213,31 @@ impl CronWorker {
     }
 }
 
-fn parse_version(v: &str) -> (u32, u32, u32) {
+fn parse_version(v: &str) -> (u32, u32, u32, u32) {
     let clean = v.trim().trim_start_matches('v');
-    let parts: Vec<&str> = clean.split(|c| c == '.' || c == '-').collect();
+    // Handle both "1.0.1" and "1.0.1-0125" formats
+    let (base, build_str) = if let Some(dash) = clean.find('-') {
+        (&clean[..dash], &clean[dash + 1..])
+    } else {
+        (clean, "0")
+    };
+    let parts: Vec<&str> = base.split('.').collect();
     let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
     let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-    (major, minor, patch)
+    let build: u32 = build_str.parse().unwrap_or(0);
+    (major, minor, patch, build)
+}
+
+/// Accept both a JSON array `[{...}, ...]` and a bare object `{...}` as a list of version entries.
+fn version_entries(val: &serde_json::Value) -> Vec<&serde_json::Value> {
+    if let Some(arr) = val.as_array() {
+        arr.iter().collect()
+    } else if val.is_object() {
+        vec![val]
+    } else {
+        vec![]
+    }
 }
 
 #[derive(Clone)]
