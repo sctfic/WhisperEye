@@ -398,6 +398,42 @@
                 box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
             }
         }
+
+        .spinner {
+            animation: rotate 2s linear infinite;
+            width: 1.25rem;
+            height: 1.25rem;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+
+        .spinner .path {
+            stroke: var(--accent-color);
+            stroke-linecap: round;
+            animation: dash 1.5s ease-in-out infinite;
+        }
+
+        @keyframes rotate {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes dash {
+            0% {
+                stroke-dasharray: 1, 150;
+                stroke-dashoffset: 0;
+            }
+            50% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -35;
+            }
+            100% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -124;
+            }
+        }
     </style>
 </head>
 <body>
@@ -507,8 +543,24 @@
                 <span class="info-value" id="prod_version">v1.0.0-poc</span>
             </div>
             <div class="info-group">
+                <span class="info-label">Modèle de Carte</span>
+                <span class="info-value" id="whispereye_board">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Type de Puce</span>
+                <span class="info-value" id="chip_type">--</span>
+            </div>
+            <div class="info-group">
                 <span class="info-label">Dernière OTA Success</span>
                 <span class="info-value" id="last_ota">1970-01-01 00:00:00</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Dernier Téléchargement OTA</span>
+                <span class="info-value" id="last_ota_dl">1970-01-01 00:00:00</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Dernière Écriture OTA</span>
+                <span class="info-value" id="last_ota_write">1970-01-01 00:00:00</span>
             </div>
         </div>
 
@@ -561,6 +613,8 @@
     </div>
 
     <script>
+        const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
+
         function getStatusSvg(type, titleText = "") {
             const titleAttr = titleText ? ` title="${titleText}"` : "";
             if (type === 'green') {
@@ -731,24 +785,35 @@
                         document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Version démarrée');
                     }
 
-                    // 6. ota success (jamais, ancien, 12 dernieres heure)
-                    let otaText = 'Jamais' + getStatusSvg('red');
-                    if (data.last_ota_success && !data.last_ota_success.startsWith('1970') && data.last_ota_success !== 'Jamais' && data.last_ota_success !== 'empty') {
+                    if (document.getElementById('whispereye_board')) {
+                        document.getElementById('whispereye_board').innerText = data.whispereye_board || 'Inconnu';
+                    }
+                    if (document.getElementById('chip_type')) {
+                        document.getElementById('chip_type').innerText = data.chip_type || 'Inconnu';
+                    }
+
+                    // 6. ota updates (success, download, write dates)
+                    function formatOtaTime(val) {
+                        if (!val || val.startsWith('1970') || val === 'Jamais' || val === 'empty') {
+                            return 'Jamais' + getStatusSvg('red');
+                        }
                         try {
-                            const otaDate = new Date(data.last_ota_success);
+                            const otaDate = new Date(val);
                             const sysDate = new Date(data.sys_time);
                             const diffMs = Math.abs(sysDate - otaDate);
                             const diffHours = diffMs / (1000 * 60 * 60);
                             if (diffHours <= 12) {
-                                otaText = data.last_ota_success + getStatusSvg('green', 'Récente, < 12h');
+                                return val + getStatusSvg('green', 'Récente, < 12h');
                             } else {
-                                otaText = data.last_ota_success + getStatusSvg('yellow', 'Ancienne, > 12h');
+                                return val + getStatusSvg('yellow', 'Ancienne, > 12h');
                             }
                         } catch (e) {
-                            otaText = data.last_ota_success + getStatusSvg('yellow');
+                            return val + getStatusSvg('yellow');
                         }
                     }
-                    document.getElementById('last_ota').innerHTML = otaText;
+                    document.getElementById('last_ota').innerHTML = formatOtaTime(data.last_ota_success);
+                    document.getElementById('last_ota_dl').innerHTML = formatOtaTime(data.last_ota_dl);
+                    document.getElementById('last_ota_write').innerHTML = formatOtaTime(data.last_ota_write);
                 })
                 .catch(err => console.error('Erreur status:', err));
         }
@@ -858,10 +923,17 @@
                 return;
             }
 
+            // Check if SSID differs from the active one
+            if (window.currentWifiSsid && ssid !== window.currentWifiSsid && window.currentWifiSsid !== 'Non connecté' && window.currentWifiSsid !== 'empty') {
+                if (!confirm(`Attention : Le nouveau SSID ("${ssid}") est différent du SSID actuel ("${window.currentWifiSsid}"). L'appareil va changer de réseau et vous risquez de perdre la connexion active. Voulez-vous continuer ?`)) {
+                    return;
+                }
+            }
+
             const msg = rebootOrOta 
                 ? 'Enregistrement en cours. L\'ESP32 va redémarrer immédiatement...' 
                 : 'Configuration en cours d\'enregistrement...';
-            showMessage('config_status', msg, 'success');
+            showMessage('config_status', SPINNER_SVG + msg, 'success');
 
             fetch('/api/config', {
                 method: 'POST',
@@ -888,7 +960,7 @@
 
         function checkUpdates() {
             const updatesList = document.getElementById('updates_list');
-            updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Recherche de mises à jour en cours...</p>';
+            updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">' + SPINNER_SVG + 'Recherche de mises à jour en cours...</p>';
             
             fetch('/api/check_updates')
                 .then(res => {
@@ -973,7 +1045,7 @@
                 return;
             }
             
-            showMessage('config_status', 'Démarrage de la procédure d\'installation du firmware...', 'success');
+            showMessage('config_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
             
             fetch('/api/config', {
                 method: 'POST',
@@ -997,7 +1069,6 @@
 
         // Periodic sensor readings
         setInterval(fetchSensors, 2000);
-        setInterval(fetchStatus, 6000);
         
         // Initial setup
         fetchSensors();

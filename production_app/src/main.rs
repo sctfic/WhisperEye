@@ -30,10 +30,13 @@ struct ConfigPayload {
     update_interval: Option<String>,
     apply_only: Option<bool>,
 }
+const WHISPEREYE_BOARD:  &str = "1.0";
+const CHIP_TYPE:  &str = "ESP32-S3";
+const FW_VERSION: &str = "1.0.1-0016";
 
 fn main() -> Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
-    info!("WhisperEye Production Application Starting Up...");
+    info!("WhisperEye Production Application Starting Up (Version {})...", FW_VERSION);
 
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
     let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
@@ -42,12 +45,24 @@ fn main() -> Result<()> {
     // Initialize NVS Storage helper
     let nvs_storage = Arc::new(Mutex::new(NvsStorage::new(nvs_default.clone())?));
     
-    // Set version name in NVS if it is still empty & dump values to logs
+    // Set version name in NVS, update otaRetry and lastOtaSuccess on successful boot
     {
         let mut storage = nvs_storage.lock().unwrap();
-        if storage.get_str("fwVersion")?.unwrap_or_else(|| "empty".to_string()) == "empty" {
-            let _ = storage.set_str("fwVersion", "v1.0.0-poc");
+        let saved_version = storage.get_str("fwVersion")?.unwrap_or_else(|| "empty".to_string());
+        
+        // If we are booting a new firmware version (either empty or upgraded)
+        if saved_version != FW_VERSION {
+            info!("New firmware version detected! Upgrading NVS from '{}' to '{}'...", saved_version, FW_VERSION);
+            let _ = storage.set_str("fwVersion", FW_VERSION);
+            
+            // Set lastOtaSuccess only upon successful boot of the production firmware
+            let now_str = get_formatted_time();
+            let _ = storage.set_str("lastOtaSuccess", &now_str);
         }
+        
+        // Always reset otaRetry to -1 when booting successfully on production
+        let _ = storage.set_i32("otaRetry", -1);
+        
         let _ = storage.dump_to_log();
     }
 
@@ -87,13 +102,10 @@ fn main() -> Result<()> {
         }
     }
     
-    let network_mode = if connected {
-        "Station"
-    } else {
+    if !connected {
         warn!("All STA Connections failed. Falling back to Access Point captive mode...");
         wifi_manager.start_ap()?;
-        "AccessPoint"
-    };
+    }
 
     let wifi_manager = Arc::new(Mutex::new(wifi_manager));
 
@@ -172,7 +184,22 @@ fn main() -> Result<()> {
         let storage = nvs_clone.lock().unwrap();
         let wifi = wifi_clone.lock().unwrap();
         
-        let ip_info = if network_mode == "Station" {
+        let (active_mode, wifi_ssid) = match wifi.wifi.get_configuration() {
+            Ok(esp_idf_svc::wifi::Configuration::Client(client_cfg)) => {
+                ("Station", client_cfg.ssid.as_str().to_string())
+            }
+            Ok(esp_idf_svc::wifi::Configuration::AccessPoint(ap_cfg)) => {
+                ("AccessPoint", ap_cfg.ssid.as_str().to_string())
+            }
+            Ok(esp_idf_svc::wifi::Configuration::Mixed(client_cfg, _)) => {
+                ("Mixed", client_cfg.ssid.as_str().to_string())
+            }
+            _ => {
+                ("None", "".to_string())
+            }
+        };
+
+        let ip_info = if active_mode == "Station" {
             wifi.wifi.wifi().sta_netif().get_ip_info().ok()
         } else {
             wifi.wifi.wifi().ap_netif().get_ip_info().ok()
@@ -180,7 +207,7 @@ fn main() -> Result<()> {
 
         let ip_addr = ip_info.map(|i| i.ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
         let gateway = ip_info.map(|i| i.subnet.gateway.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
-        let rssi = if network_mode == "Station" {
+        let rssi = if active_mode == "Station" {
             wifi.wifi.wifi().get_ap_info().ok().map(|i| i.signal_strength)
         } else {
             None
@@ -188,27 +215,30 @@ fn main() -> Result<()> {
 
         let now_str = get_formatted_time();
 
-        let wifi_ssid = storage.get_str("wifiSsid")?.unwrap_or_default();
         let ntp_server = storage.get_str("ntpServer")?.unwrap_or_default();
-        let fw_version = storage.get_str("fwVersion")?.unwrap_or_else(|| "v1.0.0-poc".to_string());
         let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
+        let last_ota_dl = storage.get_str("lastOtaDl")?.unwrap_or_default();
+        let last_ota_write = storage.get_str("lastOtaWrite")?.unwrap_or_default();
         let update_url = storage.get_str("updateAvailable")?.unwrap_or_default();
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
 
         let json = serde_json::json!({
-            "network_mode": network_mode,
+            "network_mode": active_mode,
             "wifi_ssid": wifi_ssid,
             "wifi_rssi": rssi,
             "ip_addr": ip_addr,
             "gateway_addr": gateway,
             "sys_time": now_str,
             "ntp_server": ntp_server,
-            "fw_version": fw_version,
+            "fw_version": FW_VERSION,
             "last_ota_success": last_ota_success,
+            "last_ota_dl": last_ota_dl,
+            "last_ota_write": last_ota_write,
             "update_url": update_url,
             "update_interval": update_interval,
-            "board_type": "v1.0",
-            "chip_type": "ESP32"
+            "whispereye_board": WHISPEREYE_BOARD,
+            "board_type": WHISPEREYE_BOARD,
+            "chip_type": CHIP_TYPE
         });
 
         let response_data = serde_json::to_string(&json)?;
@@ -269,7 +299,7 @@ fn main() -> Result<()> {
             for entry in arr {
                 let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
                 let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-                if b_type == "v1.0" && c_type == "ESP32" {
+                if b_type == "v2.0" && c_type == "ESP32-S3" {
                     matched_entry = entry.clone();
                     break;
                 }
@@ -569,7 +599,7 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
         for entry in arr {
             let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
             let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-            if b_type == "v1.0" && c_type == "ESP32" {
+            if b_type == "v2.0" && c_type == "ESP32-S3" {
                 if let Some(stable_val) = entry.get("stable") {
                     for v_obj in version_entries(stable_val) {
                         if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
@@ -624,3 +654,6 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+

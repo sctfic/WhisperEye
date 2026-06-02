@@ -27,12 +27,17 @@ impl NvsStorage {
             self.set_str("fwVersion", "empty")?;
             self.set_str("lastOtaDl", "1970-01-01T00:00:00Z")?;
             self.set_str("lastOtaSuccess", "1970-01-01T00:00:00Z")?;
+            self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
             self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.json")?;
             self.set_str("updateDlUrl", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.bin")?;
             self.set_i32("otaRetry", -1)?;
             self.set_str("wifiKnown", "[]")?;
-        } else if self.get_str("wifiKnown")?.is_none() {
+        }
+        if self.get_str("wifiKnown")?.is_none() {
             self.set_str("wifiKnown", "[]")?;
+        }
+        if self.get_str("lastOtaWrite")?.is_none() {
+            self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
         }
         Ok(())
     }
@@ -113,6 +118,7 @@ impl NvsStorage {
             "fwVersion",
             "lastOtaDl",
             "lastOtaSuccess",
+            "lastOtaWrite",
             "updateAvailable",
             "updateDlUrl",
             "wifiKnown",

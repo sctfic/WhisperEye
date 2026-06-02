@@ -22,7 +22,7 @@ Write-Host "==========================================================" -Foregro
 # 1. Setup Environment
 Write-Host "[*] Configuring ESP Toolchain and Cargo environment..." -ForegroundColor Gray
 $env:CARGO_TARGET_DIR = "C:\t\we"
-$env:LDPROXY_LINKER = "xtensa-esp32-elf-gcc"
+$env:LDPROXY_LINKER = "xtensa-esp32s3-elf-gcc"
 Write-Host "    -> Target Directory set to: $env:CARGO_TARGET_DIR (bypassing Windows path limits)" -ForegroundColor DarkGray
 Write-Host "    -> LDProxy Linker set to: $env:LDPROXY_LINKER" -ForegroundColor DarkGray
 
@@ -37,14 +37,14 @@ else {
 
 # Helper functions for versioning and catalog update
 function Increment-ProductionVersion {
-    # Pattern: firmware-wroom-1.0.1-0125.bin  =>  base=1.0.1, build=125
-    $BinFiles = Get-ChildItem "boards\board_default\firmware-wroom-*.bin" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+    # Pattern: firmware-s3-1.0.1-0125.bin  =>  base=1.0.1, build=125
+    $BinFiles = Get-ChildItem "boards\board_default\firmware-s3-*.bin" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
     $BaseVersion = "1.0.1"
     $HighestBuild = 0
 
     if ($BinFiles) {
         foreach ($f in $BinFiles) {
-            if ($f -match "firmware-wroom-(\d+\.\d+\.\d+)-(\d+)\.bin") {
+            if ($f -match "firmware-s3-(\d+\.\d+\.\d+)-(\d+)\.bin") {
                 $build = [int]$Matches[2]
                 if ($build -gt $HighestBuild) {
                     $HighestBuild = $build
@@ -57,6 +57,22 @@ function Increment-ProductionVersion {
     $NewBuild = $HighestBuild + 1
     $NewVersion = "{0}-{1:D4}" -f $BaseVersion, $NewBuild
     Write-Host "[+] New WhisperEye build version: $NewVersion" -ForegroundColor Green
+
+    # Update FW_VERSION constant in production_app/src/main.rs
+    $MainRsPath = "production_app\src\main.rs"
+    if (Test-Path $MainRsPath) {
+        $MainRsContent = Get-Content $MainRsPath -Raw
+        $Pattern = 'const FW_VERSION:\s*&str\s*=\s*"[^"]*";'
+        $Replacement = 'const FW_VERSION: &str = "' + $NewVersion + '";'
+        if ($MainRsContent -match $Pattern) {
+            $MainRsContent = $MainRsContent -replace $Pattern, $Replacement
+            Set-Content $MainRsPath $MainRsContent
+            Write-Host "    [+] Updated FW_VERSION to '$NewVersion' in $MainRsPath" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    [!] Warning: Could not find const FW_VERSION in $MainRsPath" -ForegroundColor Yellow
+        }
+    }
+
     return $NewVersion
 }
 
@@ -73,10 +89,10 @@ function Update-FirmwareJson {
     foreach ($board in $JsonContent) {
         $chipType = $board.ChipType
 
-        # Only update the ESP32 / WROOM entries automatically (the chip we just compiled)
-        if ($chipType -ne "ESP32") { continue }
+        # Only update the ESP32-S3 / S3 entries automatically (the chip we just compiled)
+        if ($chipType -ne "ESP32-S3") { continue }
 
-        $prefix = "firmware-wroom-"
+        $prefix = "firmware-s3-"
         $pattern = "$prefix*.bin"
         $files = Get-ChildItem "boards\board_default\$pattern" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
         if (-not $files) { continue }
@@ -151,6 +167,9 @@ if ($Target -eq "all") {
         exit 1
     }
 
+    # Automated version incrementation and packaging pipeline
+    $NewVersion = Increment-ProductionVersion
+
     # Compilation 2/2: production_app
     Write-Host "[*] [2/2] Compiling production_app ($BuildProfile)..." -ForegroundColor Cyan
     if ($Debug) {
@@ -163,11 +182,9 @@ if ($Target -eq "all") {
         exit 1
     }
     
-    # Automated version incrementation and packaging pipeline
-    $NewVersion = Increment-ProductionVersion
-    $BinPath = "boards\board_default\firmware-wroom-$NewVersion.bin"
+    $BinPath = "boards\board_default\firmware-s3-$NewVersion.bin"
     Write-Host "[*] Exporting flashable binary image to $BinPath..." -ForegroundColor Cyan
-    $SaveCmd = "cargo +esp espflash save-image --chip esp32 --package production_app --partition-table partitions.csv --target-app-partition production"
+    $SaveCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production"
     if ($BuildProfile -eq "release") {
         $SaveCmd += " --release"
     }
@@ -175,7 +192,7 @@ if ($Target -eq "all") {
     Write-Host "    -> Invoking command: $SaveCmd" -ForegroundColor DarkGray
     Invoke-Expression $SaveCmd
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[-] Failed to save ESP32 binary image!" -ForegroundColor Red
+        Write-Host "[-] Failed to save ESP32-S3 binary image!" -ForegroundColor Red
         exit 1
     }
     Update-FirmwareJson -NewVersion $NewVersion
@@ -184,7 +201,7 @@ if ($Target -eq "all") {
 
     # Flashing 1/2: factory_boot (NO monitor, keep in bootloader)
     Write-Host "[*] [1/2] Flashing factory_boot onto 'factory' partition (keeping bootloader active)..." -ForegroundColor Cyan
-    $FlashFactory = "cargo +esp espflash flash --package factory_boot --partition-table partitions.csv --target-app-partition factory --after no-reset"
+    $FlashFactory = "cargo +esp espflash flash --flash-size 16mb --package factory_boot --partition-table partitions.csv --target-app-partition factory --after no-reset"
     if (-not $Debug) { $FlashFactory += " --release" }
     if ($Port) { $FlashFactory += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashFactory" -ForegroundColor DarkGray
@@ -202,7 +219,7 @@ if ($Target -eq "all") {
 
     # Flashing 2/2: production_app (WITH monitor)
     Write-Host "[*] [2/2] Flashing production_app onto 'production' partition..." -ForegroundColor Cyan
-    $FlashProd = "cargo +esp espflash flash --package production_app --partition-table partitions.csv --target-app-partition production --before no-reset --monitor"
+    $FlashProd = "cargo +esp espflash flash --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production --before no-reset --monitor"
     if (-not $Debug) { $FlashProd += " --release" }
     if ($Port) { $FlashProd += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashProd" -ForegroundColor DarkGray
@@ -228,6 +245,9 @@ if ($Clean) {
 }
 
 # 4. Compile
+if ($Package -eq "production_app") {
+    $NewVersion = Increment-ProductionVersion
+}
 Write-Host "[*] Compiling target package: $Package ($BuildProfile)..." -ForegroundColor Cyan
 if ($Debug) {
     cargo +esp build --package $Package
@@ -243,11 +263,9 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "[+] Compilation successful!" -ForegroundColor Green
 
 if ($Package -eq "production_app") {
-    # Automated version incrementation and packaging pipeline
-    $NewVersion = Increment-ProductionVersion
-    $BinPath = "boards\board_default\firmware-wroom-$NewVersion.bin"
+    $BinPath = "boards\board_default\firmware-s3-$NewVersion.bin"
     Write-Host "[*] Exporting flashable binary image to $BinPath..." -ForegroundColor Cyan
-    $SaveCmd = "cargo +esp espflash save-image --chip esp32 --package production_app --partition-table partitions.csv --target-app-partition production"
+    $SaveCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production"
     if ($BuildProfile -eq "release") {
         $SaveCmd += " --release"
     }
@@ -255,7 +273,7 @@ if ($Package -eq "production_app") {
     Write-Host "    -> Invoking command: $SaveCmd" -ForegroundColor DarkGray
     Invoke-Expression $SaveCmd
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[-] Failed to save ESP32 binary image!" -ForegroundColor Red
+        Write-Host "[-] Failed to save ESP32-S3 binary image!" -ForegroundColor Red
         exit 1
     }
     Update-FirmwareJson -NewVersion $NewVersion
@@ -264,7 +282,7 @@ if ($Package -eq "production_app") {
 
 # 5. Flash Upload
 Write-Host "[*] Initiating upload process for $Package..." -ForegroundColor Cyan
-$FlashCommand = "cargo +esp espflash flash --package $Package --partition-table partitions.csv"
+$FlashCommand = "cargo +esp espflash flash --flash-size 16mb --package $Package --partition-table partitions.csv"
 if ($Target -eq "production") {
     $FlashCommand += " --target-app-partition production"
 }
@@ -300,8 +318,8 @@ if ($LASTEXITCODE -ne 0) {
     
     # - Target Configuration
     Write-Host "--- 1. CONFIGURATION DE LA CIBLE ---" -ForegroundColor Yellow
-    Write-Host "• Microcontrôleur Cible : ESP32 (ESP-WROOM-32)" -ForegroundColor Gray
-    Write-Host "• Target Rust           : xtensa-esp32-espidf" -ForegroundColor Gray
+    Write-Host "• Microcontrôleur Cible : ESP32-S3-N16R8" -ForegroundColor Gray
+    Write-Host "• Target Rust           : xtensa-esp32s3-espidf" -ForegroundColor Gray
     Write-Host "• Package sélectionné   : $Package" -ForegroundColor Gray
     Write-Host "• Fichier de partitions : partitions.csv (Factory: 2MB, Production: 2MB)" -ForegroundColor Gray
     Write-Host ""

@@ -2,5 +2,5 @@
 nvs,      data, nvs,     ,        24K,
 otadata,  data, ota,     ,        8K,
 phy_init, data, phy,     ,        4K,
-factory,  app,  factory, ,        1900K,
-production,app, ota_0,   ,        1900K,
+factory,  app,  factory, ,        2M,
+production,app, ota_0,   ,        14200K,

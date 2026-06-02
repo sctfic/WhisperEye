@@ -281,15 +281,34 @@
             display: block;
         }
 
-        .pulse {
+        .warning-triangle {
             display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: var(--accent-color);
-            box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.7);
-            animation: pulse 1.5s infinite;
+            width: 16px;
+            height: 16px;
+            color: var(--accent-color);
+            vertical-align: middle;
             margin-right: 0.5rem;
+            animation: warning-pulse 2s infinite ease-in-out;
+        }
+
+        @keyframes warning-pulse {
+            0% {
+                transform: scale(0.95);
+                filter: drop-shadow(0 0 2px rgba(6, 182, 212, 0.4));
+                opacity: 0.8;
+            }
+
+            50% {
+                transform: scale(1.05);
+                filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.8));
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.95);
+                filter: drop-shadow(0 0 2px rgba(6, 182, 212, 0.4));
+                opacity: 0.8;
+            }
         }
 
         .status-icon {
@@ -309,20 +328,41 @@
             height: 1rem;
         }
 
-        @keyframes pulse {
+        .spinner {
+            animation: rotate 2s linear infinite;
+            width: 1.25rem;
+            height: 1.25rem;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+
+        .spinner .path {
+            stroke: var(--accent-color);
+            stroke-linecap: round;
+            animation: dash 1.5s ease-in-out infinite;
+        }
+
+        @keyframes rotate {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes dash {
             0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.7);
+                stroke-dasharray: 1, 150;
+                stroke-dashoffset: 0;
             }
 
-            70% {
-                transform: scale(1);
-                box-shadow: 0 0 0 6px rgba(6, 182, 212, 0);
+            50% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -35;
             }
 
             100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(6, 182, 212, 0);
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -124;
             }
         }
     </style>
@@ -331,7 +371,16 @@
 <body>
     <header>
         <h1>WhisperEye</h1>
-        <p><span class="pulse"></span>Firmware Secours & Provisionnement (Factory)</p>
+        <p>
+            <svg class="warning-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z">
+                </path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            Firmware Secours & Provisionnement (Factory)
+        </p>
     </header>
 
     <div class="container">
@@ -386,8 +435,29 @@
                 <span class="info-value" id="prod_version">empty</span>
             </div>
             <div class="info-group">
+                <span class="info-label">Firmware Secours</span>
+                <span class="info-value" id="factory_version">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Carte WhisperEye</span>
+                <span class="info-value" id="whispereye_board">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Type de Puce</span>
+                <span class="info-value" id="chip_type">--</span>
+            </div>
+
+            <div class="info-group">
                 <span class="info-label">Dernière OTA Success</span>
                 <span class="info-value" id="last_ota">1970-01-01 00:00:00</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Dernier Téléchargement OTA</span>
+                <span class="info-value" id="last_ota_dl">1970-01-01 00:00:00</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Dernière Écriture OTA</span>
+                <span class="info-value" id="last_ota_write">1970-01-01 00:00:00</span>
             </div>
         </div>
 
@@ -399,8 +469,13 @@
                     <select id="ssid_select" onchange="toggleCustomSsid()">
                         <option value="custom">-- Saisir un SSID --</option>
                     </select>
-                    <button type="button" onclick="scanSsids()" id="ssid_refresh_btn" style="width: auto; padding: 0.75rem 1rem; background-color: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;" onmouseover="this.style.borderColor='var(--accent-color)'; this.style.color='var(--accent-color)'" onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-primary)'" title="Actualiser la liste des réseaux">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+                    <button type="button" onclick="scanSsids()" id="ssid_refresh_btn"
+                        style="width: auto; padding: 0.75rem 1rem; background-color: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;"
+                        onmouseover="this.style.borderColor='var(--accent-color)'; this.style.color='var(--accent-color)'"
+                        onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-primary)'"
+                        title="Actualiser la liste des réseaux">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
                             <polyline points="23 4 23 10 17 10"></polyline>
                             <polyline points="1 20 1 14 7 14"></polyline>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -418,8 +493,13 @@
                 <label for="password">Mot de passe</label>
                 <div style="position: relative; display: flex; align-items: center;">
                     <input type="password" id="password" placeholder="••••••••" style="padding-right: 2.5rem;">
-                    <span id="toggle_password_icon" onclick="togglePasswordVisibility()" style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;" onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'" onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'" title="Afficher le mot de passe">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
+                    <span id="toggle_password_icon" onclick="togglePasswordVisibility()"
+                        style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;"
+                        onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'"
+                        onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'"
+                        title="Afficher le mot de passe">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                             <circle cx="12" cy="12" r="3"></circle>
                         </svg>
@@ -477,6 +557,8 @@
     </div>
 
     <script>
+        const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
+
         function getStatusSvg(type, titleText = "") {
             const titleAttr = titleText ? ` title="${titleText}"` : "";
             if (type === 'green') {
@@ -658,24 +740,38 @@
                         document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Version démarrée');
                     }
 
-                    // Dernière OTA Success
-                    let otaText = 'Jamais' + getStatusSvg('red');
-                    if (data.last_ota_success && !data.last_ota_success.startsWith('1970') && data.last_ota_success !== 'Jamais' && data.last_ota_success !== 'empty') {
+                    if (document.getElementById('whispereye_board')) {
+                        document.getElementById('whispereye_board').innerText = data.whispereye_board || 'Inconnu';
+                    }
+                    if (document.getElementById('chip_type')) {
+                        document.getElementById('chip_type').innerText = data.chip_type || 'Inconnu';
+                    }
+                    if (document.getElementById('factory_version')) {
+                        document.getElementById('factory_version').innerText = data.factory_version || 'Inconnu';
+                    }
+
+                    // ota updates (success, download, write dates)
+                    function formatOtaTime(val) {
+                        if (!val || val.startsWith('1970') || val === 'Jamais' || val === 'empty') {
+                            return 'Jamais' + getStatusSvg('red');
+                        }
                         try {
-                            const otaDate = new Date(data.last_ota_success);
+                            const otaDate = new Date(val);
                             const sysDate = new Date(data.sys_time);
                             const diffMs = Math.abs(sysDate - otaDate);
                             const diffHours = diffMs / (1000 * 60 * 60);
                             if (diffHours <= 12) {
-                                otaText = data.last_ota_success + getStatusSvg('green', 'Récente, < 12h');
+                                return val + getStatusSvg('green', 'Récente, < 12h');
                             } else {
-                                otaText = data.last_ota_success + getStatusSvg('yellow', 'Ancienne, > 12h');
+                                return val + getStatusSvg('yellow', 'Ancienne, > 12h');
                             }
                         } catch (e) {
-                            otaText = data.last_ota_success + getStatusSvg('yellow');
+                            return val + getStatusSvg('yellow');
                         }
                     }
-                    document.getElementById('last_ota').innerHTML = otaText;
+                    document.getElementById('last_ota').innerHTML = formatOtaTime(data.last_ota_success);
+                    document.getElementById('last_ota_dl').innerHTML = formatOtaTime(data.last_ota_dl);
+                    document.getElementById('last_ota_write').innerHTML = formatOtaTime(data.last_ota_write);
                 })
                 .catch(err => console.error('Erreur status:', err));
         }
@@ -745,10 +841,17 @@
                 return;
             }
 
+            // Check if SSID differs from the active one
+            if (window.currentWifiSsid && ssid !== window.currentWifiSsid && window.currentWifiSsid !== 'Non connecté' && window.currentWifiSsid !== 'empty') {
+                if (!confirm(`Attention : Le nouveau SSID ("${ssid}") est différent du SSID actuel ("${window.currentWifiSsid}"). L'appareil va changer de réseau et vous risquez de perdre la connexion active. Voulez-vous continuer ?`)) {
+                    return;
+                }
+            }
+
             const msg = rebootOrOta
                 ? 'Enregistrement en cours et démarrage de la procédure OTA...'
                 : 'Configuration en cours d\'enregistrement...';
-            showMessage('config_status', msg, 'success');
+            showMessage('config_status', SPINNER_SVG + msg, 'success');
 
             fetch('/api/config', {
                 method: 'POST',
@@ -775,7 +878,7 @@
 
         function checkUpdates() {
             const updatesList = document.getElementById('updates_list');
-            updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Recherche de mises à jour en cours...</p>';
+            updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">' + SPINNER_SVG + 'Recherche de mises à jour en cours...</p>';
 
             fetch('/api/check_updates')
                 .then(res => {
@@ -860,7 +963,7 @@
                 return;
             }
 
-            showMessage('config_status', 'Démarrage de la procédure d\'installation du firmware...', 'success');
+            showMessage('config_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
 
             fetch('/api/config', {
                 method: 'POST',
@@ -895,6 +998,7 @@
 
             progressContainer.style.display = 'block';
             uploadBtn.disabled = true;
+            showMessage('upload_status', SPINNER_SVG + 'Installation du nouveau firmware en cours...', 'success');
 
             const xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/upload-ota', true);
@@ -929,7 +1033,6 @@
         // Initial fetch
         fetchStatus();
         scanSsids();
-        setInterval(fetchStatus, 5000);
     </script>
 </body>
 
