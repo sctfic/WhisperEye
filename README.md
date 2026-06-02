@@ -14,6 +14,16 @@ Voici un aperçu visuel de la carte électronique WhisperEye qui héberge ce fir
 
 ---
 
+## 🌐 Interface Web (Dashboard)
+
+Voici une démonstration vidéo de l'interface web de configuration et de monitoring :
+
+<p align="center">
+  <video src="FwBase.mp4" width="600" controls style="border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"></video>
+</p>
+
+---
+
 ## 🛠️ Architecture Logicielle (Workspace)
 
 Le projet est structuré en **Workspace Cargo** pour garantir une maintenance et une extensibilité maximales :
@@ -82,11 +92,18 @@ graph TD
 ```
 
 ### 1. Structure de Partitions & Double Boot (`partitions.csv`)
-Pour éviter tout risque de "brick" matériel en production, la mémoire flash de 4 Mo est séparée en plusieurs partitions :
-* **`factory` (1.9 Mo)** : Contient le firmware de secours autonome (`factory_boot`). Il héberge un portail captif mobile de secours, gère le flashage de fichiers `.bin` glissés-déposés, et exécute de manière blindée la phase d'application d'une mise à jour OTA.
-* **`production` (1.9 Mo)** : Contient le firmware applicatif principal de production (`production_app`) avec la logique capteur, l'ordonnanceur et le dashboard de monitoring.
+Pour éviter tout risque de "brick" matériel en production, la mémoire flash de 16 Mo est séparée en plusieurs partitions :
+* **`factory` (2 Mo)** : Contient le firmware de secours autonome (`factory_boot`). Il héberge un portail captif mobile de secours, gère le flashage de fichiers `.bin` glissés-déposés, et exécute de manière blindée la phase d'application d'une mise à jour OTA.
+* **`production` (13.8 Mo)** : Contient le firmware applicatif principal de production (`production_app`) avec la logique capteur, l'ordonnanceur et le dashboard de monitoring.
 * **`otadata` (8 Ko)** : Coordonne la table de boot de l'ESP32.
+* **`phy_init` (4 Ko)** : Initialise la couche physique RF de la puce.
 * **`nvs` (24 Ko)** : La base NVS stocke de façon permanente les configurations Wi-Fi, le cache des réseaux connus (`wifiKnown`), les cibles temporelles de planification (`nextCheck`), et les drapeaux d'OTA.
+
+Voici une représentation visuelle de la structure de la mémoire flash :
+
+<p align="center">
+  <img src="flash_memory_layout.png" alt="Répartition de la mémoire Flash" width="600" style="border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
+</p>
 
 ### 2. Ordonnanceur de Tâches Périodiques Découplé (`cron.rs`)
 La gestion des tâches d'arrière-plan de l'application de production est déléguée à un **système de boucle à messages isolée (Worker Pattern)** :
