@@ -31,7 +31,7 @@ struct ConfigPayload {
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-factory";
+const FW_VERSION: &str = "1.0.0-factory-0002";
 
 fn main() -> Result<()> {
     // Bind the ESP-IDF logging
@@ -576,3 +576,5 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+

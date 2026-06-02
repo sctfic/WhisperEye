@@ -283,12 +283,12 @@
 
         .warning-triangle {
             display: inline-block;
-            width: 16px;
-            height: 16px;
-            color: var(--accent-color);
+            width: 24px;
+            height: 24px;
+            color: var(--warning);
             vertical-align: middle;
             margin-right: 0.5rem;
-            animation: warning-pulse 2s infinite ease-in-out;
+            animation: warning-pulse 1.2s infinite ease-in-out;
         }
 
         @keyframes warning-pulse {
@@ -741,13 +741,25 @@
                     }
 
                     if (document.getElementById('whispereye_board')) {
-                        document.getElementById('whispereye_board').innerText = data.whispereye_board || 'Inconnu';
+                        if (data.whispereye_board && data.whispereye_board !== '--' && data.whispereye_board !== 'empty' && data.whispereye_board !== '') {
+                            document.getElementById('whispereye_board').innerHTML = data.whispereye_board + getStatusSvg('green');
+                        } else {
+                            document.getElementById('whispereye_board').innerHTML = 'Inconnu' + getStatusSvg('red');
+                        }
                     }
                     if (document.getElementById('chip_type')) {
-                        document.getElementById('chip_type').innerText = data.chip_type || 'Inconnu';
+                        if (data.chip_type && data.chip_type !== '--' && data.chip_type !== 'empty' && data.chip_type !== '') {
+                            document.getElementById('chip_type').innerHTML = data.chip_type + getStatusSvg('green');
+                        } else {
+                            document.getElementById('chip_type').innerHTML = 'Inconnu' + getStatusSvg('red');
+                        }
                     }
                     if (document.getElementById('factory_version')) {
-                        document.getElementById('factory_version').innerText = data.factory_version || 'Inconnu';
+                        if (data.factory_version && data.factory_version !== '--' && data.factory_version !== 'empty' && data.factory_version !== '') {
+                            document.getElementById('factory_version').innerHTML = data.factory_version + getStatusSvg('green');
+                        } else {
+                            document.getElementById('factory_version').innerHTML = 'Inconnu' + getStatusSvg('red');
+                        }
                     }
 
                     // ota updates (success, download, write dates)

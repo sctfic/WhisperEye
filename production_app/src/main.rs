@@ -32,7 +32,7 @@ struct ConfigPayload {
 }
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.1-0016";
+const FW_VERSION: &str = "1.0.1-0018";
 
 fn main() -> Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -654,6 +654,8 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
 
 
 

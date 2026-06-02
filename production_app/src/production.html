@@ -543,7 +543,7 @@
                 <span class="info-value" id="prod_version">v1.0.0-poc</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Modèle de Carte</span>
+                <span class="info-label">Carte WhisperEye</span>
                 <span class="info-value" id="whispereye_board">--</span>
             </div>
             <div class="info-group">
@@ -786,10 +786,18 @@
                     }
 
                     if (document.getElementById('whispereye_board')) {
-                        document.getElementById('whispereye_board').innerText = data.whispereye_board || 'Inconnu';
+                        if (data.whispereye_board && data.whispereye_board !== '--' && data.whispereye_board !== 'empty' && data.whispereye_board !== '') {
+                            document.getElementById('whispereye_board').innerHTML = data.whispereye_board + getStatusSvg('green');
+                        } else {
+                            document.getElementById('whispereye_board').innerHTML = 'Inconnu' + getStatusSvg('red');
+                        }
                     }
                     if (document.getElementById('chip_type')) {
-                        document.getElementById('chip_type').innerText = data.chip_type || 'Inconnu';
+                        if (data.chip_type && data.chip_type !== '--' && data.chip_type !== 'empty' && data.chip_type !== '') {
+                            document.getElementById('chip_type').innerHTML = data.chip_type + getStatusSvg('green');
+                        } else {
+                            document.getElementById('chip_type').innerHTML = 'Inconnu' + getStatusSvg('red');
+                        }
                     }
 
                     // 6. ota updates (success, download, write dates)

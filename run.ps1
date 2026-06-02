@@ -76,6 +76,33 @@ function Increment-ProductionVersion {
     return $NewVersion
 }
 
+function Increment-FactoryVersion {
+    $FactoryRsPath = "factory_boot\src\main.rs"
+    if (Test-Path $FactoryRsPath) {
+        $RsContent = Get-Content $FactoryRsPath -Raw
+        $Pattern = 'const FW_VERSION:\s*&str\s*=\s*"([^"]*)";'
+        if ($RsContent -match $Pattern) {
+            $CurrentVersion = $Matches[1]
+            if ($CurrentVersion -match "(.+)-(\d+)$") {
+                $Base = $Matches[1]
+                $Build = [int]$Matches[2] + 1
+                $NewVersion = "{0}-{1:D4}" -f $Base, $Build
+            } else {
+                $NewVersion = $CurrentVersion + "-0001"
+            }
+            $Replacement = 'const FW_VERSION: &str = "' + $NewVersion + '";'
+            $RsContent = $RsContent -replace $Pattern, $Replacement
+            Set-Content $FactoryRsPath $RsContent
+            Write-Host "[+] Updated factory FW_VERSION to '$NewVersion' in $FactoryRsPath" -ForegroundColor Green
+            return $NewVersion
+        } else {
+            Write-Host "    [!] Warning: Could not find const FW_VERSION in $FactoryRsPath" -ForegroundColor Yellow
+        }
+    }
+    return "1.0.0-factory"
+}
+
+
 function Update-FirmwareJson {
     param([string]$NewVersion)
     $JsonPath = "boards\board_default\firmware.json"
@@ -154,6 +181,9 @@ if ($Target -eq "all") {
         cargo +esp clean
     }
 
+    # Increment factory version before compile
+    $NewFactoryVersion = Increment-FactoryVersion
+
     # Compilation 1/2: factory_boot
     $BuildProfile = if ($Debug) { "debug" } else { "release" }
     Write-Host "[*] [1/2] Compiling factory_boot ($BuildProfile)..." -ForegroundColor Cyan
@@ -164,6 +194,21 @@ if ($Target -eq "all") {
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[-] Compilation of factory_boot failed!" -ForegroundColor Red
+        exit 1
+    }
+
+    # Export factory boot bin image (without build number, named factory_boot.bin)
+    $FactoryBinPath = "factory_boot\factory_boot.bin"
+    Write-Host "[*] Exporting factory binary image to $FactoryBinPath..." -ForegroundColor Cyan
+    $SaveFactoryCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package factory_boot --partition-table partitions.csv --target-app-partition factory"
+    if ($BuildProfile -eq "release") {
+        $SaveFactoryCmd += " --release"
+    }
+    $SaveFactoryCmd += " $FactoryBinPath"
+    Write-Host "    -> Invoking command: $SaveFactoryCmd" -ForegroundColor DarkGray
+    Invoke-Expression $SaveFactoryCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Failed to save ESP32-S3 factory binary image!" -ForegroundColor Red
         exit 1
     }
 
@@ -247,6 +292,8 @@ if ($Clean) {
 # 4. Compile
 if ($Package -eq "production_app") {
     $NewVersion = Increment-ProductionVersion
+} elseif ($Package -eq "factory_boot") {
+    $NewFactoryVersion = Increment-FactoryVersion
 }
 Write-Host "[*] Compiling target package: $Package ($BuildProfile)..." -ForegroundColor Cyan
 if ($Debug) {
@@ -277,6 +324,20 @@ if ($Package -eq "production_app") {
         exit 1
     }
     Update-FirmwareJson -NewVersion $NewVersion
+} elseif ($Package -eq "factory_boot") {
+    $FactoryBinPath = "factory_boot\factory_boot.bin"
+    Write-Host "[*] Exporting factory binary image to $FactoryBinPath..." -ForegroundColor Cyan
+    $SaveFactoryCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package factory_boot --partition-table partitions.csv --target-app-partition factory"
+    if ($BuildProfile -eq "release") {
+        $SaveFactoryCmd += " --release"
+    }
+    $SaveFactoryCmd += " $FactoryBinPath"
+    Write-Host "    -> Invoking command: $SaveFactoryCmd" -ForegroundColor DarkGray
+    Invoke-Expression $SaveFactoryCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Failed to save ESP32-S3 factory binary image!" -ForegroundColor Red
+        exit 1
+    }
 }
 
 
