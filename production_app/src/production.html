@@ -468,37 +468,7 @@
                 <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des périphériques...</p>
             </div>
 
-            <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--secondary-accent); padding-left: 0.5rem; margin-top: 2rem;">
-                Contrôle Actionneurs Direct
-            </h3>
 
-            <div class="widget" style="margin-bottom: 1rem;">
-                <div class="switch-container">
-                    <div>
-                        <div style="font-weight: 600; font-size: 0.95rem;">Relais de Puissance A (RLA)</div>
-                        <div style="font-size: 0.8rem; color: var(--text-secondary);">Contrôle de la ligne d'alimentation secondaire</div>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="relay_1_check" onchange="toggleRelay()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="widget">
-                <div class="slider-group">
-                    <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 0.95rem;">
-                        <span>Intensité Lumineuse PWM (DRVB701)</span>
-                        <span id="pwm_val_badge" style="color: var(--secondary-accent);">0%</span>
-                    </div>
-                    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.15rem;">
-                        Contrôle de la sortie LED graduée
-                    </div>
-                    <input type="range" class="range-slider" id="pwm_slider" min="0" max="100" value="0"
-                        onchange="updatePwm(this.value)"
-                        oninput="document.getElementById('pwm_val_badge').innerText = this.value + '%'">
-                </div>
-            </div>
         </div>
 
         <!-- TAB 2: STATUS -->
@@ -927,6 +897,14 @@
         let editingDeviceId = null;
         let editingOriginalName = null;
 
+        window.actuatorStates = {
+            rla: false,
+            rlb: false,
+            swpwr: true,
+            ina: false,
+            inb: false
+        };
+
         function fetchDevices() {
             if (!document.getElementById('devices-tab').classList.contains('active')) return;
 
@@ -939,8 +917,17 @@
 
                     // Update values and badges of active rows dynamically
                     data.forEach(dev => {
+                        if (dev.id === 'rla') window.actuatorStates.rla = (dev.value === 'ON');
+                        if (dev.id === 'rlb') window.actuatorStates.rlb = (dev.value === 'ON');
+                        if (dev.id === 'swpwr') window.actuatorStates.swpwr = (dev.value === 'ON');
+                        if (dev.id === 'ina') window.actuatorStates.ina = (dev.value === 'ON');
+                        if (dev.id === 'inb') window.actuatorStates.inb = (dev.value === 'ON');
+
                         const valEl = document.getElementById(`val_${dev.id}`);
                         if (valEl) valEl.innerText = dev.value;
+
+                        const switchEl = document.getElementById(`switch_${dev.id}`);
+                        if (switchEl) switchEl.checked = (dev.value === 'ON');
 
                         const badgeEl = document.getElementById(`badge_${dev.id}`);
                         if (badgeEl) {
@@ -960,6 +947,19 @@
                             ? `<span id="badge_${dev.id}" class="badge badge-green">Présent</span>` 
                             : `<span id="badge_${dev.id}" class="badge badge-error">Absent</span>`;
                         
+                        let valueHtml = '';
+                        if (dev.id === 'rla' || dev.id === 'rlb' || dev.id === 'swpwr') {
+                            const checkedAttr = dev.value === 'ON' ? 'checked' : '';
+                            valueHtml = `
+                                <label class="switch">
+                                    <input type="checkbox" id="switch_${dev.id}" ${checkedAttr} onchange="toggleDeviceOutput('${dev.id}')">
+                                    <span class="slider"></span>
+                                </label>
+                            `;
+                        } else {
+                            valueHtml = `<span id="val_${dev.id}" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">${dev.value}</span>`;
+                        }
+
                         html += `
                         <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
                             <div style="flex: 1; min-width: 0;">
@@ -978,7 +978,7 @@
                                 <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">${dev.id} [${dev.is_static ? 'Fixe' : 'Dynamique'}]</div>
                             </div>
                             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
-                                <span id="val_${dev.id}" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">${dev.value}</span>
+                                ${valueHtml}
                                 ${statusBadge}
                             </div>
                         </div>
@@ -1058,33 +1058,28 @@
             });
         }
 
-        function toggleRelay() {
-            const check = document.getElementById('relay_1_check');
-            const intensity = parseInt(document.getElementById('pwm_slider').value);
+        function toggleDeviceOutput(id) {
+            const checkbox = document.getElementById(`switch_${id}`);
+            if (!checkbox) return;
+            window.actuatorStates[id] = checkbox.checked;
 
             fetch('/api/actuators', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    relay_1: check.checked,
-                    pwm_intensity: intensity
-                })
+                body: JSON.stringify(window.actuatorStates)
             })
-                .catch(err => console.error('Erreur relay switch:', err));
-        }
-
-        function updatePwm(val) {
-            const check = document.getElementById('relay_1_check');
-
-            fetch('/api/actuators', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    relay_1: check.checked,
-                    pwm_intensity: parseInt(val)
-                })
+            .then(res => {
+                if (!res.ok) {
+                    alert('Erreur lors de la modification de l\'état');
+                    checkbox.checked = !checkbox.checked;
+                    window.actuatorStates[id] = checkbox.checked;
+                }
             })
-                .catch(err => console.error('Erreur pwm slider:', err));
+            .catch(err => {
+                console.error(err);
+                checkbox.checked = !checkbox.checked;
+                window.actuatorStates[id] = checkbox.checked;
+            });
         }
 
         function toggleTotpVisibility() {

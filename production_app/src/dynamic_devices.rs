@@ -58,8 +58,6 @@ impl DeviceRegistry {
 
         // 1. Static Devices (Always present)
         let static_ids = vec![
-            ("tca954", "Multiplexeur I2C (TCA954)"),
-            ("sp3485en", "Bus RS485 (SP3485EN)"),
             ("drvb701", "Contrôleur Pont en H (DRVB701)"),
             ("touch", "Touche Tactile (TOUCH)"),
             ("vsense", "Mesure Tension (VSENSE)"),

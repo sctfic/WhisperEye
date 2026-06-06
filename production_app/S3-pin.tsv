@@ -1,12 +1,12 @@
 S3 JESPS	pin	description
-ONEWR	39	les 2x5 1wire
-ISENSE	2	courrant du pont en H
+ONEWR	39	les 2x5 1-wire
+ISENSE	2	mesure courrant du pont en H
 SCR0	4	ecran SLC (ST7789)
-SCR1	5	ecran SDA
-SCR2	6	ecran RES
-SCR3	7	ecran DC
-SCR4	15	ecran CS
-SCR5	16	ecran BLK
+SCR1	5	ecran SDA (ST7789)
+SCR2	6	ecran RES (ST7789)
+SCR3	7	ecran DC (ST7789)
+SCR4	15	ecran CS (ST7789)
+SCR5	16	ecran BLK (ST7789)
 BTN0	17	roue sens A (EC11)
 BTN1	18	roue sens B (EC11)
 BTN2	8	roue push (EC11)
@@ -20,9 +20,9 @@ INA	36	pont H (DRVB701)
 INB	35	pont H (DRVB701)
 RLA	48	relay A
 RLB	47	relay B
-VSENSE	1	tension d'alim
+VSENSE	1	mesure tension d'alim
 TOUCH	14	touche sensitive periferique
-SWPWR	21	coupure du 5v et 3v sauf esp
+SWPWR	21	switch de coupure du 5v et 3v sauf esp
 RF0	46	connecteur radio
 RF1	9	connecteur radio
 RF2	10	connecteur radio
