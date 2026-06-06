@@ -12,6 +12,14 @@ use std::thread;
 use std::sync::{Arc, Mutex};
 // use std::io::Read;
 
+const WHISPEREYE_BOARD:  &str = "1.0";
+const CHIP_TYPE:  &str = "ESP32-S3";
+const FW_VERSION: &str = "1.0.1-0004";
+
+const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
+const AUTHOR_NAME: &str = "LOPEZ Alban";
+const AUTHOR_LINK: &str = "https://github.com/sctfic/WhisperEye/blob/main/README.md";
+
 mod wifi;
 mod sensors;
 mod actuators;
@@ -24,15 +32,13 @@ use actuators::ActuatorsState;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct ConfigPayload {
-    wifi_ssid: String,
-    wifi_psk: String,
-    update_url: String,
+    wifi_ssid: Option<String>,
+    wifi_psk: Option<String>,
+    update_url: Option<String>,
     update_interval: Option<String>,
     apply_only: Option<bool>,
+    auto_update: Option<bool>,
 }
-const WHISPEREYE_BOARD:  &str = "1.0";
-const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.1-0018";
 
 fn main() -> Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -66,44 +72,60 @@ fn main() -> Result<()> {
         let _ = storage.dump_to_log();
     }
 
-    // Read SSID, PSK from NVS
-    let (ssid, psk) = {
-        let storage = nvs_storage.lock().unwrap();
-        let ssid = storage.get_str("wifiSsid")?.unwrap_or_else(|| "IoT".to_string());
-        let psk = storage.get_str("wifiPsk")?.unwrap_or_else(|| "Esp32&Cie2026".to_string());
-        (ssid, psk)
-    };
-
     // Initialize Wi-Fi
     let mut wifi_manager = WifiManager::new(peripherals, sys_loop.clone(), nvs_default)?;
     
     // Perform initial scan before any connection attempts
     let _ = wifi_manager.perform_initial_scan();
     
-    let mut connected = wifi_manager.start_sta(&ssid, &psk).unwrap_or(false);
-    
-    if connected {
-        if let Ok(mut storage) = nvs_storage.lock() {
-            let _ = storage.add_known_network(&ssid, &psk);
-        }
-    } else {
-        info!("Default Wi-Fi failed. Trying known networks from NVS...");
-        let known_networks = {
-            let storage = nvs_storage.lock().unwrap();
-            storage.get_known_networks().unwrap_or_default()
-        };
-        for (known_ssid, known_psk) in known_networks {
-            if known_ssid == ssid { continue; }
-            info!("Trying known network: {}", known_ssid);
-            if wifi_manager.start_sta(&known_ssid, &known_psk).unwrap_or(false) {
+    let mut connected = false;
+    let mut chosen_ssid = String::new();
+
+    let known_networks = {
+        let storage = nvs_storage.lock().unwrap();
+        storage.get_known_networks().unwrap_or_default()
+    };
+
+    if !known_networks.is_empty() {
+        // Find default network first
+        let default_net = known_networks.iter()
+            .find(|(_, entry)| entry.default.unwrap_or(false))
+            .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+
+        if let Some((ref ssid, ref psk)) = default_net {
+            info!("Trying default network: {}", ssid);
+            if wifi_manager.start_sta(ssid, psk).unwrap_or(false) {
                 connected = true;
-                break;
+                chosen_ssid = ssid.clone();
             }
         }
+
+        if !connected {
+            info!("Default network failed or not set. Trying other known networks...");
+            for (ssid, entry) in &known_networks {
+                if let Some((ref def_ssid, _)) = default_net {
+                    if ssid == def_ssid { continue; }
+                }
+                info!("Trying known network: {}", ssid);
+                if wifi_manager.start_sta(ssid, &entry.psk).unwrap_or(false) {
+                    connected = true;
+                    chosen_ssid = ssid.clone();
+                    break;
+                }
+            }
+        }
+
+        if connected {
+            if let Ok(mut storage) = nvs_storage.lock() {
+                let _ = storage.set_default_network_by_ssid(&chosen_ssid);
+            }
+        }
+    } else {
+        info!("No known networks. Staying in AP mode.");
     }
     
     if !connected {
-        warn!("All STA Connections failed. Falling back to Access Point captive mode...");
+        warn!("All STA Connections failed or no known networks. Falling back to Access Point captive mode...");
         wifi_manager.start_ap()?;
     }
 
@@ -144,6 +166,13 @@ fn main() -> Result<()> {
     // Start HTTP Web Server
     let mut server = EspHttpServer::new(&ServerConfig::default())
         .context("Failed to start HTTP server")?;
+
+    // GET /favicon.ico (Favicon file)
+    server.fn_handler("/favicon.ico", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
+        let mut response = req.into_response(200, Some("OK"), &[("Content-Type", "image/x-icon")])?;
+        response.write(include_bytes!("../../common/src/favicon.ico"))?;
+        Ok(())
+    })?;
 
     // GET / (Main Production HTML Dashboard)
     server.fn_handler("/", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
@@ -221,6 +250,8 @@ fn main() -> Result<()> {
         let last_ota_write = storage.get_str("lastOtaWrite")?.unwrap_or_default();
         let update_url = storage.get_str("updateAvailable")?.unwrap_or_default();
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
+        let wifi_known = storage.get_known_networks().unwrap_or_default();
+        let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1) == 1;
 
         let json = serde_json::json!({
             "network_mode": active_mode,
@@ -238,7 +269,14 @@ fn main() -> Result<()> {
             "update_interval": update_interval,
             "whispereye_board": WHISPEREYE_BOARD,
             "board_type": WHISPEREYE_BOARD,
-            "chip_type": CHIP_TYPE
+            "chip_type": CHIP_TYPE,
+            "wifi_known": wifi_known,
+            "auto_update": auto_update,
+            "author": {
+                "email": AUTHOR_EMAIL,
+                "name": AUTHOR_NAME,
+                "link": AUTHOR_LINK
+            }
         });
 
         let response_data = serde_json::to_string(&json)?;
@@ -355,7 +393,11 @@ fn main() -> Result<()> {
         };
         let wifi_ssid = {
             let storage = nvs_ssids_clone.lock().unwrap();
-            storage.get_str("wifiSsid")?.unwrap_or_default()
+            let known = storage.get_known_networks().unwrap_or_default();
+            known.iter()
+                .find(|(_, entry)| entry.default.unwrap_or(false))
+                .map(|(ssid, _)| ssid.clone())
+                .unwrap_or_default()
         };
         let response_json = serde_json::json!({
             "ssids": ssids,
@@ -396,7 +438,7 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // POST /api/config (triggers immediate restart to factory_boot if update_url differs)
+    // POST /api/config (triggers immediate restart to recovery_boot if update_url differs)
     let nvs_clone = Arc::clone(&nvs_storage);
     let wifi_clone = Arc::clone(&wifi_manager);
     server.fn_handler("/api/config", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
@@ -404,67 +446,100 @@ fn main() -> Result<()> {
         let bytes_read = req.read(&mut buf)?;
         let payload: ConfigPayload = serde_json::from_slice(&buf[..bytes_read])?;
         
-        let ssid = payload.wifi_ssid.trim();
-        let psk = payload.wifi_psk.trim();
-        
-        let mut success = false;
-        let mut final_psk = "".to_string();
+        let mut wifi_success = true;
 
-        {
-            let mut wifi = wifi_clone.lock().unwrap();
-            let mut storage = nvs_clone.lock().unwrap();
-            
-            if psk.is_empty() {
-                // Check if it is in known networks
-                let known_networks = storage.get_known_networks().unwrap_or_default();
-                if let Some((_, saved_psk)) = known_networks.iter().find(|(s, _)| s == ssid) {
-                    info!("SSID '{}' is known. Testing connection with saved key.", ssid);
-                    final_psk = saved_psk.clone();
-                    if wifi.start_sta(ssid, &final_psk).unwrap_or(false) {
-                        success = true;
-                    }
-                }
-                if !success {
-                    info!("Saved key failed or not found. Testing connection to SSID '{}' without key.", ssid);
-                    final_psk = "".to_string();
-                    if wifi.start_sta(ssid, "").unwrap_or(false) {
-                        success = true;
-                    }
-                }
-            } else {
-                // PSK is provided
-                info!("Testing connection to SSID '{}' with provided key.", ssid);
-                final_psk = psk.to_string();
-                if wifi.start_sta(ssid, &final_psk).unwrap_or(false) {
-                    success = true;
-                } else {
-                    info!("Provided key failed. Testing connection to SSID '{}' without key.", ssid);
-                    final_psk = "".to_string();
-                    if wifi.start_sta(ssid, "").unwrap_or(false) {
-                        success = true;
-                    }
-                }
-            }
-            
-            if success {
-                info!("Connection successful to SSID '{}'. Saving to NVS...", ssid);
-                storage.set_str("wifiSsid", ssid)?;
-                storage.set_str("wifiPsk", &final_psk)?;
+        if let Some(ref ssid_raw) = payload.wifi_ssid {
+            let ssid = ssid_raw.trim();
+            if !ssid.is_empty() {
+                wifi_success = false;
+                let psk = payload.wifi_psk.as_deref().unwrap_or("").trim();
+                let mut final_psk = "".to_string();
+                let mut wifi = wifi_clone.lock().unwrap();
+                let mut storage = nvs_clone.lock().unwrap();
                 
-                // Add to wifiKnown if not already known
-                let known_networks = storage.get_known_networks().unwrap_or_default();
-                let already_known = known_networks.iter().any(|(s, _)| s == ssid);
-                if !already_known {
-                    info!("SSID '{}' was not known. Adding to known networks.", ssid);
-                    storage.add_known_network(ssid, &final_psk)?;
+                if psk.is_empty() {
+                    // Check if it is in known networks
+                    let known_networks = storage.get_known_networks().unwrap_or_default();
+                    if let Some(entry) = known_networks.get(ssid) {
+                        info!("SSID '{}' is known. Testing connection with saved key.", ssid);
+                        final_psk = entry.psk.clone();
+                        if wifi.start_sta(ssid, &final_psk).unwrap_or(false) {
+                            wifi_success = true;
+                        }
+                    }
+                    if !wifi_success {
+                        info!("Saved key failed or not found. Testing connection to SSID '{}' without key.", ssid);
+                        final_psk = "".to_string();
+                        if wifi.start_sta(ssid, "").unwrap_or(false) {
+                            wifi_success = true;
+                        }
+                    }
+                } else {
+                    // PSK is provided
+                    info!("Testing connection to SSID '{}' with provided key.", ssid);
+                    final_psk = psk.to_string();
+                    if wifi.start_sta(ssid, &final_psk).unwrap_or(false) {
+                        wifi_success = true;
+                    } else {
+                        info!("Provided key failed. Testing connection to SSID '{}' without key.", ssid);
+                        final_psk = "".to_string();
+                        if wifi.start_sta(ssid, "").unwrap_or(false) {
+                            wifi_success = true;
+                        }
+                    }
                 }
-            } else {
-                warn!("Wi-Fi connection to '{}' failed. Restarting Access Point...", ssid);
-                let _ = wifi.start_ap();
+                
+                if wifi_success {
+                    info!("Connection successful to SSID '{}'. Saving to NVS...", ssid);
+                    storage.set_default_network(ssid, &final_psk)?;
+                } else {
+                    warn!("Wi-Fi connection to '{}' failed. Trying known networks from NVS...", ssid);
+                    let known_networks = storage.get_known_networks().unwrap_or_default();
+                    let mut reconnected = false;
+                    let mut chosen_ssid = String::new();
+
+                    // First try default network if any
+                    let default_net = known_networks.iter()
+                        .find(|(_, entry)| entry.default.unwrap_or(false))
+                        .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+
+                    if let Some((ref d_ssid, ref d_psk)) = default_net {
+                        if d_ssid != ssid {
+                            info!("Trying default network: {}", d_ssid);
+                            if wifi.start_sta(d_ssid, d_psk).unwrap_or(false) {
+                                reconnected = true;
+                                chosen_ssid = d_ssid.clone();
+                            }
+                        }
+                    }
+
+                    if !reconnected {
+                        for (known_ssid, entry) in &known_networks {
+                            if known_ssid == ssid { continue; }
+                            if let Some((ref d_ssid, _)) = default_net {
+                                if known_ssid == d_ssid { continue; }
+                            }
+                            info!("Trying known network: {}", known_ssid);
+                            if wifi.start_sta(known_ssid, &entry.psk).unwrap_or(false) {
+                                reconnected = true;
+                                chosen_ssid = known_ssid.clone();
+                                break;
+                            }
+                        }
+                    }
+
+                    if !reconnected {
+                        warn!("All known networks failed. Restarting Access Point...");
+                        let _ = wifi.start_ap();
+                    } else {
+                        info!("Reconnected to known network '{}'.", chosen_ssid);
+                        let _ = storage.set_default_network_by_ssid(&chosen_ssid);
+                    }
+                }
             }
         }
         
-        if !success {
+        if !wifi_success {
             let mut response = req.into_status_response(400)?;
             response.write(b"WiFi Connection Failed")?;
             return Ok(());
@@ -472,28 +547,58 @@ fn main() -> Result<()> {
 
         let should_restart = {
             let mut storage = nvs_clone.lock().unwrap();
-            let current_url = storage.get_str("updateAvailable")?.unwrap_or_default();
             
-            let is_bin = payload.update_url.ends_with(".bin");
-            if is_bin {
-                storage.set_str("updateDlUrl", &payload.update_url)?;
-                storage.set_i32("otaRetry", 3)?;
-            } else {
-                storage.set_str("updateAvailable", &payload.update_url)?;
+            if let Some(ref update_url) = payload.update_url {
+                let is_bin = update_url.ends_with(".bin");
+                if is_bin {
+                    storage.set_str("updateDlUrl", update_url)?;
+                    storage.set_i32("otaRetry", 3)?;
+                } else {
+                    storage.set_str("updateAvailable", update_url)?;
+                }
+                storage.set_str("updateInterval", "7j")?;
             }
-            storage.set_str("updateInterval", "7j")?;
+            
+            if let Some(auto_up) = payload.auto_update {
+                let current_val = storage.get_i32("autoUpdate")?.unwrap_or(1);
+                let new_val = if auto_up { 1 } else { 0 };
+                storage.set_i32("autoUpdate", new_val)?;
+                if new_val == 0 {
+                    storage.set_str("nextCheck", "4102387200")?;
+                } else if current_val == 0 && new_val == 1 {
+                    let now = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let next_check = if now > 86400 * 365 {
+                        ((now / 86400) + 1) * 86400 + 14 * 3600
+                    } else {
+                        0
+                    };
+                    storage.set_str("nextCheck", &next_check.to_string())?;
+                    info!("autoUpdate transitioned from 0 to 1, nextCheck reset to tomorrow 14:00 UTC ({})", next_check);
+                }
+            }
             
             // Restart condition: different or new update URL is set, and NOT apply_only
             let apply_only = payload.apply_only.unwrap_or(false);
             if apply_only {
                 false
+            } else if let Some(ref update_url) = payload.update_url {
+                if update_url.is_empty() {
+                    false
+                } else {
+                    let current_url = storage.get_str("updateAvailable")?.unwrap_or_default();
+                    let is_bin = update_url.ends_with(".bin");
+                    is_bin || update_url != &current_url
+                }
             } else {
-                !payload.update_url.is_empty() && (is_bin || payload.update_url != current_url)
+                false
             }
         };
 
         if should_restart {
-            info!("Configuration updated. Restaring ESP32 back to factory_boot to execute update...");
+            info!("Configuration updated. Restarting ESP32 back to recovery_boot to execute update...");
             let _ = thread::Builder::new()
                 .name("restart_worker".to_string())
                 .stack_size(4096)
@@ -620,14 +725,14 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
     }
 
     if let (Some(url), Some(ver)) = (new_stable_url, new_version) {
-        info!("New stable version found: {} (URL: {}). Triggering reboot to factory...", ver, url);
+        info!("New stable version found: {} (URL: {}). Triggering reboot to recovery...", ver, url);
         {
             let mut storage = nvs.lock().unwrap();
             storage.set_str("updateDlUrl", &url)?;
             storage.set_i32("otaRetry", 3)?;
         }
         
-        info!("OTA Retry set to 3. Rebooting ESP32 into factory partition in 2 seconds...");
+        info!("OTA Retry set to 3. Rebooting ESP32 into recovery partition in 2 seconds...");
         thread::sleep(std::time::Duration::from_secs(2));
         unsafe {
             esp_idf_sys::esp_restart();
@@ -654,6 +759,25 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

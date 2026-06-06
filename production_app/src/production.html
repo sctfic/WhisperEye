@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhisperEye - Dashboard Production</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         :root {
             --bg-color: #0b0f19;
@@ -250,11 +252,11 @@
             border-radius: 50%;
         }
 
-        input:checked + .slider {
+        input:checked+.slider {
             background-color: var(--accent-color);
         }
 
-        input:checked + .slider:before {
+        input:checked+.slider:before {
             transform: translateX(24px);
         }
 
@@ -301,7 +303,8 @@
             font-size: 0.9rem;
         }
 
-        input, select {
+        input,
+        select {
             width: 100%;
             padding: 0.75rem 1rem;
             background-color: rgba(11, 15, 25, 0.6);
@@ -313,7 +316,8 @@
             transition: border-color 0.2s;
         }
 
-        input:focus, select:focus {
+        input:focus,
+        select:focus {
             border-color: var(--accent-color);
         }
 
@@ -389,10 +393,12 @@
                 transform: scale(0.95);
                 box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
             }
+
             70% {
                 transform: scale(1);
                 box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
             }
+
             100% {
                 transform: scale(0.95);
                 box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
@@ -425,10 +431,12 @@
                 stroke-dasharray: 1, 150;
                 stroke-dashoffset: 0;
             }
+
             50% {
                 stroke-dasharray: 90, 150;
                 stroke-dashoffset: -35;
             }
+
             100% {
                 stroke-dasharray: 90, 150;
                 stroke-dashoffset: -124;
@@ -436,6 +444,7 @@
         }
     </style>
 </head>
+
 <body>
     <header>
         <h1>WhisperEye</h1>
@@ -451,37 +460,44 @@
 
         <!-- TAB 1: SENSORS & ACTUATORS -->
         <div id="sensors-tab" class="tab-content active">
-            <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+            <h3
+                style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
                 Relevés Capteurs en Temps Réel
             </h3>
             <div class="dashboard-grid">
                 <div class="widget">
                     <span class="widget-title">Température (SHT45)</span>
-                    <span class="widget-value"><span id="val_temp_sht">--.-</span><span class="widget-unit">°C</span></span>
+                    <span class="widget-value"><span id="val_temp_sht">--.-</span><span
+                            class="widget-unit">°C</span></span>
                 </div>
                 <div class="widget">
                     <span class="widget-title">Humidité (SHT45)</span>
-                    <span class="widget-value"><span id="val_humi_sht">--.-</span><span class="widget-unit">%</span></span>
+                    <span class="widget-value"><span id="val_humi_sht">--.-</span><span
+                            class="widget-unit">%</span></span>
                 </div>
                 <div class="widget">
                     <span class="widget-title">CO2 (SCD41)</span>
-                    <span class="widget-value"><span id="val_co2">----</span><span class="widget-unit"> ppm</span></span>
+                    <span class="widget-value"><span id="val_co2">----</span><span class="widget-unit">
+                            ppm</span></span>
                 </div>
                 <div class="widget">
                     <span class="widget-title">Température (DS18B20)</span>
-                    <span class="widget-value"><span id="val_temp_ds">--.-</span><span class="widget-unit">°C</span></span>
+                    <span class="widget-value"><span id="val_temp_ds">--.-</span><span
+                            class="widget-unit">°C</span></span>
                 </div>
             </div>
 
-            <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--secondary-accent); padding-left: 0.5rem; margin-top: 2rem;">
+            <h3
+                style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--secondary-accent); padding-left: 0.5rem; margin-top: 2rem;">
                 Contrôle Actionneurs
             </h3>
-            
+
             <div class="widget" style="margin-bottom: 1rem;">
                 <div class="switch-container">
                     <div>
                         <div style="font-weight: 600; font-size: 0.95rem;">Relais de Puissance 1</div>
-                        <div style="font-size: 0.8rem; color: var(--text-secondary);">Contrôle de la ligne d'alimentation secondaire</div>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary);">Contrôle de la ligne
+                            d'alimentation secondaire</div>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="relay_1_check" onchange="toggleRelay()">
@@ -499,7 +515,9 @@
                     <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.15rem;">
                         Contrôle de la sortie LED graduée
                     </div>
-                    <input type="range" class="range-slider" id="pwm_slider" min="0" max="100" value="0" onchange="updatePwm(this.value)" oninput="document.getElementById('pwm_val_badge').innerText = this.value + '%'">
+                    <input type="range" class="range-slider" id="pwm_slider" min="0" max="100" value="0"
+                        onchange="updatePwm(this.value)"
+                        oninput="document.getElementById('pwm_val_badge').innerText = this.value + '%'">
                 </div>
             </div>
         </div>
@@ -508,7 +526,13 @@
         <div id="status-tab" class="tab-content">
             <div class="info-group">
                 <span class="info-label">État Système</span>
-                <span class="info-value"><span id="system_status_badge" class="badge badge-green"><svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill='#10b981' fill-opacity="0.2" stroke='#10b981' stroke-width="2"/><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Opérationnel</span></span>
+                <span class="info-value"><span id="system_status_badge" class="badge badge-green"><svg
+                            class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" fill='#10b981' fill-opacity="0.2" stroke='#10b981'
+                                stroke-width="2" />
+                            <path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>Opérationnel</span></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Mode Réseau</span>
@@ -568,12 +592,18 @@
         <div id="config-tab" class="tab-content">
             <div class="form-group">
                 <label for="ssid_select">Réseau Wi-Fi (SSID)</label>
+                <div id="known_networks_help" style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;"></div>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
                     <select id="ssid_select" onchange="toggleCustomSsid()">
                         <option value="custom">-- Saisir un SSID --</option>
                     </select>
-                    <button type="button" onclick="scanSsids()" id="ssid_refresh_btn" style="width: auto; padding: 0.75rem 1rem; background-color: rgba(11, 15, 25, 0.6); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;" onmouseover="this.style.borderColor='var(--accent-color)'; this.style.color='var(--accent-color)'" onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-primary)'" title="Actualiser la liste des réseaux">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+                    <button type="button" onclick="scanSsids()" id="ssid_refresh_btn"
+                        style="width: auto; padding: 0.75rem 1rem; background-color: rgba(11, 15, 25, 0.6); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;"
+                        onmouseover="this.style.borderColor='var(--accent-color)'; this.style.color='var(--accent-color)'"
+                        onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-primary)'"
+                        title="Actualiser la liste des réseaux">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
                             <polyline points="23 4 23 10 17 10"></polyline>
                             <polyline points="1 20 1 14 7 14"></polyline>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -581,7 +611,7 @@
                     </button>
                 </div>
             </div>
-            
+
             <div class="form-group" id="ssid_custom_group" style="display: block;">
                 <label for="ssid_custom">SSID Wi-Fi Personnalisé</label>
                 <input type="text" id="ssid_custom" placeholder="MonSSIDPerso">
@@ -591,8 +621,13 @@
                 <label for="password">Mot de passe</label>
                 <div style="position: relative; display: flex; align-items: center;">
                     <input type="password" id="password" placeholder="••••••••" style="padding-right: 2.5rem;">
-                    <span id="toggle_password_icon" onclick="togglePasswordVisibility()" style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;" onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'" onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'" title="Afficher le mot de passe">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
+                    <span id="toggle_password_icon" onclick="togglePasswordVisibility()"
+                        style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;"
+                        onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'"
+                        onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'"
+                        title="Afficher le mot de passe">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                             <circle cx="12" cy="12" r="3"></circle>
                         </svg>
@@ -600,17 +635,33 @@
                 </div>
             </div>
 
-            <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 2rem;" onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
+            <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 2rem;"
+                onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
+
+
 
             <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
                 <label>Mise à Jour du Firmware</label>
-                <button type="button" class="btn" style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;" onclick="checkUpdates()">Vérifier maintenant</button>
+                <div class="switch-container" style="margin-bottom: 1rem;">
+                    <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite Wi-Fi)</span>
+                    <label class="switch">
+                        <input type="checkbox" id="auto_update_toggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <button type="button" class="btn"
+                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;"
+                    onclick="checkUpdates()">Vérifier maintenant</button>
                 <div id="updates_list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
             </div>
 
             <div id="config_status" class="status-message"></div>
         </div>
     </div>
+
+    <footer style="margin-top: 2rem; margin-bottom: 1rem; text-align: center; font-size: 0.85rem; color: var(--text-secondary);">
+        Auteur : <span id="author_name">LOPEZ Alban</span> (<a id="author_email" href="mailto:alban.lopez+whisperEye@gmail.com" style="color: var(--text-secondary); text-decoration: none; border-bottom: 1px dashed var(--text-secondary);">alban.lopez+whisperEye@gmail.com</a>) sur <a id="author_link" href="https://github.com/sctfic/WhisperEye/blob/main/README.md" target="_blank" style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a> - v<span id="footer_version">--</span>
+    </footer>
 
     <script>
         const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
@@ -630,11 +681,11 @@
             let color = "#ef4444";
             let titleText = "Signal faible (1/4)";
             let bars = 1;
-            
+
             if (rssi === null || rssi === undefined || rssi === 0 || rssi === "" || rssi === "- dBm" || rssi === "dBm") {
                 return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Aucun signal (0/4)"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.5M5 12.5a10.94 10.94 0 0 1 5.83-2.84M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`;
             }
-            
+
             const rVal = parseInt(rssi);
             if (isNaN(rVal)) {
                 return `<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Aucun signal (0/4)"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.5M5 12.5a10.94 10.94 0 0 1 5.83-2.84M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`;
@@ -669,7 +720,7 @@
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            
+
             document.getElementById(tabId).classList.add('active');
             event.currentTarget.classList.add('active');
 
@@ -717,6 +768,10 @@
                     window.latestStatusData = data;
                     window.currentWifiSsid = data.wifi_ssid;
 
+                    if (document.getElementById('auto_update_toggle') && data.auto_update !== undefined) {
+                        document.getElementById('auto_update_toggle').checked = data.auto_update;
+                    }
+
                     // Dynamic system status calculation
                     let statusText = getStatusSvg('green') + "Opérationnel";
                     let statusClass = "badge-green";
@@ -735,7 +790,7 @@
 
                     document.getElementById('network_mode').innerText = data.network_mode;
                     document.getElementById('network_mode').className = `badge ${data.network_mode === 'Station' ? 'badge-green' : 'badge-blue'}`;
-                    
+
                     // 1. SSID Wi-Fi (connecté ou pas)
                     if (data.wifi_ssid && data.wifi_ssid !== 'Non connecté' && data.wifi_ssid !== '') {
                         document.getElementById('wifi_ssid').innerHTML = data.wifi_ssid + getStatusSvg('green');
@@ -744,13 +799,13 @@
                     }
 
                     document.getElementById('wifi_rssi_container').innerHTML = (data.wifi_rssi ? `${data.wifi_rssi} dBm` : '- dBm') + getRssiSvg(data.wifi_rssi);
-                    
+
                     if (data.ip_addr && data.ip_addr !== data.gateway_addr) {
                         document.getElementById('ip_addr').innerHTML = data.ip_addr + getStatusSvg('green', 'Internet disponible');
                     } else {
                         document.getElementById('ip_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
                     }
-                    
+
                     // 2. Passerelle (avec ou sans internet)
                     if (data.gateway_addr && data.gateway_addr !== '0.0.0.0' && data.gateway_addr !== '') {
                         document.getElementById('gateway_addr').innerHTML = data.gateway_addr + getStatusSvg('green', 'Internet disponible');
@@ -822,13 +877,54 @@
                     document.getElementById('last_ota').innerHTML = formatOtaTime(data.last_ota_success);
                     document.getElementById('last_ota_dl').innerHTML = formatOtaTime(data.last_ota_dl);
                     document.getElementById('last_ota_write').innerHTML = formatOtaTime(data.last_ota_write);
+
+                    // Save current firmware version globally for prompt recall
+                    window.currentFwVersion = data.fw_version;
+
+                    // Render known networks help
+                    const knownHelp = document.getElementById('known_networks_help');
+                    if (knownHelp) {
+                        if (data.wifi_known) {
+                            const ssids = Object.keys(data.wifi_known);
+                            if (ssids.length > 0) {
+                                knownHelp.innerHTML = "Réseaux enregistrés : " + ssids.map(s => `<strong>${s}</strong>`).join(', ');
+                            } else {
+                                knownHelp.innerText = "Aucun réseau enregistré.";
+                            }
+                        } else {
+                            knownHelp.innerText = "Aucun réseau enregistré.";
+                        }
+                    }
+                    if (data.author) {
+                        const aName = document.getElementById('author_name');
+                        const aEmail = document.getElementById('author_email');
+                        const aLink = document.getElementById('author_link');
+                        const aVersion = document.getElementById('footer_version');
+                        if (aName) aName.textContent = data.author.name;
+                        if (aEmail) {
+                            aEmail.href = "mailto:" + data.author.email;
+                            aEmail.textContent = data.author.email;
+                        }
+                        if (aLink) {
+                            aLink.href = data.author.link;
+                            try {
+                                const url = new URL(data.author.link);
+                                aLink.textContent = url.hostname;
+                            } catch (e) {
+                                aLink.textContent = data.author.link;
+                            }
+                        }
+                        if (aVersion) {
+                            aVersion.textContent = data.fw_version || '--';
+                        }
+                    }
                 })
                 .catch(err => console.error('Erreur status:', err));
         }
 
         function fetchSensors() {
             if (!document.getElementById('sensors-tab').classList.contains('active')) return;
-            
+
             fetch('/api/sensors')
                 .then(res => res.json())
                 .then(data => {
@@ -843,7 +939,7 @@
         function toggleRelay() {
             const check = document.getElementById('relay_1_check');
             const intensity = parseInt(document.getElementById('pwm_slider').value);
-            
+
             fetch('/api/actuators', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -852,12 +948,12 @@
                     pwm_intensity: intensity
                 })
             })
-            .catch(err => console.error('Erreur relay switch:', err));
+                .catch(err => console.error('Erreur relay switch:', err));
         }
 
         function updatePwm(val) {
             const check = document.getElementById('relay_1_check');
-            
+
             fetch('/api/actuators', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -866,7 +962,7 @@
                     pwm_intensity: parseInt(val)
                 })
             })
-            .catch(err => console.error('Erreur pwm slider:', err));
+                .catch(err => console.error('Erreur pwm slider:', err));
         }
 
         function scanSsids() {
@@ -917,14 +1013,13 @@
                 });
         }
 
-        function saveConfiguration(rebootOrOta = false) {
+        function saveConfiguration() {
             const select = document.getElementById('ssid_select');
             let ssid = select.value;
             if (ssid === 'custom') {
                 ssid = document.getElementById('ssid_custom').value;
             }
             const password = document.getElementById('password').value;
-            const currentUpdateUrl = window.latestStatusData ? window.latestStatusData.update_url : "";
 
             if (!ssid) {
                 showMessage('config_status', 'Le SSID est requis !', 'error');
@@ -938,38 +1033,31 @@
                 }
             }
 
-            const msg = rebootOrOta 
-                ? 'Enregistrement en cours. L\'ESP32 va redémarrer immédiatement...' 
-                : 'Configuration en cours d\'enregistrement...';
-            showMessage('config_status', SPINNER_SVG + msg, 'success');
+            showMessage('config_status', SPINNER_SVG + 'Configuration en cours d\'enregistrement...', 'success');
 
             fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     wifi_ssid: ssid,
-                    wifi_psk: password,
-                    update_url: currentUpdateUrl,
-                    apply_only: !rebootOrOta
+                    wifi_psk: password
                 })
             })
-            .then(res => {
-                if (res.ok) {
-                    const successMsg = rebootOrOta 
-                        ? 'Configuration enregistrée. Redémarrage...' 
-                        : `Configuration Wi-Fi appliquée avec succès ! Reconnectez-vous sur le réseau <strong>"${ssid}"</strong> pour accéder à ce WhisperEye.`;
-                    showMessage('config_status', successMsg, 'success');
-                } else {
-                    showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
-                }
-            })
-            .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+                .then(res => {
+                    if (res.ok) {
+                        const successMsg = `Configuration Wi-Fi appliquée avec succès ! Reconnectez-vous sur le réseau <strong>"${ssid}"</strong> pour accéder à ce WhisperEye.`;
+                        showMessage('config_status', successMsg, 'success');
+                    } else {
+                        showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
+                    }
+                })
+                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
         }
 
         function checkUpdates() {
             const updatesList = document.getElementById('updates_list');
             updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">' + SPINNER_SVG + 'Recherche de mises à jour en cours...</p>';
-            
+
             fetch('/api/check_updates')
                 .then(res => {
                     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -980,7 +1068,7 @@
                         updatesList.innerHTML = '<p style="color: var(--warning); font-size: 0.9rem;">Aucun firmware disponible pour cette carte.</p>';
                         return;
                     }
-                    
+
                     const versions = [];
                     if (entry.stable && Array.isArray(entry.stable)) {
                         entry.stable.forEach(v => {
@@ -992,39 +1080,39 @@
                             versions.push({ version: v.version, url: v.url, stable: false });
                         });
                     }
-                    
+
                     if (versions.length === 0) {
                         updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Aucune version trouvée.</p>';
                         return;
                     }
-                    
+
                     updatesList.innerHTML = '';
                     versions.forEach(vInfo => {
                         const versionCard = document.createElement('div');
                         versionCard.style = 'background-color: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;';
-                        
+
                         const left = document.createElement('div');
                         left.style = 'display: flex; flex-direction: column;';
-                        
+
                         const title = document.createElement('span');
                         title.style = 'font-weight: 700; color: var(--text-primary); font-size: 0.95rem;';
                         title.innerText = 'Version ' + vInfo.version;
-                        
+
                         const badge = document.createElement('span');
                         badge.className = vInfo.stable ? 'badge badge-green' : 'badge badge-warn';
                         badge.style = 'width: fit-content; margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem;';
                         badge.innerText = vInfo.stable ? 'Stable' : 'Bêta / Instable';
-                        
+
                         left.appendChild(title);
                         left.appendChild(badge);
-                        
+
                         const btn = document.createElement('button');
                         btn.type = 'button';
                         btn.className = 'btn';
                         btn.style = 'width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem; height: fit-content;';
                         btn.innerText = 'Installer';
                         btn.onclick = () => installFirmware(vInfo.url);
-                        
+
                         versionCard.appendChild(left);
                         versionCard.appendChild(btn);
                         updatesList.appendChild(versionCard);
@@ -1037,51 +1125,60 @@
         }
 
         function installFirmware(binUrl) {
-            const select = document.getElementById('ssid_select');
-            let ssid = select.value;
-            if (ssid === 'custom') {
-                ssid = document.getElementById('ssid_custom').value;
-            }
-            const password = document.getElementById('password').value;
-            
-            if (!ssid) {
-                showMessage('config_status', 'Le SSID est requis pour installer la mise à jour !', 'error');
+            const currentFw = window.currentFwVersion || 'Aucun';
+            if (!confirm(`Version actuelle : ${currentFw}\n\nVoulez-vous vraiment installer la version ${binUrl.split('/').pop()} ? L'appareil va redémarrer puis télécharger le binaire de production.`)) {
                 return;
             }
 
-            if (!confirm('Voulez-vous vraiment installer la version ' + binUrl.split('/').pop() + ' ? L\'appareil va télécharger le binaire de production et redémarrer.')) {
-                return;
-            }
-            
             showMessage('config_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
-            
+
             fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    wifi_ssid: ssid,
-                    wifi_psk: password,
                     update_url: binUrl,
                     apply_only: false
                 })
             })
+                .then(res => {
+                    if (res.ok) {
+                        showMessage('config_status', 'Installation lancée avec succès ! Redémarrage ou téléchargement en cours...', 'success');
+                    } else {
+                        showMessage('config_status', 'Erreur lors du lancement de l\'installation.', 'error');
+                    }
+                })
+                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+        }
+
+        // Auto update toggle immediate saving
+        document.getElementById('auto_update_toggle').addEventListener('change', function() {
+            const autoUpdateVal = this.checked;
+            showMessage('config_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    auto_update: autoUpdateVal
+                })
+            })
             .then(res => {
                 if (res.ok) {
-                    showMessage('config_status', 'Installation lancée avec succès ! Redémarrage ou téléchargement en cours...', 'success');
+                    showMessage('config_status', 'Configuration de mise à jour enregistrée !', 'success');
                 } else {
-                    showMessage('config_status', 'Erreur lors du lancement de l\'installation.', 'error');
+                    showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
                 }
             })
             .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
-        }
+        });
 
         // Periodic sensor readings
         setInterval(fetchSensors, 2000);
-        
+
         // Initial setup
         fetchSensors();
         fetchStatus();
         scanSsids();
     </script>
 </body>
+
 </html>

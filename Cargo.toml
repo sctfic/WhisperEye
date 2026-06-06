@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "common",
-    "factory_boot",
+    "recovery_boot",
     "production_app"
 ]
 resolver = "2"

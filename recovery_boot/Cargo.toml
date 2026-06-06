@@ -1,5 +1,5 @@
 [package]
-name = "factory_boot"
+name = "recovery_boot"
 version = "0.1.0"
 edition = "2021"
 

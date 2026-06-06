@@ -6,6 +6,13 @@ pub struct NvsStorage {
     nvs: EspNvs<NvsDefault>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
+pub struct WifiKnownEntry {
+    pub psk: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<bool>,
+}
+
 impl NvsStorage {
     pub fn new(partition: EspNvsPartition<NvsDefault>) -> Result<Self> {
         let nvs = EspNvs::new(partition, "whispereye", true)
@@ -16,12 +23,8 @@ impl NvsStorage {
     }
 
     pub fn ensure_defaults(&mut self) -> Result<()> {
-        // If a key doesn't exist, we set the default value.
-        // We use some flag or check if a vital key is present.
-        if self.get_str("wifiSsid")?.is_none() {
+        if self.get_str("wifiKnown")?.is_none() {
             info!("NVS is empty or uninitialized. Writing defaults...");
-            self.set_str("wifiSsid", "IoT")?;
-            self.set_str("wifiPsk", "Esp32&Cie2026")?;
             self.set_str("totpSecret", "Salt-4-Hash-Between-Probe-&-WhisperEye")?;
             self.set_str("ntpServer", "wrt.lan")?;
             self.set_str("fwVersion", "empty")?;
@@ -29,12 +32,13 @@ impl NvsStorage {
             self.set_str("lastOtaSuccess", "1970-01-01T00:00:00Z")?;
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
             self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.json")?;
-            self.set_str("updateDlUrl", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.bin")?;
+            self.set_str("updateDlUrl", "https://.../firmware.bin")?;
             self.set_i32("otaRetry", -1)?;
-            self.set_str("wifiKnown", "[]")?;
+            self.set_i32("autoUpdate", 1)?;
+            self.set_str("wifiKnown", r#"{"IoT":{"psk":"Esp32&Cie2026","default":true}}"#)?;
         }
-        if self.get_str("wifiKnown")?.is_none() {
-            self.set_str("wifiKnown", "[]")?;
+        if self.get_i32("autoUpdate")?.is_none() {
+            self.set_i32("autoUpdate", 1)?;
         }
         if self.get_str("lastOtaWrite")?.is_none() {
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
@@ -42,37 +46,44 @@ impl NvsStorage {
         Ok(())
     }
 
-    pub fn get_known_networks(&self) -> Result<Vec<(String, String)>> {
-        let known_str = self.get_str("wifiKnown")?.unwrap_or_else(|| "[]".to_string());
-        #[derive(serde::Deserialize)]
-        struct Net {
-            ssid: String,
-            psk: String,
-        }
-        let list: Vec<Net> = serde_json::from_str(&known_str).unwrap_or_default();
-        Ok(list.into_iter().map(|n| (n.ssid, n.psk)).collect())
+    pub fn get_known_networks(&self) -> Result<std::collections::HashMap<String, WifiKnownEntry>> {
+        let known_str = self.get_str("wifiKnown")?.unwrap_or_else(|| "{}".to_string());
+        let map: std::collections::HashMap<String, WifiKnownEntry> = serde_json::from_str(&known_str).unwrap_or_default();
+        Ok(map)
     }
 
-    pub fn add_known_network(&mut self, ssid: &str, psk: &str) -> Result<()> {
+    pub fn save_known_networks(&mut self, map: &std::collections::HashMap<String, WifiKnownEntry>) -> Result<()> {
+        let new_str = serde_json::to_string(map)?;
+        self.set_str("wifiKnown", &new_str)?;
+        Ok(())
+    }
+
+    pub fn set_default_network(&mut self, ssid: &str, psk: &str) -> Result<()> {
         if ssid.is_empty() {
             return Ok(());
         }
-        let mut list = self.get_known_networks()?;
-        // Check if already exists, if so update the psk, else append
-        if let Some(pos) = list.iter().position(|(s, _)| s == ssid) {
-            list[pos].1 = psk.to_string();
-        } else {
-            list.push((ssid.to_string(), psk.to_string()));
+        let mut map = self.get_known_networks()?;
+        for entry in map.values_mut() {
+            entry.default = None;
         }
-        
-        #[derive(serde::Serialize)]
-        struct Net {
-            ssid: String,
-            psk: String,
+        map.insert(ssid.to_string(), WifiKnownEntry {
+            psk: psk.to_string(),
+            default: Some(true),
+        });
+        self.save_known_networks(&map)?;
+        Ok(())
+    }
+
+    pub fn set_default_network_by_ssid(&mut self, ssid: &str) -> Result<()> {
+        let mut map = self.get_known_networks()?;
+        for (s, entry) in map.iter_mut() {
+            if s == ssid {
+                entry.default = Some(true);
+            } else {
+                entry.default = None;
+            }
         }
-        let serialized_list: Vec<Net> = list.into_iter().map(|(ssid, psk)| Net { ssid, psk }).collect();
-        let new_str = serde_json::to_string(&serialized_list)?;
-        self.set_str("wifiKnown", &new_str)?;
+        self.save_known_networks(&map)?;
         Ok(())
     }
 
@@ -111,8 +122,6 @@ impl NvsStorage {
     pub fn dump_to_log(&self) -> Result<()> {
         info!("=== NVS STORAGE DUMP ===");
         let keys_str = &[
-            "wifiSsid",
-            "wifiPsk",
             "totpSecret",
             "ntpServer",
             "fwVersion",
@@ -127,7 +136,7 @@ impl NvsStorage {
         for key in keys_str {
             match self.get_str(key) {
                 Ok(Some(val)) => {
-                    if *key == "wifiPsk" || *key == "totpSecret" {
+                    if *key == "totpSecret" {
                         if val.len() > 4 {
                             info!("  {} : \"{}***{}\"", key, &val[..2], &val[val.len()-2..]);
                         } else {
@@ -142,7 +151,7 @@ impl NvsStorage {
             }
         }
         
-        let keys_i32 = &["otaRetry"];
+        let keys_i32 = &["otaRetry", "autoUpdate"];
         for key in keys_i32 {
             match self.get_i32(key) {
                 Ok(Some(val)) => info!("  {} : {}", key, val),

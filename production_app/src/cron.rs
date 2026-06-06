@@ -109,14 +109,24 @@ impl CronWorker {
         }
 
         let mut storage = self.nvs.lock().unwrap();
+        let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1);
+        if auto_update == 0 {
+            let next_check_str = storage.get_str("nextCheck")?.unwrap_or_default();
+            if next_check_str != "4102387200" {
+                storage.set_str("nextCheck", "4102387200")?;
+                info!("autoUpdate is false, nextCheck set to 2099-12-31 (4102387200)");
+            }
+            return Ok(());
+        }
+
         let next_check_str = storage.get_str("nextCheck")?.unwrap_or_default();
         let mut next_check: u64 = next_check_str.parse().unwrap_or(0);
 
-        if next_check == 0 {
-            // First run: initialize target date to 7 days from now
-            next_check = now + 7 * 86400;
+        if next_check == 0 || next_check_str == "4102387200" {
+            // First run or transitioning from disabled: initialize target date to tomorrow at 14:00 UTC
+            next_check = ((now / 86400) + 1) * 86400 + 14 * 3600;
             storage.set_str("nextCheck", &next_check.to_string())?;
-            info!("NVS target 'nextCheck' initialized to: {} (7 days from now)", next_check);
+            info!("NVS target 'nextCheck' initialized to tomorrow 14:00 UTC: {} (after transition or first run)", next_check);
             return Ok(());
         }
 
@@ -124,7 +134,7 @@ impl CronWorker {
             info!("Task 7 Days: Running check_update() check (target nextCheck: {}, current: {})", next_check, now);
             self.perform_check_update(&mut *storage)?;
             
-            // Set new target target target check date to exactly 7 days from now
+            // Set new target check date to exactly 7 days from now
             let new_next_check = now + 7 * 86400;
             storage.set_str("nextCheck", &new_next_check.to_string())?;
             info!("NVS target 'nextCheck' updated to: {} (Next 7-day target)", new_next_check);
@@ -197,7 +207,7 @@ impl CronWorker {
         }
 
         if let (Some(dl_url), Some(ver)) = (new_stable_url, new_version) {
-            info!("Periodic update found version: {}. Arming OTA and rebooting to factory...", ver);
+            info!("Periodic update found version: {}. Arming OTA and rebooting to recovery...", ver);
             storage.set_str("updateDlUrl", &dl_url)?;
             storage.set_i32("otaRetry", 3)?;
             

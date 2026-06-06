@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhisperEye - Secours & Provisionnement</title>
+    <title>WhisperEye - Recovery Boot</title>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -365,6 +365,61 @@
                 stroke-dashoffset: -124;
             }
         }
+
+        /* SWITCH TOGGLE */
+        .switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+            padding: 0.5rem 0;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 24px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #334155;
+            transition: .3s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: var(--accent-color);
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(24px);
+        }
     </style>
 </head>
 
@@ -379,7 +434,7 @@
                 <line x1="12" y1="9" x2="12" y2="13"></line>
                 <line x1="12" y1="17" x2="12.01" y2="17"></line>
             </svg>
-            Firmware Secours & Provisionnement (Factory)
+            Firmware Secours & Provisionnement
         </p>
     </header>
 
@@ -435,8 +490,8 @@
                 <span class="info-value" id="prod_version">empty</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Firmware Secours</span>
-                <span class="info-value" id="factory_version">--</span>
+                <span class="info-label">Firmware Recovery</span>
+                <span class="info-value" id="recovery_version">--</span>
             </div>
             <div class="info-group">
                 <span class="info-label">Carte WhisperEye</span>
@@ -465,6 +520,9 @@
         <div id="config-tab" class="tab-content">
             <div class="form-group">
                 <label for="ssid_select">Réseau Wi-Fi (SSID)</label>
+                <div id="known_networks_help"
+                    style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;">
+                </div>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
                     <select id="ssid_select" onchange="toggleCustomSsid()">
                         <option value="custom">-- Saisir un SSID --</option>
@@ -513,8 +571,18 @@
                 style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 2rem;"
                 onclick="saveConfiguration(true)">Sauvegarder & Démarrer l'OTA</button>
 
+
+
             <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
                 <label>Mise à Jour du Firmware</label>
+                <div class="switch-container" style="margin-bottom: 1rem;">
+                    <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite
+                        Wi-Fi)</span>
+                    <label class="switch">
+                        <input type="checkbox" id="auto_update_toggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
                 <button type="button" class="btn"
                     style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;"
                     onclick="checkUpdates()">Vérifier maintenant</button>
@@ -555,6 +623,16 @@
             <div id="upload_status" class="status-message"></div>
         </div>
     </div>
+
+    <footer
+        style="margin-top: 2rem; margin-bottom: 1rem; text-align: center; font-size: 0.85rem; color: var(--text-secondary);">
+        Auteur : <span id="author_name">LOPEZ Alban</span> (<a id="author_email"
+            href="mailto:alban.lopez+whisperEye@gmail.com"
+            style="color: var(--text-secondary); text-decoration: none; border-bottom: 1px dashed var(--text-secondary);">alban.lopez+whisperEye@gmail.com</a>)
+        sur <a id="author_link" href="https://github.com/sctfic/WhisperEye/blob/main/README.md" target="_blank"
+            style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a> - v<span
+            id="footer_version">--</span>
+    </footer>
 
     <script>
         const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
@@ -672,6 +750,10 @@
                     window.latestStatusData = data;
                     window.currentWifiSsid = data.wifi_ssid;
 
+                    if (document.getElementById('auto_update_toggle') && data.auto_update !== undefined) {
+                        document.getElementById('auto_update_toggle').checked = data.auto_update;
+                    }
+
                     // Dynamic system status calculation
                     let statusText = getStatusSvg('green') + "Opérationnel";
                     let statusClass = "badge-success";
@@ -754,11 +836,11 @@
                             document.getElementById('chip_type').innerHTML = 'Inconnu' + getStatusSvg('red');
                         }
                     }
-                    if (document.getElementById('factory_version')) {
-                        if (data.factory_version && data.factory_version !== '--' && data.factory_version !== 'empty' && data.factory_version !== '') {
-                            document.getElementById('factory_version').innerHTML = data.factory_version + getStatusSvg('green');
+                    if (document.getElementById('recovery_version')) {
+                        if (data.recovery_version && data.recovery_version !== '--' && data.recovery_version !== 'empty' && data.recovery_version !== '') {
+                            document.getElementById('recovery_version').innerHTML = data.recovery_version + getStatusSvg('green');
                         } else {
-                            document.getElementById('factory_version').innerHTML = 'Inconnu' + getStatusSvg('red');
+                            document.getElementById('recovery_version').innerHTML = 'Inconnu' + getStatusSvg('red');
                         }
                     }
 
@@ -784,6 +866,47 @@
                     document.getElementById('last_ota').innerHTML = formatOtaTime(data.last_ota_success);
                     document.getElementById('last_ota_dl').innerHTML = formatOtaTime(data.last_ota_dl);
                     document.getElementById('last_ota_write').innerHTML = formatOtaTime(data.last_ota_write);
+
+                    // Save current firmware version globally for prompt recall
+                    window.currentFwVersion = data.fw_version;
+
+                    // Render known networks help
+                    const knownHelp = document.getElementById('known_networks_help');
+                    if (knownHelp) {
+                        if (data.wifi_known) {
+                            const ssids = Object.keys(data.wifi_known);
+                            if (ssids.length > 0) {
+                                knownHelp.innerHTML = "Réseaux enregistrés : " + ssids.map(s => `<strong>${s}</strong>`).join(', ');
+                            } else {
+                                knownHelp.innerText = "Aucun réseau enregistré.";
+                            }
+                        } else {
+                            knownHelp.innerText = "Aucun réseau enregistré.";
+                        }
+                    }
+                    if (data.author) {
+                        const aName = document.getElementById('author_name');
+                        const aEmail = document.getElementById('author_email');
+                        const aLink = document.getElementById('author_link');
+                        const aVersion = document.getElementById('footer_version');
+                        if (aName) aName.textContent = data.author.name;
+                        if (aEmail) {
+                            aEmail.href = "mailto:" + data.author.email;
+                            aEmail.textContent = data.author.email;
+                        }
+                        if (aLink) {
+                            aLink.href = data.author.link;
+                            try {
+                                const url = new URL(data.author.link);
+                                aLink.textContent = url.hostname;
+                            } catch (e) {
+                                aLink.textContent = data.author.link;
+                            }
+                        }
+                        if (aVersion) {
+                            aVersion.textContent = data.recovery_version || data.fw_version || '--';
+                        }
+                    }
                 })
                 .catch(err => console.error('Erreur status:', err));
         }
@@ -846,7 +969,6 @@
                 ssid = document.getElementById('ssid_custom').value;
             }
             const password = document.getElementById('password').value;
-            const currentUpdateUrl = window.latestStatusData ? window.latestStatusData.update_url : "";
 
             if (!ssid) {
                 showMessage('config_status', 'Le SSID est requis !', 'error');
@@ -860,20 +982,24 @@
                 }
             }
 
-            const msg = rebootOrOta
-                ? 'Enregistrement en cours et démarrage de la procédure OTA...'
-                : 'Configuration en cours d\'enregistrement...';
-            showMessage('config_status', SPINNER_SVG + msg, 'success');
+            const payload = {
+                wifi_ssid: ssid,
+                wifi_psk: password
+            };
+
+            if (rebootOrOta) {
+                const currentUpdateUrl = window.latestStatusData ? window.latestStatusData.update_url : "";
+                payload.update_url = currentUpdateUrl;
+                payload.apply_only = false;
+                showMessage('config_status', SPINNER_SVG + 'Enregistrement en cours et démarrage de la procédure OTA...', 'success');
+            } else {
+                showMessage('config_status', SPINNER_SVG + 'Configuration en cours d\'enregistrement...', 'success');
+            }
 
             fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    wifi_ssid: ssid,
-                    wifi_psk: password,
-                    update_url: currentUpdateUrl,
-                    apply_only: !rebootOrOta
-                })
+                body: JSON.stringify(payload)
             })
                 .then(res => {
                     if (res.ok) {
@@ -959,19 +1085,8 @@
         }
 
         function installFirmware(binUrl) {
-            const select = document.getElementById('ssid_select');
-            let ssid = select.value;
-            if (ssid === 'custom') {
-                ssid = document.getElementById('ssid_custom').value;
-            }
-            const password = document.getElementById('password').value;
-
-            if (!ssid) {
-                showMessage('config_status', 'Le SSID est requis pour installer la mise à jour !', 'error');
-                return;
-            }
-
-            if (!confirm('Voulez-vous vraiment installer la version ' + binUrl.split('/').pop() + ' ? L\'appareil va télécharger le binaire de production et redémarrer.')) {
+            const currentFw = window.currentFwVersion || 'Aucun';
+            if (!confirm(`Version actuelle : ${currentFw}\n\nVoulez-vous vraiment installer la version ${binUrl.split('/').pop()} ? L'appareil va télécharger le binaire de production et redémarrer.`)) {
                 return;
             }
 
@@ -981,8 +1096,6 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    wifi_ssid: ssid,
-                    wifi_psk: password,
                     update_url: binUrl,
                     apply_only: false
                 })
@@ -1041,6 +1154,27 @@
 
             xhr.send(file);
         }
+
+        // Auto update toggle immediate saving
+        document.getElementById('auto_update_toggle').addEventListener('change', function () {
+            const autoUpdateVal = this.checked;
+            showMessage('config_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    auto_update: autoUpdateVal
+                })
+            })
+                .then(res => {
+                    if (res.ok) {
+                        showMessage('config_status', 'Configuration de mise à jour enregistrée !', 'success');
+                    } else {
+                        showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
+                    }
+                })
+                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+        });
 
         // Initial fetch
         fetchStatus();
