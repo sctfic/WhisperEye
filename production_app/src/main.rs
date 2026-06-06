@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.3-0003";
+const FW_VERSION: &str = "1.0.3-0006";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -25,6 +25,12 @@ mod sensors;
 mod actuators;
 mod web_pages;
 mod cron;
+mod static_devices;
+mod dynamic_devices;
+mod ds18b20;
+mod i2c_bus;
+mod screen;
+mod radio;
 
 use wifi::WifiManager;
 use common::nvs_storage::NvsStorage;
@@ -38,6 +44,7 @@ struct ConfigPayload {
     update_interval: Option<String>,
     apply_only: Option<bool>,
     auto_update: Option<bool>,
+    totp_secret: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -72,8 +79,38 @@ fn main() -> Result<()> {
         let _ = storage.dump_to_log();
     }
 
-    // Initialize Wi-Fi
-    let mut wifi_manager = WifiManager::new(peripherals, sys_loop.clone(), nvs_default)?;
+    // Unpack peripherals components to prevent borrow-checker moves
+    let pins = peripherals.pins;
+    let modem = peripherals.modem;
+
+    // Initialize Static Devices from pins
+    let static_devs = Arc::new(std::sync::Mutex::new(static_devices::StaticDevices::init(
+        pins.gpio48,
+        pins.gpio47,
+        pins.gpio21,
+        pins.gpio14,
+        pins.gpio36,
+        pins.gpio35,
+    )?));
+
+    // Scan 1-Wire bus dynamically at boot
+    let onewr_pin = pins.gpio39;
+    let discovered_probes = if let Ok(mut ow) = ds18b20::OneWire::new(onewr_pin) {
+        ow.search_roms()
+    } else {
+        Vec::new()
+    };
+    info!("Dynamic 1-Wire scan found {} DS18B20 probes.", discovered_probes.len());
+    let discovered_probes = Arc::new(discovered_probes);
+
+    // Register all static and dynamic devices in NVS registry
+    {
+        let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&nvs_storage));
+        let _ = registry.scan_and_register((*discovered_probes).clone());
+    }
+
+    // Initialize Wi-Fi (consuming only the modem, leaving other pins untouched)
+    let mut wifi_manager = WifiManager::new(modem, sys_loop.clone(), nvs_default)?;
     
     // Perform initial scan before any connection attempts
     let _ = wifi_manager.perform_initial_scan();
@@ -252,6 +289,7 @@ fn main() -> Result<()> {
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
         let wifi_known = storage.get_known_networks().unwrap_or_default();
         let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1) == 1;
+        let totp_secret = storage.get_str("totpSecret")?.unwrap_or_default();
 
         let json = serde_json::json!({
             "network_mode": active_mode,
@@ -272,6 +310,7 @@ fn main() -> Result<()> {
             "chip_type": CHIP_TYPE,
             "wifi_known": wifi_known,
             "auto_update": auto_update,
+            "totp_secret": totp_secret,
             "author": {
                 "email": AUTHOR_EMAIL,
                 "name": AUTHOR_NAME,
@@ -410,16 +449,82 @@ fn main() -> Result<()> {
     })?;
 
     // GET /api/sensors
-    server.fn_handler("/api/sensors", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let readings = sensors::read_sensors();
+    let sensors_probes_clone = Arc::clone(&discovered_probes);
+    server.fn_handler("/api/sensors", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let readings = sensors::read_sensors(&sensors_probes_clone);
         let response_data = serde_json::to_string(&readings)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
         Ok(())
     })?;
 
+    // GET /api/peripherals (lists devices with custom names and current values)
+    let periphs_nvs = Arc::clone(&nvs_storage);
+    let periphs_act = Arc::clone(&actuators_state);
+    let periphs_probes = Arc::clone(&discovered_probes);
+    server.fn_handler("/api/peripherals", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let (rla, rlb, swpwr, ina, inb) = {
+            let act = periphs_act.lock().unwrap();
+            (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
+        };
+        let touch_state = false; // default touch status
+        
+        let readings = sensors::read_sensors(&periphs_probes);
+        let mut ds_readings = std::collections::HashMap::new();
+        for (addr, temp) in &readings.ds18b20_temperatures {
+            ds_readings.insert(addr.clone(), *temp);
+        }
+
+        let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&periphs_nvs));
+        let list = registry.get_devices_display(
+            rla,
+            rlb,
+            swpwr,
+            ina,
+            inb,
+            readings.temperature_sht45,
+            readings.humidity_sht45,
+            readings.co2_scd41,
+            &ds_readings,
+            touch_state,
+        );
+
+        let response_data = serde_json::to_string(&list)?;
+        let mut response = req.into_response(200, Some("OK"), &[
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*")
+        ])?;
+        response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
+    // POST /api/peripherals (renames a device in NVS, limited to 64 chars)
+    #[derive(serde::Deserialize)]
+    struct RenamePayload {
+        id: String,
+        name: String,
+    }
+    let rename_nvs = Arc::clone(&nvs_storage);
+    server.fn_handler("/api/peripherals", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
+        let mut buf = vec![0u8; 256];
+        let bytes_read = req.read(&mut buf)?;
+        let payload: RenamePayload = serde_json::from_slice(&buf[..bytes_read])?;
+
+        let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&rename_nvs));
+        if let Err(e) = registry.rename_device(&payload.id, &payload.name) {
+            let mut response = req.into_status_response(400)?;
+            response.write(format!("Error: {}", e).as_bytes())?;
+            return Ok(());
+        }
+
+        let mut response = req.into_ok_response()?;
+        response.write(b"Rename Successful")?;
+        Ok(())
+    })?;
+
     // POST /api/actuators
     let act_clone = Arc::clone(&actuators_state);
+    let static_devs_clone = Arc::clone(&static_devs);
     server.fn_handler("/api/actuators", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
         let mut buf = vec![0u8; 256];
         let bytes_read = req.read(&mut buf)?;
@@ -428,8 +533,17 @@ fn main() -> Result<()> {
         info!("Updating actuators state: {:?}", payload);
         {
             let mut state = act_clone.lock().unwrap();
-            state.relay_1 = payload.relay_1;
-            state.pwm_intensity = payload.pwm_intensity;
+            *state = payload.clone();
+        }
+
+        // Apply physical states to static device GPIO pins
+        {
+            let mut devs = static_devs_clone.lock().unwrap();
+            let _ = devs.relay_a.set_level(payload.rla.into());
+            let _ = devs.relay_b.set_level(payload.rlb.into());
+            let _ = devs.sw_pwr.set_level(payload.swpwr.into());
+            let _ = devs.ina.set_level(payload.ina.into());
+            let _ = devs.inb.set_level(payload.inb.into());
         }
 
         let response_data = serde_json::to_string(&payload)?;
@@ -578,6 +692,11 @@ fn main() -> Result<()> {
                     storage.set_str("nextCheck", &next_check.to_string())?;
                     info!("autoUpdate transitioned from 0 to 1, nextCheck reset to tomorrow 14:00 UTC ({})", next_check);
                 }
+            }
+            
+            if let Some(ref totp_sec) = payload.totp_secret {
+                storage.set_str("totpSecret", totp_sec)?;
+                info!("totpSecret updated in NVS to: {}", totp_sec);
             }
             
             // Restart condition: different or new update URL is set, and NOT apply_only
@@ -788,6 +907,9 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
 
 
 

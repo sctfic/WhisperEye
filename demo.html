@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<html lang="fr">
-
-<head>
-    <meta charset="UTF-8">
+<!-- saved from url=(0010)http://s3/ -->
+<html lang="fr"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhisperEye - Dashboard Production</title>
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/x-icon" href="http://s3/favicon.ico">
     <style>
         :root {
             --bg-color: #0b0f19;
@@ -453,20 +452,303 @@
 
     <div class="container">
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('devices-tab')">Devices</button>
-            <button class="tab-btn" onclick="switchTab('status-tab')">Statut ESP32</button>
-            <button class="tab-btn" onclick="switchTab('config-tab')">Configuration</button>
+            <button class="tab-btn" onclick="switchTab(&#39;devices-tab&#39;)">Devices</button>
+            <button class="tab-btn" onclick="switchTab(&#39;status-tab&#39;)">Statut ESP32</button>
+            <button class="tab-btn active" onclick="switchTab(&#39;config-tab&#39;)">Configuration</button>
         </div>
 
         <!-- TAB 1: DEVICES & ACTUATORS -->
-        <div id="devices-tab" class="tab-content active">
+        <div id="devices-tab" class="tab-content">
             <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
-                Registre & Valeurs Périphériques
+                Registre &amp; Valeurs Périphériques
             </h3>
             
             <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 2rem;">
-                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des périphériques...</p>
-            </div>
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_i2c:0:0x44" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;i2c:0:0x44&#39;)">Sonde SHT45</span>
+                                    <span id="edit_input_container_i2c:0:0x44" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_i2c:0:0x44" maxlength="64" value="Sonde SHT45" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;i2c:0:0x44&#39;)" onkeydown="handleKeyDown(event, &#39;i2c:0:0x44&#39;)">
+                                    </span>
+                                    <button id="edit_btn_i2c:0:0x44" onclick="startEditing(&#39;i2c:0:0x44&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">i2c:0:0x44 [Dynamique]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_i2c:0:0x44" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">22.0 °C, 40.3%</span>
+                                <span id="badge_i2c:0:0x44" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_i2c:1:0x62" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;i2c:1:0x62&#39;)">Capteur CO2 SCD41</span>
+                                    <span id="edit_input_container_i2c:1:0x62" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_i2c:1:0x62" maxlength="64" value="Capteur CO2 SCD41" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;i2c:1:0x62&#39;)" onkeydown="handleKeyDown(event, &#39;i2c:1:0x62&#39;)">
+                                    </span>
+                                    <button id="edit_btn_i2c:1:0x62" onclick="startEditing(&#39;i2c:1:0x62&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">i2c:1:0x62 [Dynamique]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_i2c:1:0x62" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">873 ppm</span>
+                                <span id="badge_i2c:1:0x62" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_onewr:28aa412e831501fa" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;onewr:28aa412e831501fa&#39;)">Sonde 1-Wire (28AA41)</span>
+                                    <span id="edit_input_container_onewr:28aa412e831501fa" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_onewr:28aa412e831501fa" maxlength="64" value="Sonde 1-Wire (28AA41)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;onewr:28aa412e831501fa&#39;)" onkeydown="handleKeyDown(event, &#39;onewr:28aa412e831501fa&#39;)">
+                                    </span>
+                                    <button id="edit_btn_onewr:28aa412e831501fa" onclick="startEditing(&#39;onewr:28aa412e831501fa&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">onewr:28aa412e831501fa [Dynamique]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_onewr:28aa412e831501fa" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">22.2 °C</span>
+                                <span id="badge_onewr:28aa412e831501fa" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_onewr:28ff641e8315029c" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;onewr:28ff641e8315029c&#39;)">Sonde 1-Wire (28FF64)</span>
+                                    <span id="edit_input_container_onewr:28ff641e8315029c" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_onewr:28ff641e8315029c" maxlength="64" value="Sonde 1-Wire (28FF64)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;onewr:28ff641e8315029c&#39;)" onkeydown="handleKeyDown(event, &#39;onewr:28ff641e8315029c&#39;)">
+                                    </span>
+                                    <button id="edit_btn_onewr:28ff641e8315029c" onclick="startEditing(&#39;onewr:28ff641e8315029c&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">onewr:28ff641e8315029c [Dynamique]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_onewr:28ff641e8315029c" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">22.0 °C</span>
+                                <span id="badge_onewr:28ff641e8315029c" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_radio" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;radio&#39;)">Transmetteur Radio RF</span>
+                                    <span id="edit_input_container_radio" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_radio" maxlength="64" value="Transmetteur Radio RF" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;radio&#39;)" onkeydown="handleKeyDown(event, &#39;radio&#39;)">
+                                    </span>
+                                    <button id="edit_btn_radio" onclick="startEditing(&#39;radio&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">radio [Dynamique]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_radio" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">Actif</span>
+                                <span id="badge_radio" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_screen" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;screen&#39;)">Écran ST7789</span>
+                                    <span id="edit_input_container_screen" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_screen" maxlength="64" value="Écran ST7789" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;screen&#39;)" onkeydown="handleKeyDown(event, &#39;screen&#39;)">
+                                    </span>
+                                    <button id="edit_btn_screen" onclick="startEditing(&#39;screen&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">screen [Dynamique]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_screen" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">Actif</span>
+                                <span id="badge_screen" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_drvb701" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;drvb701&#39;)">Contrôleur Pont en H (DRVB701)</span>
+                                    <span id="edit_input_container_drvb701" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_drvb701" maxlength="64" value="Contrôleur Pont en H (DRVB701)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;drvb701&#39;)" onkeydown="handleKeyDown(event, &#39;drvb701&#39;)">
+                                    </span>
+                                    <button id="edit_btn_drvb701" onclick="startEditing(&#39;drvb701&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">drvb701 [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_drvb701" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">Actif (PWM: 0%)</span>
+                                <span id="badge_drvb701" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_isense" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;isense&#39;)">Mesure Courant Pont H (ISENSE)</span>
+                                    <span id="edit_input_container_isense" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_isense" maxlength="64" value="Mesure Courant Pont H (ISENSE)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;isense&#39;)" onkeydown="handleKeyDown(event, &#39;isense&#39;)">
+                                    </span>
+                                    <button id="edit_btn_isense" onclick="startEditing(&#39;isense&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">isense [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_isense" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">0.18 A</span>
+                                <span id="badge_isense" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_rla" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;rla&#39;)">Relais A (saon)</span>
+                                    <span id="edit_input_container_rla" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_rla" maxlength="64" value="Relais A (saon)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;rla&#39;)" onkeydown="handleKeyDown(event, &#39;rla&#39;)">
+                                    </span>
+                                    <button id="edit_btn_rla" onclick="startEditing(&#39;rla&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">rla [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_rla" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">OFF</span>
+                                <span id="badge_rla" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_rlb" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;rlb&#39;)">Relais B (RLB)</span>
+                                    <span id="edit_input_container_rlb" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_rlb" maxlength="64" value="Relais B (RLB)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;rlb&#39;)" onkeydown="handleKeyDown(event, &#39;rlb&#39;)">
+                                    </span>
+                                    <button id="edit_btn_rlb" onclick="startEditing(&#39;rlb&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">rlb [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_rlb" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">OFF</span>
+                                <span id="badge_rlb" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_sp3485en" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;sp3485en&#39;)">Bus RS485 (SP3485EN)</span>
+                                    <span id="edit_input_container_sp3485en" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_sp3485en" maxlength="64" value="Bus RS485 (SP3485EN)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;sp3485en&#39;)" onkeydown="handleKeyDown(event, &#39;sp3485en&#39;)">
+                                    </span>
+                                    <button id="edit_btn_sp3485en" onclick="startEditing(&#39;sp3485en&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">sp3485en [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_sp3485en" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">OK</span>
+                                <span id="badge_sp3485en" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_swpwr" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;swpwr&#39;)">Coupure Alimentation (SWPWR)</span>
+                                    <span id="edit_input_container_swpwr" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_swpwr" maxlength="64" value="Coupure Alimentation (SWPWR)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;swpwr&#39;)" onkeydown="handleKeyDown(event, &#39;swpwr&#39;)">
+                                    </span>
+                                    <button id="edit_btn_swpwr" onclick="startEditing(&#39;swpwr&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">swpwr [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_swpwr" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">ON</span>
+                                <span id="badge_swpwr" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_tca954" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;tca954&#39;)">Multiplexeur I2C (TCA954)</span>
+                                    <span id="edit_input_container_tca954" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_tca954" maxlength="64" value="Multiplexeur I2C (TCA954)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;tca954&#39;)" onkeydown="handleKeyDown(event, &#39;tca954&#39;)">
+                                    </span>
+                                    <button id="edit_btn_tca954" onclick="startEditing(&#39;tca954&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">tca954 [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_tca954" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">OK</span>
+                                <span id="badge_tca954" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_touch" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;touch&#39;)">Touche Tactile (TOUCH)</span>
+                                    <span id="edit_input_container_touch" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_touch" maxlength="64" value="Touche Tactile (TOUCH)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;touch&#39;)" onkeydown="handleKeyDown(event, &#39;touch&#39;)">
+                                    </span>
+                                    <button id="edit_btn_touch" onclick="startEditing(&#39;touch&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">touch [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_touch" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">RELÂCHÉ</span>
+                                <span id="badge_touch" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                    <span id="name_display_vsense" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing(&#39;vsense&#39;)">Mesure Tension (VSENSE)</span>
+                                    <span id="edit_input_container_vsense" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                        <input type="text" id="input_vsense" maxlength="64" value="Mesure Tension (VSENSE)" style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;" onblur="handleBlur(&#39;vsense&#39;)" onkeydown="handleKeyDown(event, &#39;vsense&#39;)">
+                                    </span>
+                                    <button id="edit_btn_vsense" onclick="startEditing(&#39;vsense&#39;)" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    </button>
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">vsense [Fixe]</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                <span id="val_vsense" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">12.4 V</span>
+                                <span id="badge_vsense" class="badge badge-green">Présent</span>
+                            </div>
+                        </div>
+                        </div>
 
             <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--secondary-accent); padding-left: 0.5rem; margin-top: 2rem;">
                 Contrôle Actionneurs Direct
@@ -494,9 +776,7 @@
                     <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.15rem;">
                         Contrôle de la sortie LED graduée
                     </div>
-                    <input type="range" class="range-slider" id="pwm_slider" min="0" max="100" value="0"
-                        onchange="updatePwm(this.value)"
-                        oninput="document.getElementById('pwm_val_badge').innerText = this.value + '%'">
+                    <input type="range" class="range-slider" id="pwm_slider" min="0" max="100" value="0" onchange="updatePwm(this.value)" oninput="document.getElementById(&#39;pwm_val_badge&#39;).innerText = this.value + &#39;%&#39;">
                 </div>
             </div>
         </div>
@@ -505,13 +785,7 @@
         <div id="status-tab" class="tab-content">
             <div class="info-group">
                 <span class="info-label">État Système</span>
-                <span class="info-value"><span id="system_status_badge" class="badge badge-green"><svg
-                            class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="12" cy="12" r="10" fill='#10b981' fill-opacity="0.2" stroke='#10b981'
-                                stroke-width="2" />
-                            <path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2"
-                                stroke-linecap="round" stroke-linejoin="round" />
-                        </svg>Opérationnel</span></span>
+                <span class="info-value"><span id="system_status_badge" class="badge badge-green"><svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>Opérationnel</span></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Mode Réseau</span>
@@ -519,70 +793,68 @@
             </div>
             <div class="info-group">
                 <span class="info-label">SSID Wi-Fi</span>
-                <span class="info-value" id="wifi_ssid">Chargement...</span>
+                <span class="info-value" id="wifi_ssid">Lbx<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Force Signal (RSSI)</span>
-                <span class="info-value" id="wifi_rssi_container"><span id="wifi_rssi">- dBm</span></span>
+                <span class="info-value" id="wifi_rssi_container">-51 dBm<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Signal excellent (4/4, -51 dBm)">
+                <path d="M4 20v-2" stroke="#10b981"></path>
+                <path d="M9 20v-6" stroke="#10b981"></path>
+                <path d="M14 20v-10" stroke="#10b981"></path>
+                <path d="M19 20V4" stroke="#10b981"></path>
+            </svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Adresse IP</span>
-                <span class="info-value" id="ip_addr">0.0.0.0</span>
+                <span class="info-value" id="ip_addr">192.168.1.101<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" title="Internet disponible"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Passerelle (Gateway)</span>
-                <span class="info-value" id="gateway_addr">0.0.0.0</span>
+                <span class="info-value" id="gateway_addr">192.168.1.1<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" title="Internet disponible"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Heure Système</span>
-                <span class="info-value" id="sys_time">1970-01-01 00:00:00</span>
+                <span class="info-value" id="sys_time">2026-05-27T14:52:39Z<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" title="Synchronisée"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">NTP Serveur</span>
-                <span class="info-value" id="ntp_server">wrt.lan</span>
+                <span class="info-value" id="ntp_server">wrt.lan<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" title="Accessible"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Firmware Production Actif</span>
-                <span class="info-value" id="prod_version">v1.0.0-poc</span>
+                <span class="info-value" id="prod_version">1.0.3-0006<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" title="Version démarrée"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Carte WhisperEye</span>
-                <span class="info-value" id="whispereye_board">--</span>
+                <span class="info-value" id="whispereye_board">1.0<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Type de Puce</span>
-                <span class="info-value" id="chip_type">--</span>
+                <span class="info-value" id="chip_type">ESP32-S3<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Dernier Téléchargement OTA</span>
-                <span class="info-value" id="last_ota_dl">1970-01-01 00:00:00</span>
+                <span class="info-value" id="last_ota_dl">Jamais<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#ef4444" fill-opacity="0.2" stroke="#ef4444" stroke-width="2"></circle><path d="M15 9L9 15M9 9L15 15" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Dernière Écriture OTA</span>
-                <span class="info-value" id="last_ota_write">1970-01-01 00:00:00</span>
+                <span class="info-value" id="last_ota_write">Jamais<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#ef4444" fill-opacity="0.2" stroke="#ef4444" stroke-width="2"></circle><path d="M15 9L9 15M9 9L15 15" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Dernier boot OTA réussi</span>
-                <span class="info-value" id="last_ota">1970-01-01 00:00:00</span>
+                <span class="info-value" id="last_ota">2026-05-27T14:43:52Z<svg class="status-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" title="Récente, &lt; 12h"><circle cx="12" cy="12" r="10" fill="#10b981" fill-opacity="0.2" stroke="#10b981" stroke-width="2"></circle><path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
             </div>
         </div>
 
         <!-- TAB 3: CONFIGURATION -->
-        <div id="config-tab" class="tab-content">
+        <div id="config-tab" class="tab-content active">
             <div class="form-group">
                 <label for="ssid_select">Réseau Wi-Fi (SSID)</label>
-                <div id="known_networks_help" style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;"></div>
+                <div id="known_networks_help" style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;">Réseaux enregistrés : <strong>IoT</strong>, <strong>Lbx</strong></div>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
-                    <select id="ssid_select" onchange="toggleCustomSsid()">
-                        <option value="custom">-- Saisir un SSID --</option>
-                    </select>
-                    <button type="button" onclick="scanSsids()" id="ssid_refresh_btn"
-                        style="width: auto; padding: 0.75rem 1rem; background-color: rgba(11, 15, 25, 0.6); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;"
-                        onmouseover="this.style.borderColor='var(--accent-color)'; this.style.color='var(--accent-color)'"
-                        onmouseout="this.style.borderColor='var(--border-color)'; this.style.color='var(--text-primary)'"
-                        title="Actualiser la liste des réseaux">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+                    <select id="ssid_select" onchange="toggleCustomSsid()"><option value="custom">-- Saisir un SSID --</option><option value="Freebox-1DFE1A">Freebox-1DFE1A</option><option value="Lbx" selected="selected">Lbx</option></select>
+                    <button type="button" onclick="scanSsids()" id="ssid_refresh_btn" style="width: auto; padding: 0.75rem 1rem; background-color: rgba(11, 15, 25, 0.6); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;" onmouseover="this.style.borderColor=&#39;var(--accent-color)&#39;; this.style.color=&#39;var(--accent-color)&#39;" onmouseout="this.style.borderColor=&#39;var(--border-color)&#39;; this.style.color=&#39;var(--text-primary)&#39;" title="Actualiser la liste des réseaux">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
                             <polyline points="23 4 23 10 17 10"></polyline>
                             <polyline points="1 20 1 14 7 14"></polyline>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
@@ -591,7 +863,7 @@
                 </div>
             </div>
 
-            <div class="form-group" id="ssid_custom_group" style="display: block;">
+            <div class="form-group" id="ssid_custom_group" style="display: none;">
                 <label for="ssid_custom">SSID Wi-Fi Personnalisé</label>
                 <input type="text" id="ssid_custom" placeholder="MonSSIDPerso">
             </div>
@@ -600,13 +872,8 @@
                 <label for="password">Mot de passe</label>
                 <div style="position: relative; display: flex; align-items: center;">
                     <input type="password" id="password" placeholder="••••••••" style="padding-right: 2.5rem;">
-                    <span id="toggle_password_icon" onclick="togglePasswordVisibility()"
-                        style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;"
-                        onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'"
-                        onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'"
-                        title="Afficher le mot de passe">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
+                    <span id="toggle_password_icon" onclick="togglePasswordVisibility()" style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;" onmouseover="this.style.opacity=&#39;1&#39;; this.style.color=&#39;var(--accent-color)&#39;" onmouseout="this.style.opacity=&#39;0.7&#39;; this.style.color=&#39;var(--text-secondary)&#39;" title="Afficher le mot de passe">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                             <circle cx="12" cy="12" r="3"></circle>
                         </svg>
@@ -614,27 +881,20 @@
                 </div>
             </div>
 
-            <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 2rem;"
-                onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
+            <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 2rem;" onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
 
             <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem;">
                 <label for="totp_secret_input">Secret de sécurité TOTP</label>
                 <div style="position: relative; display: flex; align-items: center;">
                     <input type="password" id="totp_secret_input" placeholder="Saisir le secret TOTP" style="padding-right: 2.5rem;" maxlength="256">
-                    <span id="toggle_totp_icon" onclick="toggleTotpVisibility()"
-                        style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;"
-                        onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'"
-                        onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'"
-                        title="Afficher le secret">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
+                    <span id="toggle_totp_icon" onclick="toggleTotpVisibility()" style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;" onmouseover="this.style.opacity=&#39;1&#39;; this.style.color=&#39;var(--accent-color)&#39;" onmouseout="this.style.opacity=&#39;0.7&#39;; this.style.color=&#39;var(--text-secondary)&#39;" title="Afficher le secret">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                             <circle cx="12" cy="12" r="3"></circle>
                         </svg>
                     </span>
                 </div>
-                <button id="totp_apply_btn" class="btn" type="button" style="margin-top: 1rem;"
-                    onclick="saveTotpSecret()">Enregistrer le secret TOTP</button>
+                <button id="totp_apply_btn" class="btn" type="button" style="margin-top: 1rem;" onclick="saveTotpSecret()">Enregistrer le secret TOTP</button>
             </div>
 
             <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
@@ -642,13 +902,11 @@
                 <div class="switch-container" style="margin-bottom: 1rem;">
                     <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite Wi-Fi)</span>
                     <label class="switch">
-                        <input type="checkbox" id="auto_update_toggle" checked>
+                        <input type="checkbox" id="auto_update_toggle" checked="">
                         <span class="slider"></span>
                     </label>
                 </div>
-                <button type="button" class="btn"
-                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;"
-                    onclick="checkUpdates()">Vérifier maintenant</button>
+                <button type="button" class="btn" style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;" onclick="checkUpdates()">Vérifier maintenant</button>
                 <div id="updates_list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
             </div>
 
@@ -657,7 +915,7 @@
     </div>
 
     <footer style="margin-top: 2rem; margin-bottom: 1rem; text-align: center; font-size: 0.85rem; color: var(--text-secondary);">
-        Auteur : <span id="author_name">LOPEZ Alban</span> (<a id="author_email" href="mailto:alban.lopez+whisperEye@gmail.com" style="color: var(--text-secondary); text-decoration: none; border-bottom: 1px dashed var(--text-secondary);">alban.lopez+whisperEye@gmail.com</a>) sur <a id="author_link" href="https://github.com/sctfic/WhisperEye/blob/main/README.md" target="_blank" style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a> - v<span id="footer_version">--</span>
+        Auteur : <span id="author_name">LOPEZ Alban</span> (<a id="author_email" href="mailto:alban.lopez+whisperEye@gmail.com" style="color: var(--text-secondary); text-decoration: none; border-bottom: 1px dashed var(--text-secondary);">alban.lopez+whisperEye@gmail.com</a>) sur <a id="author_link" href="https://github.com/sctfic/WhisperEye/blob/main/README.md" target="_blank" style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a> - v<span id="footer_version">1.0.3-0006</span>
     </footer>
 
     <script>
@@ -1333,6 +1591,6 @@
         fetchStatus();
         scanSsids();
     </script>
-</body>
 
-</html>
+
+</body></html>

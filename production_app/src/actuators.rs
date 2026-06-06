@@ -2,15 +2,21 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ActuatorsState {
-    pub relay_1: bool,
-    pub pwm_intensity: u32,
+    pub rla: bool,
+    pub rlb: bool,
+    pub swpwr: bool,
+    pub ina: bool,
+    pub inb: bool,
 }
 
 impl Default for ActuatorsState {
     fn default() -> Self {
         Self {
-            relay_1: false,
-            pwm_intensity: 0,
+            rla: false,
+            rlb: false,
+            swpwr: true, // Keep system 5V/3V powered by default
+            ina: false,
+            inb: false,
         }
     }
 }

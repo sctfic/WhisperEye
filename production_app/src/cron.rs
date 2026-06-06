@@ -76,7 +76,30 @@ impl CronWorker {
             .unwrap_or_default()
             .as_secs();
         
-        let readings = read_sensors();
+        let onewr_probes = {
+            let storage = self.nvs.lock().unwrap();
+            let mut list = Vec::new();
+            if let Ok(Some(json_str)) = storage.get_str("dev_registry") {
+                if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&json_str) {
+                    for (id, val) in map {
+                        if id.starts_with("onewr:") {
+                            let present = val.get("present").and_then(|v| v.as_bool()).unwrap_or(false);
+                            if present {
+                                list.push(id[6..].to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            if list.is_empty() {
+                // Fallbacks
+                list.push("28ff641e8315029c".to_string());
+                list.push("28aa412e831501fa".to_string());
+            }
+            list
+        };
+
+        let readings = read_sensors(&onewr_probes);
         let entry = MetricEntry { timestamp: now, readings: readings.clone() };
         
         if self.history.len() >= 10 {
@@ -85,8 +108,8 @@ impl CronWorker {
         self.history.push(entry);
         
         info!(
-            "Task 30s: Collected sensor metrics. Temp SHT45: {:.1}°C, CO2: {} ppm. Sliding history size: {}", 
-            readings.temperature_sht45, readings.co2_scd41, self.history.len()
+            "Task 30s: Collected sensor metrics. Temp SHT45: {:.1}°C, CO2: {} ppm, Probes count: {}. Sliding history size: {}", 
+            readings.temperature_sht45, readings.co2_scd41, readings.ds18b20_temperatures.len(), self.history.len()
         );
     }
 

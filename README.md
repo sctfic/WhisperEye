@@ -175,7 +175,6 @@ Le système tourne sur une carte matérielle propriétaire basée sur la puce **
 
 Les firmware Production et Recovery intègrent tous deux des interfaces web embarquées très performantes écrites en HTML / CSS / Vanilla JS.
 
-Prod-Capteurs.png
 <img src="./production_app/Prod-Capteurs.png" alt="Capteurs" width="32%"> <img src="./production_app/Prod-Status.png" alt="Status" width="32%"> <img src="./production_app/Prod-Configs.png" alt="production" width="32%">
 
 * **Interface Production (`production.html`)** : Dashboard de monitoring premium avec affichage dynamique des métriques (CO2, Température, Humidité), graphique d'historique glissant, état des relais et moteurs avec commande en temps réel, panneau de configuration réseau WiFi (SSID, mot de passe) et module d'installation de firmware OTA.

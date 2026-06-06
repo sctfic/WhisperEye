@@ -35,6 +35,7 @@ impl NvsStorage {
             self.set_str("updateDlUrl", "https://.../firmware.bin")?;
             self.set_i32("otaRetry", -1)?;
             self.set_i32("autoUpdate", 1)?;
+            self.set_str("nextCheck", "0")?;
             self.set_str("wifiKnown", r#"{"IoT":{"psk":"Esp32&Cie2026","default":true}}"#)?;
         }
         if self.get_i32("autoUpdate")?.is_none() {
@@ -42,6 +43,9 @@ impl NvsStorage {
         }
         if self.get_str("lastOtaWrite")?.is_none() {
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
+        }
+        if self.get_str("nextCheck")?.is_none() {
+            self.set_str("nextCheck", "0")?;
         }
         Ok(())
     }
