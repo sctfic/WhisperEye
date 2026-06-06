@@ -56,12 +56,12 @@ impl CronWorker {
                     
                     // Task 3: Check NVS target nextCheck timestamp to prevent drifts
                     if sec_counter % 60 == 0 { // Check NVS date target every 60 seconds
-                        let _ = self.evaluate_7day_update_check(false);
+                        let _ = self.evaluate_need_update_check(false);
                     }
                 }
                 CronMessage::ForceCheckUpdate => {
-                    info!("Manual trigger: Forcing 7-day update check now...");
-                    let _ = self.evaluate_7day_update_check(true);
+                    info!("Manual trigger: Forcing update check now...");
+                    let _ = self.evaluate_need_update_check(true);
                 }
                 CronMessage::GetHistory(tx) => {
                     let _ = tx.send(self.history.clone());
@@ -94,10 +94,10 @@ impl CronWorker {
         info!("Task 300s: Simulating HTTP Telemetry API report sending to cloud...");
         // Simulator placeholder
         thread::sleep(Duration::from_millis(200)); // Simulate networking delay
-        info!("Telemetry HTTP POST successfully completed to https://api.whispereye.lan/v1/metrics [Payload: SHT45 Temp/Hum & CO2 SCD41]");
+        info!("Telemetry HTTP POST successfully completed to https://probe.lan/v1/metrics [Payload: SHT45 Temp/Hum & CO2 SCD41]");
     }
 
-    fn evaluate_7day_update_check(&self, force: bool) -> Result<()> {
+    fn evaluate_need_update_check(&self, force: bool) -> Result<()> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()

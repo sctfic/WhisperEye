@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.1-0004";
+const FW_VERSION: &str = "1.0.3-0003";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -650,6 +650,30 @@ fn version_entries(val: &serde_json::Value) -> Vec<&serde_json::Value> {
     }
 }
 
+fn is_web_accessible() -> bool {
+    use std::net::ToSocketAddrs;
+    
+    // Hôtes de test légers
+    let probes = [
+        "probe.lpz.ovh:80",
+        "google.com:80",
+        "github.com:80",
+    ];
+
+    info!("Checking web accessibility before update check...");
+    for probe in &probes {
+        // Tente une résolution DNS et vérification d'adresse de manière légère
+        if let Ok(mut addrs) = probe.to_socket_addrs() {
+            if addrs.next().is_some() {
+                info!("Web accessibility check passed using probe: {}", probe);
+                return true;
+            }
+        }
+    }
+    warn!("Web accessibility check failed. No connection to update servers.");
+    false
+}
+
 fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
     let (update_available_url, current_fw) = {
         let storage = nvs.lock().unwrap();
@@ -660,6 +684,11 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
 
     if update_available_url.is_empty() {
         info!("No updateAvailable URL configured in NVS.");
+        return Ok(());
+    }
+
+    if !is_web_accessible() {
+        info!("Skipping OTA update check: Internet is not accessible.");
         return Ok(());
     }
 
@@ -759,6 +788,10 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
+
 
 
 

@@ -37,25 +37,53 @@ else {
 
 # Helper functions for versioning and catalog update
 function Increment-ProductionVersion {
-    # Pattern: firmware-s3-1.0.1-0125.bin  =>  base=1.0.1, build=125
+    # Versioning rules:
+    #   - Stable  = even patch, no build suffix  (e.g. 1.0.2)
+    #   - Unstable = odd patch, with build suffix (e.g. 1.0.3-0001)
+    # After a stable release X.Y.Z (even Z), next build is X.Y.(Z+1)-0001
+    # After an unstable build X.Y.Z-BBBB (odd Z), next build is X.Y.Z-(BBBB+1)
     $BinFiles = Get-ChildItem "boards\board_default\firmware-s3-*.bin" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
-    $BaseVersion = "1.0.1"
-    $HighestBuild = 0
+
+    $LatestMajor = 1; $LatestMinor = 0; $LatestPatch = 0; $LatestBuild = -1
+    $LatestIsStable = $false
 
     if ($BinFiles) {
         foreach ($f in $BinFiles) {
-            if ($f -match "firmware-s3-(\d+\.\d+\.\d+)-(\d+)\.bin") {
-                $build = [int]$Matches[2]
-                if ($build -gt $HighestBuild) {
-                    $HighestBuild = $build
-                    $BaseVersion = $Matches[1]
-                }
+            $maj = 0; $min = 0; $pat = 0; $bld = -1; $isStable = $false
+
+            if ($f -match "firmware-s3-(\d+)\.(\d+)\.(\d+)-(\d+)\.bin") {
+                # Unstable: e.g. firmware-s3-1.0.3-0005.bin
+                $maj = [int]$Matches[1]; $min = [int]$Matches[2]; $pat = [int]$Matches[3]; $bld = [int]$Matches[4]
+            } elseif ($f -match "firmware-s3-(\d+)\.(\d+)\.(\d+)\.bin") {
+                # Stable: e.g. firmware-s3-1.0.2.bin
+                $maj = [int]$Matches[1]; $min = [int]$Matches[2]; $pat = [int]$Matches[3]; $bld = 0; $isStable = $true
+            } else {
+                continue
+            }
+
+            # Compare: major > minor > patch > build (stable build=0 is always < unstable build=1+)
+            $isNewer = ($maj -gt $LatestMajor) -or
+                       ($maj -eq $LatestMajor -and $min -gt $LatestMinor) -or
+                       ($maj -eq $LatestMajor -and $min -eq $LatestMinor -and $pat -gt $LatestPatch) -or
+                       ($maj -eq $LatestMajor -and $min -eq $LatestMinor -and $pat -eq $LatestPatch -and $bld -gt $LatestBuild)
+
+            if ($isNewer) {
+                $LatestMajor = $maj; $LatestMinor = $min; $LatestPatch = $pat; $LatestBuild = $bld
+                $LatestIsStable = $isStable
             }
         }
     }
 
-    $NewBuild = $HighestBuild + 1
-    $NewVersion = "{0}-{1:D4}" -f $BaseVersion, $NewBuild
+    if ($LatestIsStable) {
+        # Latest is stable (even patch) -> next is odd patch, build 0001
+        $NewPatch = $LatestPatch + 1
+        $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $NewPatch, 1
+    } else {
+        # Latest is unstable (odd patch) -> increment build number
+        $NewBuild = $LatestBuild + 1
+        $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $LatestPatch, $NewBuild
+    }
+
     Write-Host "[+] New WhisperEye build version: $NewVersion" -ForegroundColor Green
 
     # Update FW_VERSION constant in production_app/src/main.rs
@@ -116,7 +144,7 @@ function Update-FirmwareJson {
     foreach ($board in $JsonContent) {
         $chipType = $board.ChipType
 
-        # Only update the ESP32-S3 / S3 entries automatically (the chip we just compiled)
+        # Only update the ESP32-S3 entries automatically (the chip we just compiled)
         if ($chipType -ne "ESP32-S3") { continue }
 
         $prefix = "firmware-s3-"
@@ -124,24 +152,37 @@ function Update-FirmwareJson {
         $files = Get-ChildItem "boards\board_default\$pattern" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
         if (-not $files) { continue }
 
-        # Collect all builds from disk (format: 1.0.1-0125)
-        $allBuilds = @()
+        $stableEntries = @()
+        $unstableEntries = @()
+
         foreach ($file in $files) {
-            if ($file -match "$prefix(\d+\.\d+\.\d+)-(\d+)\.bin") {
-                $verStr = $Matches[1] + "-" + $Matches[2]
-                $buildNum = [int]$Matches[2]
-                $url = "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/$file"
-                $allBuilds += [PSCustomObject]@{ version = $verStr; url = $url; build = $buildNum }
+            $url = "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/$file"
+
+            if ($file -match "$prefix(\d+)\.(\d+)\.(\d+)-(\d+)\.bin") {
+                # Unstable build: odd patch with build suffix
+                $verStr = "{0}.{1}.{2}-{3}" -f $Matches[1], $Matches[2], $Matches[3], $Matches[4]
+                $sortKey = [int]$Matches[1] * 100000000 + [int]$Matches[2] * 1000000 + [int]$Matches[3] * 100000 + [int]$Matches[4]
+                $unstableEntries += [PSCustomObject]@{ version = $verStr; url = $url; sortKey = $sortKey }
+            } elseif ($file -match "$prefix(\d+)\.(\d+)\.(\d+)\.bin") {
+                # Stable release: even patch, no build suffix
+                $verStr = "{0}.{1}.{2}" -f $Matches[1], $Matches[2], $Matches[3]
+                $sortKey = [int]$Matches[1] * 100000000 + [int]$Matches[2] * 1000000 + [int]$Matches[3] * 100000
+                $stableEntries += [PSCustomObject]@{ version = $verStr; url = $url; sortKey = $sortKey }
             }
         }
 
-        # Sort descending by build number, keep only 2 most recent as unstable
-        $sortedUnstable = $allBuilds | Sort-Object build -Descending | Select-Object -First 2 | ForEach-Object {
+        # Sort descending, keep only the latest stable entry
+        $sortedStable = $stableEntries | Sort-Object sortKey -Descending | Select-Object -First 1 | ForEach-Object {
             [PSCustomObject]@{ version = $_.version; url = $_.url }
         }
 
-        # Preserve stable as-is (user manages stable entries manually)
-        $board.unstable = if ($sortedUnstable) { @($sortedUnstable) } else { @() }
+        # Sort descending by sortKey, keep only 2 most recent unstable builds
+        $sortedUnstable = $unstableEntries | Sort-Object sortKey -Descending | Select-Object -First 2 | ForEach-Object {
+            [PSCustomObject]@{ version = $_.version; url = $_.url }
+        }
+
+        $board.stable   = if ($sortedStable)   { @($sortedStable)   } else { @() }
+        $board.unstable  = if ($sortedUnstable) { @($sortedUnstable) } else { @() }
     }
 
     $updatedJson = $JsonContent | ConvertTo-Json -Depth 4
