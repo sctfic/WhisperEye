@@ -587,24 +587,11 @@
             <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 2rem;"
                 onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
 
-            <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem;">
-                <label for="totp_secret_input">Secret de sécurité TOTP</label>
-                <div style="position: relative; display: flex; align-items: center;">
-                    <input type="password" id="totp_secret_input" placeholder="Saisir le secret TOTP" style="padding-right: 2.5rem;" maxlength="256">
-                    <span id="toggle_totp_icon" onclick="toggleTotpVisibility()"
-                        style="position: absolute; right: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; width: 24px; height: 24px; color: var(--text-secondary); opacity: 0.7; transition: all 0.2s ease;"
-                        onmouseover="this.style.opacity='1'; this.style.color='var(--accent-color)'"
-                        onmouseout="this.style.opacity='0.7'; this.style.color='var(--text-secondary)'"
-                        title="Afficher le secret">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                            stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px;">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                            <circle cx="12" cy="12" r="3"></circle>
-                        </svg>
-                    </span>
+            <div id="totp_section" class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem; display: none;">
+                <label>Secret de sécurité TOTP</label>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                    <span style="font-size: 0.95rem; color: var(--text-primary);">Statut : <span id="totp_status_badge" class="badge badge-green">Actif</span></span>
                 </div>
-                <button id="totp_apply_btn" class="btn" type="button" style="margin-top: 1rem;"
-                    onclick="saveTotpSecret()">Enregistrer le secret TOTP</button>
             </div>
 
             <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
@@ -740,8 +727,10 @@
                     if (document.getElementById('auto_update_toggle') && data.auto_update !== undefined) {
                         document.getElementById('auto_update_toggle').checked = data.auto_update;
                     }
-                    if (document.getElementById('totp_secret_input') && data.totp_secret !== undefined) {
-                        document.getElementById('totp_secret_input').value = data.totp_secret;
+
+                    const totpSec = document.getElementById('totp_section');
+                    if (totpSec) {
+                        totpSec.style.display = data.has_totp ? 'block' : 'none';
                     }
 
                     // Dynamic system status calculation
@@ -1082,40 +1071,7 @@
             });
         }
 
-        function toggleTotpVisibility() {
-            const secret = document.getElementById('totp_secret_input');
-            const toggleIcon = document.getElementById('toggle_totp_icon');
-            if (secret.type === 'password') {
-                secret.type = 'text';
-                toggleIcon.innerHTML = EYE_OFF_SVG;
-                toggleIcon.setAttribute('title', 'Masquer le secret');
-            } else {
-                secret.type = 'password';
-                toggleIcon.innerHTML = EYE_SVG;
-                toggleIcon.setAttribute('title', 'Afficher le secret');
-            }
-        }
 
-        function saveTotpSecret() {
-            const secret = document.getElementById('totp_secret_input').value;
-            showMessage('config_status', SPINNER_SVG + 'Enregistrement du secret TOTP...', 'success');
-            
-            fetch('/api/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    totp_secret: secret
-                })
-            })
-            .then(res => {
-                if (res.ok) {
-                    showMessage('config_status', 'Secret de sécurité TOTP enregistré avec succès !', 'success');
-                } else {
-                    showMessage('config_status', 'Erreur lors de l\'enregistrement du secret TOTP.', 'error');
-                }
-            })
-            .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
-        }
 
         function scanSsids() {
             const select = document.getElementById('ssid_select');
@@ -1205,6 +1161,8 @@
                 })
                 .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
         }
+
+
 
         function checkUpdates() {
             const updatesList = document.getElementById('updates_list');

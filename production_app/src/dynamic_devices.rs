@@ -240,6 +240,11 @@ impl DeviceRegistry {
         list
     }
 
+    /// Retrieve all registered devices from NVS
+    pub fn get_devices(&self) -> HashMap<String, DeviceEntry> {
+        self.load_registry()
+    }
+
     /// Rename device in NVS, limiting to 64 characters
     pub fn rename_device(&mut self, id: &str, new_name: &str) -> Result<(), anyhow::Error> {
         let mut map = self.load_registry();

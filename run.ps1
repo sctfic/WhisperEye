@@ -8,7 +8,10 @@ param (
     [string]$Port = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$Clean
+    [switch]$Clean,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$NoTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -322,6 +325,10 @@ if ($Target -eq "all") {
     if (-not $Debug) { $FlashProd += " --release" }
     if ($Port) { $FlashProd += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashProd" -ForegroundColor DarkGray
+    if (-not $NoTests) {
+        Write-Host "[*] Launching API tests in a separate window (waiting 10s)..." -ForegroundColor Yellow
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File .\test.ps1"
+    }
     try {
         Invoke-Expression $FlashProd
     } catch {}
@@ -456,6 +463,10 @@ if ($Target -eq "production") {
     $FlashOtaData = "cargo +esp espflash write-bin 0xf000 otadata_ota0.bin --monitor"
     if ($Port) { $FlashOtaData += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashOtaData" -ForegroundColor DarkGray
+    if (-not $NoTests) {
+        Write-Host "[*] Launching API tests in a separate window (waiting 10s)..." -ForegroundColor Yellow
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File .\test.ps1"
+    }
     try {
         Invoke-Expression $FlashOtaData
     } catch {}

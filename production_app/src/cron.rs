@@ -49,10 +49,9 @@ impl CronWorker {
                         self.collect_sensor_metrics();
                     }
                     
-                    // Task 2: Trigger Simulated HTTP API report every 300 seconds
-                    if sec_counter % 300 == 0 {
-                        self.trigger_simulated_http_api();
-                    }
+                        if sec_counter % 300 == 0 {
+                            self.trigger_simulated_http_api();
+                        }
                     
                     // Task 3: Check NVS target nextCheck timestamp to prevent drifts
                     if sec_counter % 60 == 0 { // Check NVS date target every 60 seconds
@@ -244,6 +243,8 @@ impl CronWorker {
 
         Ok(())
     }
+
+
 }
 
 fn parse_version(v: &str) -> (u32, u32, u32, u32) {

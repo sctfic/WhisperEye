@@ -25,7 +25,6 @@ impl NvsStorage {
     pub fn ensure_defaults(&mut self) -> Result<()> {
         if self.get_str("wifiKnown")?.is_none() {
             info!("NVS is empty or uninitialized. Writing defaults...");
-            self.set_str("totpSecret", "Salt-4-Hash-Between-Probe-&-WhisperEye")?;
             self.set_str("ntpServer", "wrt.lan")?;
             self.set_str("fwVersion", "empty")?;
             self.set_str("lastOtaDl", "1970-01-01T00:00:00Z")?;
@@ -123,10 +122,14 @@ impl NvsStorage {
         Ok(())
     }
 
+    pub fn remove_key(&mut self, key: &str) -> Result<()> {
+        let _ = self.nvs.remove(key);
+        Ok(())
+    }
+
     pub fn dump_to_log(&self) -> Result<()> {
         info!("=== NVS STORAGE DUMP ===");
         let keys_str = &[
-            "totpSecret",
             "ntpServer",
             "fwVersion",
             "lastOtaDl",
@@ -140,15 +143,7 @@ impl NvsStorage {
         for key in keys_str {
             match self.get_str(key) {
                 Ok(Some(val)) => {
-                    if *key == "totpSecret" {
-                        if val.len() > 4 {
-                            info!("  {} : \"{}***{}\"", key, &val[..2], &val[val.len()-2..]);
-                        } else {
-                            info!("  {} : \"[hidden]\"", key);
-                        }
-                    } else {
-                        info!("  {} : \"{}\"", key, val);
-                    }
+                    info!("  {} : \"{}\"", key, val);
                 }
                 Ok(None) => info!("  {} : [not set]", key),
                 Err(e) => info!("  {} : Error({:?})", key, e),

@@ -14,7 +14,9 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.3-0007";
+const FW_VERSION: &str = "1.0.3-0008";
+#[allow(dead_code)]
+const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -45,6 +47,7 @@ struct ConfigPayload {
     apply_only: Option<bool>,
     auto_update: Option<bool>,
     totp_secret: Option<String>,
+    current_totp_secret: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -289,7 +292,7 @@ fn main() -> Result<()> {
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
         let wifi_known = storage.get_known_networks().unwrap_or_default();
         let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1) == 1;
-        let totp_secret = storage.get_str("totpSecret")?.unwrap_or_default();
+        let has_totp = storage.get_str("totpSecret")?.map(|s| !s.is_empty()).unwrap_or(false);
 
         let json = serde_json::json!({
             "network_mode": active_mode,
@@ -310,7 +313,7 @@ fn main() -> Result<()> {
             "chip_type": CHIP_TYPE,
             "wifi_known": wifi_known,
             "auto_update": auto_update,
-            "totp_secret": totp_secret,
+            "has_totp": has_totp,
             "author": {
                 "email": AUTHOR_EMAIL,
                 "name": AUTHOR_NAME,
@@ -320,6 +323,73 @@ fn main() -> Result<()> {
 
         let response_data = serde_json::to_string(&json)?;
         let mut response = req.into_ok_response()?;
+        response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
+    // GET /Capacity
+    let cap_nvs = Arc::clone(&nvs_storage);
+    server.fn_handler("/Capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&cap_nvs));
+        let devices = registry.get_devices();
+        
+        let mut sensors = Vec::new();
+        let mut actuators = Vec::new();
+        
+        for (id, entry) in &devices {
+            let is_actuator = match id.as_str() {
+                "rla" | "rlb" | "swpwr" | "ina" | "inb" | "drvb701" => true,
+                _ => false,
+            };
+            
+            if is_actuator {
+                let range = match id.as_str() {
+                    "drvb701" => "int:-100 100",
+                    _ => "bool:0 1",
+                };
+                let a_type = match id.as_str() {
+                    "drvb701" => "double sens",
+                    _ => "tout ou rien",
+                };
+                actuators.push(serde_json::json!({
+                    "Name": id,
+                    "description": entry.name,
+                    "Type": a_type,
+                    "range": range,
+                }));
+            } else {
+                let s_type = if id.starts_with("onewr:") || id.contains("0x44") {
+                    "Temperature"
+                } else if id.contains("0x62") {
+                    "CO2"
+                } else if id == "touch" {
+                    "Touch"
+                } else if id == "vsense" {
+                    "Voltage"
+                } else if id == "isense" {
+                    "Current"
+                } else {
+                    "Generic"
+                };
+                
+                sensors.push(serde_json::json!({
+                    "Name": id,
+                    "description": entry.name,
+                    "Type": s_type,
+                }));
+            }
+        }
+        
+        let cap_json = serde_json::json!({
+            "sensors": sensors,
+            "actuators": actuators,
+        });
+        
+        let response_data = serde_json::to_string(&cap_json)?;
+        let mut response = req.into_response(200, Some("OK"), &[
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*")
+        ])?;
         response.write(response_data.as_bytes())?;
         Ok(())
     })?;
@@ -561,6 +631,35 @@ fn main() -> Result<()> {
         let payload: ConfigPayload = serde_json::from_slice(&buf[..bytes_read])?;
         
         let mut wifi_success = true;
+        let mut totp_success = true;
+        let mut totp_err_msg = "";
+
+        {
+            let mut storage = nvs_clone.lock().unwrap();
+            if let Some(ref totp_secret) = payload.totp_secret {
+                let current = storage.get_str("totpSecret")?.unwrap_or_default();
+                if current.is_empty() {
+                    info!("Saving totpSecret to NVS (was empty): {}", totp_secret);
+                    storage.set_str("totpSecret", totp_secret)?;
+                } else {
+                    let current_supplied = payload.current_totp_secret.as_deref().unwrap_or("");
+                    if current_supplied == current || *totp_secret == current {
+                        info!("Updating/confirming totpSecret in NVS: {}", totp_secret);
+                        storage.set_str("totpSecret", totp_secret)?;
+                    } else {
+                        warn!("Rejected totpSecret update: NVS has existing secret and correct current secret not supplied.");
+                        totp_success = false;
+                        totp_err_msg = "Non autorisé : le secret TOTP actuel est incorrect ou manquant.";
+                    }
+                }
+            }
+        }
+
+        if !totp_success {
+            let mut response = req.into_status_response(403)?;
+            response.write(totp_err_msg.as_bytes())?;
+            return Ok(());
+        }
 
         if let Some(ref ssid_raw) = payload.wifi_ssid {
             let ssid = ssid_raw.trim();
@@ -692,11 +791,6 @@ fn main() -> Result<()> {
                     storage.set_str("nextCheck", &next_check.to_string())?;
                     info!("autoUpdate transitioned from 0 to 1, nextCheck reset to tomorrow 14:00 UTC ({})", next_check);
                 }
-            }
-            
-            if let Some(ref totp_sec) = payload.totp_secret {
-                storage.set_str("totpSecret", totp_sec)?;
-                info!("totpSecret updated in NVS to: {}", totp_sec);
             }
             
             // Restart condition: different or new update URL is set, and NOT apply_only
@@ -907,35 +1001,3 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
