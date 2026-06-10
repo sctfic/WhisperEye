@@ -447,7 +447,8 @@
 
 <body>
     <header>
-        <h1>WhisperEye</h1>
+        <h1 id="header_ext_name">WhisperEye</h1>
+        <p id="header_ext_desc" style="color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;"></p>
         <p><span class="pulse"></span>Firmware Applicatif de Production (Production App)</p>
     </header>
 
@@ -482,6 +483,14 @@
                             <path d="M8.5 12.5L10.5 14.5L15.5 9.5" stroke='#10b981' stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>Opérationnel</span></span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Nom de l'extendeur</span>
+                <span class="info-value" id="status_ext_name">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Description</span>
+                <span class="info-value" id="status_ext_desc">--</span>
             </div>
             <div class="info-group">
                 <span class="info-label">Mode Réseau</span>
@@ -589,8 +598,10 @@
 
             <div id="totp_section" class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem; display: none;">
                 <label>Secret de sécurité TOTP</label>
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
                     <span style="font-size: 0.95rem; color: var(--text-primary);">Statut : <span id="totp_status_badge" class="badge badge-green">Actif</span></span>
+                    <span style="font-size: 0.95rem; color: var(--text-secondary); font-family: monospace;" id="totp_key_display"></span>
+                    <button type="button" class="btn" style="background-color: var(--danger); color: #fff; width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem;" onclick="deleteTotpKey()">Supprimer</button>
                 </div>
             </div>
 
@@ -731,6 +742,23 @@
                     const totpSec = document.getElementById('totp_section');
                     if (totpSec) {
                         totpSec.style.display = data.has_totp ? 'block' : 'none';
+                    }
+
+                    if (data.ext_name) {
+                        const hName = document.getElementById('header_ext_name');
+                        if (hName) hName.innerText = data.ext_name;
+                        const sName = document.getElementById('status_ext_name');
+                        if (sName) sName.innerText = data.ext_name;
+                    }
+                    if (data.ext_desc !== undefined) {
+                        const hDesc = document.getElementById('header_ext_desc');
+                        if (hDesc) hDesc.innerText = data.ext_desc;
+                        const sDesc = document.getElementById('status_ext_desc');
+                        if (sDesc) sDesc.innerText = data.ext_desc;
+                    }
+                    if (data.partial_totp) {
+                        const kDisp = document.getElementById('totp_key_display');
+                        if (kDisp) kDisp.innerText = data.partial_totp;
                     }
 
                     // Dynamic system status calculation
@@ -1279,7 +1307,26 @@
                 }
             })
             .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
-        });
+        function deleteTotpKey() {
+            if (!confirm("Voulez-vous vraiment supprimer la clé de sécurité TOTP ? L'extendeur ne pourra plus communiquer de manière sécurisée avec la station Probe sans ré-enregistrement.")) {
+                return;
+            }
+
+            showMessage('config_status', SPINNER_SVG + 'Suppression de la clé TOTP en cours...', 'success');
+
+            fetch('/api/totp/delete', {
+                method: 'POST'
+            })
+            .then(res => {
+                if (res.ok) {
+                    showMessage('config_status', 'Clé de sécurité TOTP supprimée avec succès !', 'success');
+                    fetchStatus();
+                } else {
+                    showMessage('config_status', 'Erreur lors de la suppression de la clé TOTP.', 'error');
+                }
+            })
+            .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+        }
 
         // Initial setup
         fetchDevices();

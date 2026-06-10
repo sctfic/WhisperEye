@@ -130,6 +130,7 @@ impl NvsStorage {
     pub fn dump_to_log(&self) -> Result<()> {
         info!("=== NVS STORAGE DUMP ===");
         let keys_str = &[
+            "totpSecret",
             "ntpServer",
             "fwVersion",
             "lastOtaDl",
@@ -143,7 +144,16 @@ impl NvsStorage {
         for key in keys_str {
             match self.get_str(key) {
                 Ok(Some(val)) => {
-                    info!("  {} : \"{}\"", key, val);
+                    if *key == "totpSecret" {
+                        let masked = if val.len() > 12 {
+                            format!("{}......{}", &val[..6], &val[val.len() - 6..])
+                        } else {
+                            val.clone()
+                        };
+                        info!("  {} : \"{}\"", key, masked);
+                    } else {
+                        info!("  {} : \"{}\"", key, val);
+                    }
                 }
                 Ok(None) => info!("  {} : [not set]", key),
                 Err(e) => info!("  {} : Error({:?})", key, e),

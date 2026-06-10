@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.3-0008";
+const FW_VERSION: &str = "1.0.3-0014";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -48,6 +48,16 @@ struct ConfigPayload {
     auto_update: Option<bool>,
     totp_secret: Option<String>,
     current_totp_secret: Option<String>,
+    ext_name: Option<String>,
+    ext_desc: Option<String>,
+}
+
+fn get_mac_address() -> String {
+    let mut mac = [0u8; 6];
+    unsafe {
+        esp_idf_sys::esp_read_mac(mac.as_mut_ptr(), esp_idf_sys::esp_mac_type_t_ESP_MAC_WIFI_STA);
+    }
+    format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
 }
 
 fn main() -> Result<()> {
@@ -292,7 +302,21 @@ fn main() -> Result<()> {
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
         let wifi_known = storage.get_known_networks().unwrap_or_default();
         let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1) == 1;
-        let has_totp = storage.get_str("totpSecret")?.map(|s| !s.is_empty()).unwrap_or(false);
+        let totp_secret = storage.get_str("totpSecret")?.unwrap_or_default();
+        let has_totp = !totp_secret.is_empty();
+        let partial_totp = if totp_secret.len() >= 12 {
+            format!("{}......{}", &totp_secret[0..6], &totp_secret[totp_secret.len()-6..])
+        } else if !totp_secret.is_empty() {
+            "......".to_string()
+        } else {
+            "".to_string()
+        };
+        let ext_name = storage.get_str("extName")?.unwrap_or_else(|| {
+            let m = get_mac_address();
+            let clean = m.replace(":", "");
+            format!("WE-{}", &clean[8..12])
+        });
+        let ext_desc = storage.get_str("extDesc")?.unwrap_or_else(|| "WhisperEye Extender".to_string());
 
         let json = serde_json::json!({
             "network_mode": active_mode,
@@ -314,6 +338,9 @@ fn main() -> Result<()> {
             "wifi_known": wifi_known,
             "auto_update": auto_update,
             "has_totp": has_totp,
+            "partial_totp": partial_totp,
+            "ext_name": ext_name,
+            "ext_desc": ext_desc,
             "author": {
                 "email": AUTHOR_EMAIL,
                 "name": AUTHOR_NAME,
@@ -326,65 +353,109 @@ fn main() -> Result<()> {
         response.write(response_data.as_bytes())?;
         Ok(())
     })?;
-
-    // GET /Capacity
+    // GET /api/capacity
     let cap_nvs = Arc::clone(&nvs_storage);
-    server.fn_handler("/Capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
-        let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&cap_nvs));
-        let devices = registry.get_devices();
+    let cap_probes = Arc::clone(&discovered_probes);
+    let cap_act = Arc::clone(&actuators_state);
+    server.fn_handler("/api/capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let (rla, rlb, swpwr, ina, inb) = {
+            let act = cap_act.lock().unwrap();
+            (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
+        };
+        let touch_state = false;
         
+        let readings = sensors::read_sensors(&cap_probes);
+        let mut ds_readings = std::collections::HashMap::new();
+        for (addr, temp) in &readings.ds18b20_temperatures {
+            ds_readings.insert(addr.clone(), *temp);
+        }
+
+        let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&cap_nvs));
+        let list = registry.get_devices_display(
+            rla,
+            rlb,
+            swpwr,
+            ina,
+            inb,
+            readings.temperature_sht45,
+            readings.humidity_sht45,
+            readings.co2_scd41,
+            &ds_readings,
+            touch_state,
+        );
+
         let mut sensors = Vec::new();
         let mut actuators = Vec::new();
-        
-        for (id, entry) in &devices {
-            let is_actuator = match id.as_str() {
-                "rla" | "rlb" | "swpwr" | "ina" | "inb" | "drvb701" => true,
-                _ => false,
-            };
-            
-            if is_actuator {
-                let range = match id.as_str() {
-                    "drvb701" => "int:-100 100",
-                    _ => "bool:0 1",
-                };
-                let a_type = match id.as_str() {
-                    "drvb701" => "double sens",
-                    _ => "tout ou rien",
-                };
-                actuators.push(serde_json::json!({
-                    "Name": id,
-                    "description": entry.name,
-                    "Type": a_type,
-                    "range": range,
-                }));
-            } else {
-                let s_type = if id.starts_with("onewr:") || id.contains("0x44") {
-                    "Temperature"
-                } else if id.contains("0x62") {
-                    "CO2"
-                } else if id == "touch" {
-                    "Touch"
-                } else if id == "vsense" {
-                    "Voltage"
-                } else if id == "isense" {
-                    "Current"
-                } else {
-                    "Generic"
-                };
-                
-                sensors.push(serde_json::json!({
-                    "Name": id,
-                    "description": entry.name,
-                    "Type": s_type,
-                }));
+
+        for dev in &list {
+            if !dev.present {
+                continue;
+            }
+
+            match dev.id.as_str() {
+                // Return only: rla, rlb, ina, inb, swpwr
+                "rla" | "rlb" | "ina" | "inb" | "swpwr" => {
+                    actuators.push(serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "tout ou rien",
+                        "range": "bool:0 1",
+                    }));
+                }
+                // Allowed Sensors
+                "touch" | "vsense" | "isense" => {
+                    let (s_type, unit) = match dev.id.as_str() {
+                        "touch" => ("Touch", "-"),
+                        "vsense" => ("Voltage", "V"),
+                        "isense" => ("Current", "A"),
+                        _ => ("Generic", "-"),
+                    };
+                    sensors.push(serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": s_type,
+                        "Unit": unit,
+                    }));
+                }
+                id if id.starts_with("onewr:") || id.contains("0x44") => {
+                    sensors.push(serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "Temperature",
+                        "Unit": "°C",
+                    }));
+                }
+                id if id.contains("0x62") => {
+                    sensors.push(serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "CO2",
+                        "Unit": "ppm",
+                    }));
+                }
+                _ => {}
             }
         }
-        
+
+        let (mac, name, desc) = {
+            let storage = cap_nvs.lock().unwrap();
+            let m = get_mac_address();
+            let name = storage.get_str("extName")?.unwrap_or_else(|| {
+                let clean = m.replace(":", "");
+                format!("WE-{}", &clean[8..12])
+            });
+            let desc = storage.get_str("extDesc")?.unwrap_or_else(|| "WhisperEye Extender".to_string());
+            (m, name, desc)
+        };
+
         let cap_json = serde_json::json!({
+            "mac": mac,
+            "name": name,
+            "description": desc,
             "sensors": sensors,
             "actuators": actuators,
         });
-        
+
         let response_data = serde_json::to_string(&cap_json)?;
         let mut response = req.into_response(200, Some("OK"), &[
             ("Content-Type", "application/json"),
@@ -393,7 +464,6 @@ fn main() -> Result<()> {
         response.write(response_data.as_bytes())?;
         Ok(())
     })?;
-
     // GET /api/check_updates (proxies firmware.json from updateAvailable NVS key to bypass CORS!)
     let nvs_updates_clone = Arc::clone(&nvs_storage);
     server.fn_handler("/api/check_updates", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
@@ -622,13 +692,34 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+    // POST /api/totp/delete
+    let nvs_totp_del = Arc::clone(&nvs_storage);
+    server.fn_handler("/api/totp/delete", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+        {
+            let mut storage = nvs_totp_del.lock().unwrap();
+            info!("Deleting totpSecret from NVS");
+            storage.remove_key("totpSecret")?;
+        }
+        let mut response = req.into_ok_response()?;
+        response.write(b"TOTP key deleted successfully")?;
+        Ok(())
+    })?;
+
     // POST /api/config (triggers immediate restart to recovery_boot if update_url differs)
     let nvs_clone = Arc::clone(&nvs_storage);
     let wifi_clone = Arc::clone(&wifi_manager);
     server.fn_handler("/api/config", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
         let mut buf = vec![0u8; 512];
         let bytes_read = req.read(&mut buf)?;
-        let payload: ConfigPayload = serde_json::from_slice(&buf[..bytes_read])?;
+        let payload: ConfigPayload = match serde_json::from_slice(&buf[..bytes_read]) {
+            Ok(p) => p,
+            Err(e) => {
+                let err_msg = format!("Format JSON invalide : {:?}", e);
+                let mut response = req.into_status_response(400)?;
+                response.write(err_msg.as_bytes())?;
+                return Ok(());
+            }
+        };
         
         let mut wifi_success = true;
         let mut totp_success = true;
@@ -639,18 +730,45 @@ fn main() -> Result<()> {
             if let Some(ref totp_secret) = payload.totp_secret {
                 let current = storage.get_str("totpSecret")?.unwrap_or_default();
                 if current.is_empty() {
-                    info!("Saving totpSecret to NVS (was empty): {}", totp_secret);
+                    let masked = if totp_secret.len() > 12 {
+                        format!("{}...{}", &totp_secret[..6], &totp_secret[totp_secret.len() - 6..])
+                    } else {
+                        totp_secret.clone()
+                    };
+                    info!("Saving totpSecret to NVS (was empty): {}", masked);
                     storage.set_str("totpSecret", totp_secret)?;
                 } else {
                     let current_supplied = payload.current_totp_secret.as_deref().unwrap_or("");
                     if current_supplied == current || *totp_secret == current {
-                        info!("Updating/confirming totpSecret in NVS: {}", totp_secret);
+                        let masked = if totp_secret.len() > 12 {
+                            format!("{}...{}", &totp_secret[..6], &totp_secret[totp_secret.len() - 6..])
+                        } else {
+                            totp_secret.clone()
+                        };
+                        info!("Updating/confirming totpSecret in NVS: {}", masked);
                         storage.set_str("totpSecret", totp_secret)?;
                     } else {
                         warn!("Rejected totpSecret update: NVS has existing secret and correct current secret not supplied.");
                         totp_success = false;
                         totp_err_msg = "Non autorisé : le secret TOTP actuel est incorrect ou manquant.";
                     }
+                }
+            }
+            if totp_success {
+                if let Some(ref ext_name) = payload.ext_name {
+                    let trimmed = ext_name.trim();
+                    let final_name = if trimmed.len() > 16 {
+                        &trimmed[..16]
+                    } else {
+                        trimmed
+                    };
+                    info!("Saving extName to NVS: {}", final_name);
+                    storage.set_str("extName", final_name)?;
+                }
+                if let Some(ref ext_desc) = payload.ext_desc {
+                    let trimmed = ext_desc.trim();
+                    info!("Saving extDesc to NVS: {}", trimmed);
+                    storage.set_str("extDesc", trimmed)?;
                 }
             }
         }
@@ -754,7 +872,7 @@ fn main() -> Result<()> {
         
         if !wifi_success {
             let mut response = req.into_status_response(400)?;
-            response.write(b"WiFi Connection Failed")?;
+            response.write(b"Echec de la connexion Wi-Fi : SSID introuvable ou mot de passe incorrect.")?;
             return Ok(());
         }
 
@@ -825,8 +943,28 @@ fn main() -> Result<()> {
             info!("Configuration updated. No OTA URL modification, running in place.");
         }
 
-        let mut response = req.into_ok_response()?;
-        response.write(b"OK")?;
+        let (mac, name, desc) = {
+            let storage = nvs_clone.lock().unwrap();
+            let m = get_mac_address();
+            let name = storage.get_str("extName")?.unwrap_or_else(|| {
+                let clean = m.replace(":", "");
+                format!("WE-{}", &clean[8..12])
+            });
+            let desc = storage.get_str("extDesc")?.unwrap_or_else(|| "WhisperEye Extender".to_string());
+            (m, name, desc)
+        };
+        let response_json = serde_json::json!({
+            "status": "OK",
+            "mac": mac,
+            "name": name,
+            "description": desc
+        });
+        let response_data = serde_json::to_string(&response_json)?;
+        let mut response = req.into_response(200, Some("OK"), &[
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*")
+        ])?;
+        response.write(response_data.as_bytes())?;
         Ok(())
     })?;
 
@@ -1001,3 +1139,9 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
+
+
+

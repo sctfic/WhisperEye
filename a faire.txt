@@ -1,0 +1,3 @@
+je voudrai que le firmware de production demande le secret totp au serveur principal, si elle n'existe pas dans NVS, via l'api GET http(s)://[srv]/api/totp
+le serveur gere une whitelist d'adresse mac pour repondre, si le whispereye n'est pas encore en whitelist il faudra redemande dans au prochain cron (5min)
+si il repond le secret TOTP, il sera enregistre en NVS mais ne sera jamais divulge (ni dans les log ni par api), il y aura seullementun bouton 'effacer la clef TOTP' sur le frontend
