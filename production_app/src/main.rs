@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.3-0017";
+const FW_VERSION: &str = "1.0.5-0005";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -60,9 +60,37 @@ fn get_mac_address() -> String {
     format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
 }
 
+struct CustomLogger;
+
+impl log::Log for CustomLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            let marker = match record.level() {
+                log::Level::Error => "E",
+                log::Level::Warn => "W",
+                log::Level::Info => "I",
+                log::Level::Debug => "D",
+                log::Level::Trace => "V",
+            };
+            let timestamp = unsafe { esp_idf_sys::esp_log_timestamp() };
+            println!("\x1b[35;1m{}\x1b[0m ({}) {}: {}", marker, timestamp, record.target(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: CustomLogger = CustomLogger;
+
 fn main() -> Result<()> {
-    esp_idf_svc::log::EspLogger::initialize_default();
-    info!("WhisperEye Production Application Starting Up (Version {})...", FW_VERSION);
+    log::set_logger(&LOGGER)
+        .map(|()| log::set_max_level(log::LevelFilter::Info))
+        .expect("Failed to initialize custom logger");
+    info!("\x1b[35mWhisperEye Production Application Starting Up (Version {})...\x1b[0m", FW_VERSION);
 
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
     let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
@@ -188,19 +216,6 @@ fn main() -> Result<()> {
         if sntp.is_err() {
             warn!("Failed to initialize SNTP service");
         }
-        
-        // Spawn background update check on successful boot connection with a robust stack size (32KB) to prevent stack overflow
-        let nvs_clone = Arc::clone(&nvs_storage);
-        let _ = thread::Builder::new()
-            .name("boot_ota_check".to_string())
-            .stack_size(32768)
-            .spawn(move || {
-                thread::sleep(std::time::Duration::from_secs(5));
-                if let Err(e) = check_and_trigger_ota(nvs_clone) {
-                    warn!("Error in background update check: {:?}", e);
-                }
-            });
-
         sntp.ok()
     } else {
         None
@@ -472,12 +487,16 @@ fn main() -> Result<()> {
             storage.get_str("updateAvailable")?.unwrap_or_default()
         };
 
+        info!("\x1b[35;1m[ÉTAPE 1] Vérification des mises à jour à l'URL : {}\x1b[0m", update_url);
+
         if update_url.is_empty() {
+            warn!("Aucune URL de mise à jour configurée dans la NVS.");
             let mut response = req.into_status_response(400)?;
             response.write(b"No update URL configured")?;
             return Ok(());
         }
 
+        info!("Lancement de la requête HTTP GET vers l'URL amont...");
         // Fetch JSON from update_url on ESP32 side to bypass CORS!
         let config = esp_idf_svc::http::client::Configuration {
             buffer_size: Some(2048),
@@ -489,6 +508,7 @@ fn main() -> Result<()> {
         connection.initiate_response()?;
 
         let status = connection.status();
+        info!("Réponse reçue de l'URL amont. Statut HTTP : {}", status);
         if status != 200 {
             let mut response = req.into_status_response(502)?;
             response.write(format!("Upstream error: HTTP {}", status).as_bytes())?;
@@ -509,17 +529,29 @@ fn main() -> Result<()> {
             }
         }
 
+        if let Ok(body_str) = std::str::from_utf8(&body) {
+            info!("Contenu brut de la réponse amont :\n{}", body_str);
+        } else {
+            info!("Contenu brut de la réponse amont : [Binaire ou UTF-8 invalide]");
+        }
+
         let list: serde_json::Value = serde_json::from_slice(&body)?;
         let mut matched_entry = serde_json::Value::Null;
         
-        if let Some(arr) = list.as_array() {
-            for entry in arr {
-                let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
-                let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-                if b_type == "v2.0" && c_type == "ESP32-S3" {
-                    matched_entry = entry.clone();
-                    break;
-                }
+        let entries = if let Some(arr) = list.as_array() {
+            arr.clone()
+        } else if list.is_object() {
+            vec![list.clone()]
+        } else {
+            vec![]
+        };
+
+        for entry in entries {
+            let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
+            let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
+            if b_type == "v2.0" && c_type == "ESP32-S3" {
+                matched_entry = entry.clone();
+                break;
             }
         }
 
@@ -692,16 +724,53 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // POST /api/totp/delete
-    let nvs_totp_del = Arc::clone(&nvs_storage);
-    server.fn_handler("/api/totp/delete", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
-        {
-            let mut storage = nvs_totp_del.lock().unwrap();
-            info!("Deleting totpSecret from NVS");
-            storage.remove_key("totpSecret")?;
+    // POST /api/reset
+    let nvs_reset = Arc::clone(&nvs_storage);
+    server.fn_handler("/api/reset", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
+        let mut buf = vec![0u8; 128];
+        let bytes_read = req.read(&mut buf)?;
+        
+        #[derive(serde::Deserialize)]
+        struct ResetPayload {
+            confirm: String,
         }
+        
+        let payload: ResetPayload = match serde_json::from_slice(&buf[..bytes_read]) {
+            Ok(p) => p,
+            Err(_) => {
+                let mut response = req.into_status_response(400)?;
+                response.write(b"Format JSON invalide")?;
+                return Ok(());
+            }
+        };
+        
+        if payload.confirm != "RESET" {
+            let mut response = req.into_status_response(400)?;
+            response.write(b"Confirmation de reset incorrecte")?;
+            return Ok(());
+        }
+        
+        {
+            let mut storage = nvs_reset.lock().unwrap();
+            info!("Factory reset triggered: removing TOTP secret and clearing Wi-Fi config");
+            storage.remove_key("totpSecret")?;
+            storage.set_str("wifiKnown", "{}")?;
+        }
+        
         let mut response = req.into_ok_response()?;
-        response.write(b"TOTP key deleted successfully")?;
+        response.write(b"OK")?;
+        
+        let _ = thread::Builder::new()
+            .name("reset_restart_worker".to_string())
+            .stack_size(4096)
+            .spawn(|| {
+                thread::sleep(std::time::Duration::from_secs(2));
+                // Do not boot to recovery, reboot normally to production instead
+                unsafe {
+                    esp_idf_sys::esp_restart();
+                }
+            });
+            
         Ok(())
     })?;
 
@@ -880,6 +949,13 @@ fn main() -> Result<()> {
             let mut storage = nvs_clone.lock().unwrap();
             
             if let Some(ref update_url) = payload.update_url {
+                if !update_url.is_empty() {
+                    info!("\x1b[35;1m[ÉTAPE 2] Choix d'installation / mise à jour\x1b[0m");
+                    info!("\x1b[36;1m  -> URL cible : {}\x1b[0m", update_url);
+                    if let Some(filename) = update_url.split('/').last() {
+                        info!("\x1b[36;1m  -> Fichier binaire : {}\x1b[0m", filename);
+                    }
+                }
                 let is_bin = update_url.ends_with(".bin");
                 if is_bin {
                     storage.set_str("updateDlUrl", update_url)?;
@@ -929,12 +1005,15 @@ fn main() -> Result<()> {
         };
 
         if should_restart {
-            info!("Configuration updated. Restarting ESP32 back to recovery_boot to execute update...");
+            info!("\x1b[35;1m[ÉTAPE 3] Redémarrage sur Recovery\x1b[0m");
+            info!("\x1b[36;1m  -> Firmware actif lors de la demande : production_app ({})\x1b[0m", FW_VERSION);
+            info!("\x1b[36;1m  -> Redémarrage programmé sur la partition de secours dans 2 secondes...\x1b[0m");
             let _ = thread::Builder::new()
                 .name("restart_worker".to_string())
                 .stack_size(4096)
                 .spawn(|| {
                     thread::sleep(std::time::Duration::from_secs(2));
+                    set_boot_to_recovery();
                     unsafe {
                         esp_idf_sys::esp_restart();
                     }
@@ -974,6 +1053,7 @@ fn main() -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_version(v: &str) -> (u32, u32, u32, u32) {
     let clean = v.trim().trim_start_matches('v');
     // Handle both "1.0.1" and "1.0.1-0125" formats
@@ -991,6 +1071,7 @@ fn parse_version(v: &str) -> (u32, u32, u32, u32) {
 }
 
 /// Accept both a JSON array `[{...}, ...]` and a bare object `{...}` as a list of version entries.
+#[allow(dead_code)]
 fn version_entries(val: &serde_json::Value) -> Vec<&serde_json::Value> {
     if let Some(arr) = val.as_array() {
         arr.iter().collect()
@@ -1001,6 +1082,7 @@ fn version_entries(val: &serde_json::Value) -> Vec<&serde_json::Value> {
     }
 }
 
+#[allow(dead_code)]
 fn is_web_accessible() -> bool {
     use std::net::ToSocketAddrs;
     
@@ -1025,6 +1107,7 @@ fn is_web_accessible() -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
     let (update_available_url, current_fw) = {
         let storage = nvs.lock().unwrap();
@@ -1043,7 +1126,9 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
         return Ok(());
     }
 
-    info!("Checking for updates at: {}", update_available_url);
+    info!("\x1b[35;1m[ÉTAPE 1] Vérification automatique des mises à jour\x1b[0m");
+    info!("\x1b[36;1m  -> Version locale active : {}\x1b[0m", current_fw);
+    info!("\x1b[36;1m  -> URL du manifest interrogé : {}\x1b[0m", update_available_url);
 
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(2048),
@@ -1053,6 +1138,7 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)
         .context("Failed to create HTTP connection")?;
     
+    info!("\x1b[36;1m  -> Envoi de la requête HTTP GET...\x1b[0m");
     connection.initiate_request(esp_idf_svc::http::Method::Get, &update_available_url, &[])
         .context("Failed to initiate request")?;
     
@@ -1060,6 +1146,7 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
         .context("Failed to get response")?;
     
     let status = connection.status();
+    info!("\x1b[36;1m  -> Réponse HTTP reçue. Statut : {}\x1b[0m", status);
     if status != 200 {
         return Err(anyhow::anyhow!("Failed fetching update JSON: HTTP {}", status));
     }
@@ -1074,27 +1161,39 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
         }
     }
 
+    if let Ok(body_str) = std::str::from_utf8(&body) {
+        info!("\x1b[36;1m  -> Contenu brut du manifest amont :\n{}\x1b[0m", body_str);
+    } else {
+        info!("\x1b[36;1m  -> Contenu brut du manifest amont : [Binaire ou UTF-8 invalide]\x1b[0m");
+    }
+
     let list: serde_json::Value = serde_json::from_slice(&body)
         .context("Failed to parse updateAvailable JSON")?;
     
     let mut new_stable_url = None;
     let mut new_version = None;
 
-    if let Some(arr) = list.as_array() {
-        for entry in arr {
-            let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
-            let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-            if b_type == "v2.0" && c_type == "ESP32-S3" {
-                if let Some(stable_val) = entry.get("stable") {
-                    for v_obj in version_entries(stable_val) {
-                        if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
-                            if let Some(url_str) = v_obj.get("url").and_then(|v| v.as_str()) {
-                                if parse_version(ver_str) > parse_version(&current_fw) {
-                                    let current_best = new_version.as_deref().unwrap_or(current_fw.as_str());
-                                    if parse_version(ver_str) > parse_version(current_best) {
-                                        new_stable_url = Some(url_str.to_string());
-                                        new_version = Some(ver_str.to_string());
-                                    }
+    let entries = if let Some(arr) = list.as_array() {
+        arr.clone()
+    } else if list.is_object() {
+        vec![list.clone()]
+    } else {
+        vec![]
+    };
+
+    for entry in entries {
+        let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
+        let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
+        if b_type == "v2.0" && c_type == "ESP32-S3" {
+            if let Some(stable_val) = entry.get("stable") {
+                for v_obj in version_entries(stable_val) {
+                    if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
+                        if let Some(url_str) = v_obj.get("url").and_then(|v| v.as_str()) {
+                            if parse_version(ver_str) > parse_version(&current_fw) {
+                                let current_best = new_version.as_deref().unwrap_or(current_fw.as_str());
+                                if parse_version(ver_str) > parse_version(current_best) {
+                                    new_stable_url = Some(url_str.to_string());
+                                    new_version = Some(ver_str.to_string());
                                 }
                             }
                         }
@@ -1105,20 +1204,24 @@ fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
     }
 
     if let (Some(url), Some(ver)) = (new_stable_url, new_version) {
-        info!("New stable version found: {} (URL: {}). Triggering reboot to recovery...", ver, url);
+        info!("\x1b[35;1m[ÉTAPE 3] Redémarrage sur Recovery\x1b[0m");
+        info!("\x1b[36;1m  -> Firmware actif lors de la demande : production_app ({})\x1b[0m", FW_VERSION);
+        info!("\x1b[36;1m  -> Nouvelle version disponible détectée : {}\x1b[0m", ver);
+        info!("\x1b[36;1m  -> Enregistrement URL de téléchargement (updateDlUrl) : {}\x1b[0m", url);
         {
             let mut storage = nvs.lock().unwrap();
             storage.set_str("updateDlUrl", &url)?;
             storage.set_i32("otaRetry", 3)?;
         }
         
-        info!("OTA Retry set to 3. Rebooting ESP32 into recovery partition in 2 seconds...");
+        info!("\x1b[36;1m  -> Nombre d'essais configuré à 3. Redémarrage matériel dans 2 secondes...\x1b[0m");
         thread::sleep(std::time::Duration::from_secs(2));
+        set_boot_to_recovery();
         unsafe {
             esp_idf_sys::esp_restart();
         }
     } else {
-        info!("No newer stable version found. Current: {}", current_fw);
+        info!("\x1b[36;1m  -> Aucune version plus récente trouvée. Version actuelle : {}\x1b[0m", current_fw);
     }
 
     Ok(())
@@ -1139,6 +1242,34 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+pub fn set_boot_to_recovery() {
+    unsafe {
+        let partition = esp_idf_sys::esp_partition_find_first(
+            esp_idf_sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP,
+            esp_idf_sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_APP_FACTORY,
+            std::ptr::null(),
+        );
+        if !partition.is_null() {
+            let err = esp_idf_sys::esp_ota_set_boot_partition(partition);
+            if err != 0 {
+                log::error!("Failed to set boot partition to factory/recovery: {}", err);
+            } else {
+                log::info!("Successfully set boot partition to factory/recovery!");
+            }
+        } else {
+            log::error!("Factory/recovery partition not found!");
+        }
+    }
+}
+
+
+
+
+
+
+
+
 
 
 

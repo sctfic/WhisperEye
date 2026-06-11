@@ -1,246 +1,273 @@
-# WhisperEye API Test Suite
+# WhisperEye API Test Suite using Pester
 # Tests all endpoints of the WhisperEye production firmware
 
 param(
-    [string]$BaseUrl = "http://s3",
+    [string]$BaseUrl = "http://192.168.1.101",
     [int]$delay = 10
 )
 
 # Premature exit safety
 $ErrorActionPreference = "Continue"
 
-# Premium console header
-Clear-Host
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "     WhisperEye Production API Integration Tests          " -ForegroundColor Cyan
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "[*] Boot Delay: Sleeping for $delay seconds to allow firmware boot & Wi-Fi connection..." -ForegroundColor Yellow
-Start-Sleep -Seconds $delay
-Write-Host "[*] Starting API validation on target: $BaseUrl" -ForegroundColor Gray
-Write-Host ""
+# If we are not running inside Pester (no Describe command defined in scope),
+# we invoke Pester on this file itself!
+if ($null -eq (Get-Command -Name "Describe" -ErrorAction SilentlyContinue)) {
+    # Load Pester module
+    Import-Module Pester -ErrorAction SilentlyContinue
+    
+    # Premium console header
+    Clear-Host
+    Write-Host "==========================================================" -ForegroundColor Cyan
+    Write-Host "     WhisperEye Production API Pester Tests Runner        " -ForegroundColor Cyan
+    Write-Host "==========================================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "[*] Boot Delay: Sleeping for $delay seconds to allow firmware boot & Wi-Fi connection..." -ForegroundColor Yellow
+    Start-Sleep -Seconds $delay
+    Write-Host "[*] Executing Pester tests on target: $BaseUrl" -ForegroundColor Gray
+    Write-Host ""
+    
+    Invoke-Pester -Script @{ Path = $PSCommandPath; Parameters = @{ BaseUrl = $BaseUrl } }
+    
+    Write-Host ""
+    Write-Host "Press any key to exit..." -ForegroundColor Gray
+    if ($Host.Name -eq "ConsoleHost") {
+        [void][System.Console]::ReadKey($true)
+    }
+    Exit
+}
 
-# Helper to run requests and handle results
-function Test-Endpoint {
-    param (
-        [string]$Name,
-        [string]$Method,
-        [string]$Path,
-        [string]$Body = $null,
-        [int[]]$ExpectedStatusCodes = @(200),
-        [bool]$IsRedirect = $false,
-        [scriptblock]$Validator = $null
+# Helper to query HTTP endpoints and return status & body (even for redirects/errors)
+function Get-HttpStatus {
+    param(
+        [string]$Url,
+        [string]$Method = "GET",
+        $Body = $null
     )
-
-    $Uri = "$BaseUrl$Path"
     $params = @{
+        Uri = $Url
         Method = $Method
-        Uri = $Uri
         TimeoutSec = 5
         ErrorAction = "Stop"
+        MaximumRedirection = 0
+        UseBasicParsing = $true
     }
-
-    if ($IsRedirect) {
-        $params.MaximumRedirection = 0
-    }
-
     if ($Body) {
         $params.Body = $Body
         $params.ContentType = "application/json"
     }
-
-    $startTime = [DateTime]::Now
-    $res = $null
-    $success = $false
-    $actualCode = 0
-    $errorMsg = ""
-    $content = $null
-
     try {
         $res = Invoke-WebRequest @params
-        $actualCode = $res.StatusCode
-        $content = $res.Content
-        if ($ExpectedStatusCodes -contains $actualCode) {
-            $success = $true
-        } else {
-            $errorMsg = "Unexpected status code: $actualCode (Expected: $($ExpectedStatusCodes -join ','))"
+        return [PSCustomObject]@{
+            StatusCode = $res.StatusCode
+            Content = $res.Content
         }
-    }
-    catch {
-        # Check if we got a response despite the error (e.g., 302 or 400 bad request)
+    } catch {
+        if ($_.TargetObject -and $_.TargetObject -is [System.Net.HttpWebRequest]) {
+            try {
+                $resp = $_.TargetObject.GetResponse()
+                $stream = $resp.GetResponseStream()
+                $bodyText = ""
+                if ($null -ne $stream -and $stream.CanRead) {
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    $bodyText = $reader.ReadToEnd()
+                    $reader.Close()
+                    $stream.Close()
+                }
+                $statusCode = [int]$resp.StatusCode
+                $resp.Close()
+                return [PSCustomObject]@{
+                    StatusCode = $statusCode
+                    Content = $bodyText
+                }
+            } catch {
+                # Fall through
+            }
+        }
         if ($_.Exception.Response) {
-            $actualCode = [int]$_.Exception.Response.StatusCode
-            if ($ExpectedStatusCodes -contains $actualCode) {
-                $success = $true
-                try {
-                    $stream = $_.Exception.Response.GetResponseStream()
-                    if ($null -ne $stream) {
-                        $reader = New-Object System.IO.StreamReader($stream)
-                        $content = $reader.ReadToEnd()
-                        $reader.Close()
-                        $stream.Close()
-                    }
-                } catch {}
+            $stream = $_.Exception.Response.GetResponseStream()
+            $bodyText = ""
+            if ($null -ne $stream -and $stream.CanRead) {
+                $reader = New-Object System.IO.StreamReader($stream)
+                $bodyText = $reader.ReadToEnd()
+                $reader.Close()
+                $stream.Close()
+            }
+            return [PSCustomObject]@{
+                StatusCode = [int]$_.Exception.Response.StatusCode
+                Content = $bodyText
+            }
+        }
+        throw $_
+    }
+}
+
+# ----------------- PESTER TEST SUITE -----------------
+Describe "WhisperEye Production API Integration" {
+
+    Context "Base Dashboard Resources" {
+        It "should load the Main Dashboard (GET /)" {
+            $res = Get-HttpStatus "$BaseUrl/"
+            $res.StatusCode | Should Be 200
+        }
+
+        It "should load the Favicon Resource (GET /favicon.ico)" {
+            $res = Get-HttpStatus "$BaseUrl/favicon.ico"
+            $res.StatusCode | Should Be 200
+        }
+    }
+
+    Context "Captive Portal Redirects" {
+        It "should redirect Android/Chrome to captive portal (GET /generate_204)" {
+            $res = Get-HttpStatus "$BaseUrl/generate_204"
+            $res.StatusCode | Should Be 302
+        }
+
+        It "should redirect iOS/Apple to captive portal (GET /hotspot-detect.html)" {
+            $res = Get-HttpStatus "$BaseUrl/hotspot-detect.html"
+            $res.StatusCode | Should Be 302
+        }
+
+        It "should redirect Windows NCSI to captive portal (GET /ncsi.txt)" {
+            $res = Get-HttpStatus "$BaseUrl/ncsi.txt"
+            $res.StatusCode | Should Be 302
+        }
+
+        It "should redirect Windows ConnectTest to captive portal (GET /connecttest.txt)" {
+            $res = Get-HttpStatus "$BaseUrl/connecttest.txt"
+            $res.StatusCode | Should Be 302
+        }
+    }
+
+    Context "GET JSON API Endpoints" {
+        It "should return System Status details (GET /api/status)" {
+            $res = Get-HttpStatus "$BaseUrl/api/status"
+            $res.StatusCode | Should Be 200
+            
+            $j = $res.Content | ConvertFrom-Json
+            $j.network_mode | Should Not BeNullOrEmpty
+            $j.wifi_ssid | Should Not BeNullOrEmpty
+            $j.ip_addr | Should Not BeNullOrEmpty
+            $j.gateway_addr | Should Not BeNullOrEmpty
+            $j.sys_time | Should Not BeNullOrEmpty
+            # ntp_server may be empty before NTP sync
+            ($j.PSObject.Properties.Name -contains "ntp_server") | Should Be $true
+            $j.fw_version | Should Not BeNullOrEmpty
+            $j.wifi_known | Should Not Be $null
+            # Booleans: $false would fail BeNullOrEmpty, use Not Be $null instead
+            $j.auto_update | Should Not Be $null
+            $j.has_totp | Should Not Be $null
+            $j.author.email | Should Not BeNullOrEmpty
+        }
+
+        It "should return Peripherals capacity properties (GET /api/capacity)" {
+            $res = Get-HttpStatus "$BaseUrl/api/capacity"
+            $res.StatusCode | Should Be 200
+
+            $j = $res.Content | ConvertFrom-Json
+            $j.sensors | Should Not BeNullOrEmpty
+            $j.actuators | Should Not BeNullOrEmpty
+            
+            $sensors = @($j.sensors)
+            foreach ($s in $sensors) {
+                $s.Unit | Should Not BeNullOrEmpty
+            }
+        }
+
+        It "should return metrics history list (GET /api/history)" {
+            $res = Get-HttpStatus "$BaseUrl/api/history"
+            $res.StatusCode | Should Be 200
+
+            $j = $res.Content | ConvertFrom-Json
+            $items = @($j)
+            foreach ($item in $items) {
+                $item.timestamp | Should Not BeNullOrEmpty
+                $item.readings | Should Not BeNullOrEmpty
+                $item.readings.temperature_sht45 | Should Not BeNullOrEmpty
+                $item.readings.co2_scd41 | Should Not BeNullOrEmpty
+            }
+        }
+
+        It "should return scanned Wi-Fi SSID networks (GET /api/ssids)" {
+            $res = Get-HttpStatus "$BaseUrl/api/ssids"
+            $res.StatusCode | Should Be 200
+
+            $j = $res.Content | ConvertFrom-Json
+            $j.ssids | Should Not BeNullOrEmpty
+            $j.active | Should Not BeNullOrEmpty
+        }
+
+        It "should return live sensors readings (GET /api/sensors)" {
+            $res = Get-HttpStatus "$BaseUrl/api/sensors"
+            $res.StatusCode | Should Be 200
+
+            $j = $res.Content | ConvertFrom-Json
+            $j.temperature_sht45 | Should Not BeNullOrEmpty
+            $j.humidity_sht45 | Should Not BeNullOrEmpty
+            $j.co2_scd41 | Should Not BeNullOrEmpty
+            $j.ds18b20_temperatures | Should Not BeNullOrEmpty
+        }
+
+        It "should return registered peripherals details (GET /api/peripherals)" {
+            $res = Get-HttpStatus "$BaseUrl/api/peripherals"
+            $res.StatusCode | Should Be 200
+
+            $j = $res.Content | ConvertFrom-Json
+            $items = @($j)
+            if ($items.Count -gt 0) {
+                $first = $items[0]
+                $first.id | Should Not BeNullOrEmpty
+                $first.name | Should Not BeNullOrEmpty
+                $first.is_static | Should Not BeNullOrEmpty
+                $first.present | Should Not BeNullOrEmpty
+                $first.value | Should Not BeNullOrEmpty
+            }
+        }
+
+        # Possible responses:
+        #   400 - No updateAvailable URL configured in NVS
+        #   502 - Upstream firmware manifest server unreachable
+        #   200 - Returns matched board entry JSON (or null if no board match)
+        It "should check updates or return 400/502 when update URL not configured or unreachable (GET /api/check_updates)" {
+            $res = Get-HttpStatus "$BaseUrl/api/check_updates"
+            if ($res.StatusCode -eq 400) {
+                $res.Content | Should Like "*No update URL configured*"
+            } elseif ($res.StatusCode -eq 502) {
+                $res.Content | Should Like "*Upstream error*"
             } else {
-                $errorMsg = "HTTP Error $actualCode"
-            }
-        } else {
-            $errorMsg = $_.Exception.Message
-        }
-    }
-    $duration = [Math]::Round(([DateTime]::Now - $startTime).TotalMilliseconds)
-
-    if ($success -and $null -ne $Validator -and $null -ne $content) {
-        try {
-            $trimmed = $content.Trim()
-            $isJson = $trimmed.StartsWith("{") -or $trimmed.StartsWith("[")
-            if ($isJson) {
-                $parsed = $content | ConvertFrom-Json
-                $validationResult = & $Validator $parsed $actualCode
-            } else {
-                $validationResult = & $Validator $content $actualCode
-            }
-
-            if ($validationResult -is [bool] -and -not $validationResult) {
-                $success = $false
-                $errorMsg = "Format validation failed"
-            } elseif ($validationResult -is [string] -and $validationResult -ne "OK") {
-                $success = $false
-                $errorMsg = "Format validation failed: $validationResult"
+                $res.StatusCode | Should Be 200
+                # Response may be null if no board matches the local boardType/ChipType
+                if ($res.Content -ne "null") {
+                    $j = $res.Content | ConvertFrom-Json
+                    $j.boardType | Should Not BeNullOrEmpty
+                    $j.ChipType | Should Not BeNullOrEmpty
+                }
             }
         }
-        catch {
-            $success = $false
-            $errorMsg = "Exception during response parsing/validation: $($_.Exception.Message)"
+    }
+
+    Context "POST Mutation API Endpoints" {
+        It "should toggle relay outputs (POST /api/actuators)" {
+            $body = '{"rla": false, "rlb": false, "swpwr": true, "ina": false, "inb": false}'
+            $res = Get-HttpStatus "$BaseUrl/api/actuators" -Method POST -Body $body
+            $res.StatusCode | Should Be 200
+        }
+
+        It "should rename a peripheral device (POST /api/peripherals)" {
+            $body = '{"id": "rla", "name": "Relais A"}'
+            $res = Get-HttpStatus "$BaseUrl/api/peripherals" -Method POST -Body $body
+            $res.StatusCode | Should Be 200
+        }
+
+        It "should update system config settings (POST /api/config)" {
+            $body = '{"auto_update": true}'
+            $res = Get-HttpStatus "$BaseUrl/api/config" -Method POST -Body $body
+            $res.StatusCode | Should Be 200
+        }
+
+        It "should reject reset without correct confirmation (POST /api/reset)" {
+            $body = '{"confirm": "WRONG"}'
+            $res = Get-HttpStatus "$BaseUrl/api/reset" -Method POST -Body $body
+            $res.StatusCode | Should Be 400
         }
     }
-
-    if ($success) {
-        Write-Host "  [OK] " -NoNewline -ForegroundColor Green
-        Write-Host "$($Name.PadRight(30)) | $Method $Path | Code $actualCode | ${duration}ms" -ForegroundColor Gray
-        return $true
-    } else {
-        Write-Host "  [FAIL] " -NoNewline -ForegroundColor Red
-        Write-Host "$($Name.PadRight(30)) | $Method $Path | Error: $errorMsg" -ForegroundColor Yellow
-        return $false
-    }
 }
-
-# ----------------- RESPONSE FORMAT VALIDATORS -----------------
-
-$statusValidator = {
-    param($j)
-    if ($null -eq $j) { return "JSON is null" }
-    $reqFields = @("network_mode", "wifi_ssid", "ip_addr", "gateway_addr", "sys_time", "ntp_server", "fw_version", "wifi_known", "auto_update", "has_totp", "author")
-    foreach ($f in $reqFields) {
-        if ($null -eq $j.$f) { return "Missing field: $f" }
-    }
-    if ($null -eq $j.author.email) { return "Missing field: author.email" }
-    return "OK"
-}
-
-$capacityValidator = {
-    param($j)
-    if ($null -eq $j) { return "JSON is null" }
-    if ($null -eq $j.sensors) { return "Missing field: sensors" }
-    if ($null -eq $j.actuators) { return "Missing field: actuators" }
-    $sensors = @($j.sensors)
-    foreach ($s in $sensors) {
-        if ($null -eq $s.Unit) { return "Missing field: Unit in sensor $($s.Name)" }
-    }
-    return "OK"
-}
-
-$historyValidator = {
-    param($j)
-    $items = @($j)
-    foreach ($item in $items) {
-        if ($null -eq $item.timestamp) { return "Missing field: timestamp in history entry" }
-        if ($null -eq $item.readings) { return "Missing field: readings in history entry" }
-        if ($null -eq $item.readings.temperature_sht45) { return "Missing field: readings.temperature_sht45" }
-        if ($null -eq $item.readings.co2_scd41) { return "Missing field: readings.co2_scd41" }
-    }
-    return "OK"
-}
-
-$ssidsValidator = {
-    param($j)
-    if ($null -eq $j) { return "JSON is null" }
-    if ($null -eq $j.ssids) { return "Missing field: ssids" }
-    if ($null -eq $j.active) { return "Missing field: active" }
-    return "OK"
-}
-
-$sensorsValidator = {
-    param($j)
-    if ($null -eq $j) { return "JSON is null" }
-    $reqFields = @("temperature_sht45", "humidity_sht45", "co2_scd41", "ds18b20_temperatures")
-    foreach ($f in $reqFields) {
-        if ($null -eq $j.$f) { return "Missing field: $f" }
-    }
-    return "OK"
-}
-
-$peripheralsValidator = {
-    param($j)
-    $items = @($j)
-    if ($items.Count -eq 0) { return "OK" }
-    $first = $items[0]
-    $reqFields = @("id", "name", "is_static", "present", "value")
-    foreach ($f in $reqFields) {
-        if ($null -eq $first.$f) { return "Missing field: $f in peripherals entry" }
-    }
-    return "OK"
-}
-
-$checkUpdatesValidator = {
-    param($data, $statusCode)
-    if ($statusCode -eq 400) {
-        if ($data -like "*No update URL configured*") { return "OK" }
-        return "Expected 'No update URL configured' error message"
-    }
-    if ($null -eq $data.boardType) { return "Missing boardType" }
-    if ($null -eq $data.ChipType) { return "Missing ChipType" }
-    return "OK"
-}
-
-# ----------------- TEST EXECUTION -----------------
-
-$passed = 0
-$total = 0
-
-# 1. Base Dashboard
-$total++; if (Test-Endpoint "Main Dashboard" "GET" "/" -ExpectedStatusCodes @(200)) { $passed++ }
-$total++; if (Test-Endpoint "Favicon Resource" "GET" "/favicon.ico" -ExpectedStatusCodes @(200)) { $passed++ }
-
-# 2. Captive Portal Redirects (Should return 302 Found)
-$total++; if (Test-Endpoint "Captive Portal 204" "GET" "/generate_204" -ExpectedStatusCodes @(302) -IsRedirect $true) { $passed++ }
-
-# 3. GET JSON API Endpoints
-$total++; if (Test-Endpoint "System Status API" "GET" "/api/status" -ExpectedStatusCodes @(200) -Validator $statusValidator) { $passed++ }
-$total++; if (Test-Endpoint "Capacity API" "GET" "/api/capacity" -ExpectedStatusCodes @(200) -Validator $capacityValidator) { $passed++ }
-$total++; if (Test-Endpoint "Metrics History API" "GET" "/api/history" -ExpectedStatusCodes @(200) -Validator $historyValidator) { $passed++ }
-$total++; if (Test-Endpoint "Wi-Fi SSIDs Scan API" "GET" "/api/ssids" -ExpectedStatusCodes @(200) -Validator $ssidsValidator) { $passed++ }
-$total++; if (Test-Endpoint "Sensors Data API" "GET" "/api/sensors" -ExpectedStatusCodes @(200) -Validator $sensorsValidator) { $passed++ }
-$total++; if (Test-Endpoint "Peripherals Display API" "GET" "/api/peripherals" -ExpectedStatusCodes @(200) -Validator $peripheralsValidator) { $passed++ }
-$total++; if (Test-Endpoint "Check Updates API" "GET" "/api/check_updates" -ExpectedStatusCodes @(200, 400) -Validator $checkUpdatesValidator) { $passed++ }
-
-# 4. POST API Endpoints
-$total++; if (Test-Endpoint "Post Actuators API" "POST" "/api/actuators" -Body '{"rla": false, "rlb": false, "swpwr": true, "ina": false, "inb": false}' -ExpectedStatusCodes @(200)) { $passed++ }
-$total++; if (Test-Endpoint "Post Peripherals Rename" "POST" "/api/peripherals" -Body '{"id": "rla", "name": "Relais A"}' -ExpectedStatusCodes @(200)) { $passed++ }
-$total++; if (Test-Endpoint "Post Config (Apply Only)" "POST" "/api/config" -Body '{"auto_update": true}' -ExpectedStatusCodes @(200)) { $passed++ }
-
-Write-Host ""
-Write-Host "==========================================================" -ForegroundColor Cyan
-if ($passed -eq $total) {
-    Write-Host "    TEST RESULT: PASS ($passed/$total tests successful) " -ForegroundColor Green
-} else {
-    Write-Host "    TEST RESULT: FAIL ($passed/$total tests successful) " -ForegroundColor Red
-}
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Press any key to exit..." -ForegroundColor Gray
-if ($Host.Name -eq "ConsoleHost") {
-    [void][System.Console]::ReadKey($true)
-}
-

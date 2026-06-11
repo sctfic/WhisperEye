@@ -441,14 +441,95 @@
                 stroke-dashoffset: -124;
             }
         }
+
+        /* Premium OTA Update Card styling */
+        .ota-card {
+            background: rgba(30, 41, 59, 0.4);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .ota-progress-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 9999px;
+            overflow: hidden;
+            margin: 1.25rem 0;
+            position: relative;
+        }
+
+        .ota-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6 0%, #10b981 50%, #6366f1 100%);
+            background-size: 200% 100%;
+            width: 0%;
+            border-radius: 9999px;
+            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: ota-shimmer 2s infinite linear;
+        }
+
+        .ota-percentage {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #f1f5f9 0%, #cbd5e1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.25rem;
+            text-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .ota-status-msg {
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .ota-meta {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            font-family: monospace;
+        }
+
+        @keyframes ota-shimmer {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 200% 50%; }
+        }
+
+        /* Pulsing Ring Spinner */
+        .ota-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(16, 185, 129, 0.1);
+            border-radius: 50%;
+            border-top-color: var(--accent-color);
+            border-right-color: var(--secondary-accent);
+            animation: ota-spin 1s infinite linear;
+            margin: 0 auto 1rem auto;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+        }
+
+        @keyframes ota-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 
 <body>
     <header>
         <h1 id="header_ext_name">-</h1>
-        <p id="header_ext_desc" style="color: var(--text-secondary); font-style: italic;"></p>
-        <p><span class="pulse"></span>Firmware Applicatif de Production (Production App)</p>
+        <p>
+            <span class="pulse"></span>Firmware Production
+            <span id="header_ext_desc" style="color: var(--text-secondary); font-style: italic;"></span>
+        </p>
     </header>
 
     <div class="container">
@@ -456,6 +537,7 @@
             <button class="tab-btn active" onclick="switchTab('devices-tab')">Devices</button>
             <button class="tab-btn" onclick="switchTab('status-tab')">Statut ESP32</button>
             <button class="tab-btn" onclick="switchTab('config-tab')">Configuration</button>
+            <button class="tab-btn" onclick="switchTab('update-tab')">Mise à jour</button>
         </div>
 
         <!-- TAB 1: DEVICES & ACTUATORS -->
@@ -607,15 +689,36 @@
                             class="badge badge-green">Actif</span></span>
                     <span style="font-size: 0.95rem; color: var(--text-secondary); font-family: monospace;"
                         id="totp_key_display"></span>
-                    <button type="button" class="btn"
-                        style="background-color: var(--danger); color: #fff; width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem;"
-                        onclick="deleteTotpKey()">Supprimer</button>
                 </div>
             </div>
 
-            <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
-                <label>Mise à Jour du Firmware</label>
-                <div class="switch-container" style="margin-bottom: 1rem;">
+            <div class="form-group"
+                style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem;">
+                <label>Réinitialisation d'Usine</label>
+                <div
+                    style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 0.5rem;">
+                    <span
+                        style="font-size: 0.95rem; color: var(--text-secondary); flex: 1; min-width: 280px; line-height: 1.4;">Cette
+                        action supprime la clé TOTP, efface toute la configuration Wi-Fi et redémarre l'extendeur en
+                        mode Point d'Accès (Access Point) avec l'adresse IP 192.168.71.1.</span>
+                    <button type="button" class="btn"
+                        style="background-color: var(--danger); color: #fff; width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem;"
+                        onclick="triggerFactoryReset()">Réinitialiser</button>
+                </div>
+            </div>
+
+            <div id="config_status" class="status-message"></div>
+        </div>
+
+        <!-- TAB 4: UPDATE -->
+        <div id="update-tab" class="tab-content">
+            <h3
+                style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Mise à Jour du Firmware
+            </h3>
+
+            <div class="form-group">
+                <div class="switch-container" style="margin-bottom: 1.5rem;">
                     <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite
                         Wi-Fi)</span>
                     <label class="switch">
@@ -624,12 +727,26 @@
                     </label>
                 </div>
                 <button type="button" class="btn"
-                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;"
-                    onclick="checkUpdates()">Vérifier maintenant</button>
-                <div id="updates_list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1.5rem;"
+                    onclick="checkUpdates()">Vérifier les versions disponibles</button>
+                <div id="updates_list"
+                    style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;"></div>
+
+                <div class="form-group"
+                    style="margin-top: 1.5rem; border-top: 1px dashed var(--border-color); padding-top: 1.5rem;">
+                    <label style="font-size: 0.95rem; color: var(--text-secondary);">Installation manuelle depuis une
+                        URL directe (.bin)</label>
+                    <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem; flex-wrap: wrap;">
+                        <input type="text" id="manual_bin_url" placeholder="https://example.com/firmware.bin"
+                            style="flex: 1; min-width: 200px; margin-bottom: 0;">
+                        <button type="button" class="btn"
+                            style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem;"
+                            onclick="installManualUrl()">Installer depuis l'URL</button>
+                    </div>
+                </div>
             </div>
 
-            <div id="config_status" class="status-message"></div>
+            <div id="update_status" class="status-message"></div>
         </div>
     </div>
 
@@ -1223,14 +1340,26 @@
                     }
 
                     const versions = [];
-                    if (entry.stable && Array.isArray(entry.stable)) {
-                        entry.stable.forEach(v => {
-                            versions.push({ version: v.version, url: v.url, stable: true });
+                    // 1. Current latest stable
+                    if (entry.stable) {
+                        if (Array.isArray(entry.stable)) {
+                            entry.stable.forEach(v => {
+                                versions.push({ version: v.version, url: v.url, label: 'Stable (Dernière)', badgeClass: 'badge-green' });
+                            });
+                        } else if (typeof entry.stable === 'object') {
+                            versions.push({ version: entry.stable.version, url: entry.stable.url, label: 'Stable (Dernière)', badgeClass: 'badge-green' });
+                        }
+                    }
+                    // 2. Previous stable versions (rollback)
+                    if (entry.previous_stable && Array.isArray(entry.previous_stable)) {
+                        entry.previous_stable.forEach(v => {
+                            versions.push({ version: v.version, url: v.url, label: 'Stable (Précédente)', badgeClass: 'badge-blue' });
                         });
                     }
+                    // 3. Unstable / Beta versions
                     if (entry.unstable && Array.isArray(entry.unstable)) {
                         entry.unstable.forEach(v => {
-                            versions.push({ version: v.version, url: v.url, stable: false });
+                            versions.push({ version: v.version, url: v.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
                         });
                     }
 
@@ -1252,9 +1381,9 @@
                         title.innerText = 'Version ' + vInfo.version;
 
                         const badge = document.createElement('span');
-                        badge.className = vInfo.stable ? 'badge badge-green' : 'badge badge-warn';
+                        badge.className = 'badge ' + vInfo.badgeClass;
                         badge.style = 'width: fit-content; margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem;';
-                        badge.innerText = vInfo.stable ? 'Stable' : 'Bêta / Instable';
+                        badge.innerText = vInfo.label;
 
                         left.appendChild(title);
                         left.appendChild(badge);
@@ -1277,13 +1406,104 @@
                 });
         }
 
+        let updatePollInterval = null;
+
+        function startUpdatePolling() {
+            if (updatePollInterval) {
+                clearInterval(updatePollInterval);
+            }
+            
+            const statusEl = document.getElementById('update_status');
+            statusEl.style.display = 'block';
+            statusEl.className = 'status-message';
+            statusEl.style.background = 'none';
+            statusEl.style.border = 'none';
+            statusEl.style.padding = '0';
+            
+            statusEl.innerHTML = `
+                <div class="ota-card">
+                    <div class="ota-spinner"></div>
+                    <div class="ota-percentage">0%</div>
+                    <div class="ota-status-msg">Préparation du redémarrage...</div>
+                    <div class="ota-progress-container">
+                        <div class="ota-progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="ota-meta">0 KB</div>
+                </div>
+            `;
+            
+            updatePollInterval = setInterval(() => {
+                fetch('/api/updateStatus')
+                    .then(res => {
+                        if (!res.ok) {
+                            throw new Error("HTTP error " + res.status);
+                        }
+                        return res.json();
+                    })
+                    .then(data => {
+                        const pct = data.percentage || 0;
+                        const statusText = data.status || 'Mise à jour en cours';
+                        const size = data.size || 0;
+                        const written = data.written || 0;
+                        
+                        let metaText = "";
+                        if (size > 0) {
+                            metaText = `${(written / 1024).toFixed(1)} KB / ${(size / 1024).toFixed(1)} KB`;
+                        } else if (written > 0) {
+                            metaText = `${(written / 1024).toFixed(1)} KB`;
+                        } else {
+                            metaText = "-";
+                        }
+                        
+                        statusEl.innerHTML = `
+                            <div class="ota-card">
+                                <div class="ota-spinner"></div>
+                                <div class="ota-percentage">${pct}%</div>
+                                <div class="ota-status-msg">${statusText}</div>
+                                <div class="ota-progress-container">
+                                    <div class="ota-progress-bar" style="width: ${pct}%"></div>
+                                </div>
+                                <div class="ota-meta">${metaText}</div>
+                            </div>
+                        `;
+                        
+                        if (statusText.includes("reboot") || statusText.includes("Redémarrage") || statusText.includes("terminée")) {
+                            clearInterval(updatePollInterval);
+                            updatePollInterval = null;
+                            showMessage('update_status', 'Mise à jour réussie ! L\'extendeur redémarre sur le nouveau firmware. Reconnexion dans 5 secondes...', 'success');
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 5000);
+                        } else if (statusText.toLowerCase().includes("erreur") || statusText.toLowerCase().includes("failed")) {
+                            clearInterval(updatePollInterval);
+                            updatePollInterval = null;
+                            showMessage('update_status', 'Erreur lors de la mise à jour : ' + statusText, 'error');
+                        }
+                    })
+                    .catch(err => {
+                        // Network error is expected while rebooting to recovery
+                        statusEl.innerHTML = `
+                            <div class="ota-card">
+                                <div class="ota-spinner"></div>
+                                <div class="ota-percentage">-</div>
+                                <div class="ota-status-msg">Mise à jour en cours... (Reconnexion à l'extendeur...)</div>
+                                <div class="ota-progress-container">
+                                    <div class="ota-progress-bar" style="width: 0%"></div>
+                                </div>
+                                <div class="ota-meta">-</div>
+                            </div>
+                        `;
+                    });
+            }, 500); // Poll every 500 ms
+        }
+
         function installFirmware(binUrl) {
             const currentFw = window.currentFwVersion || 'Aucun';
             if (!confirm(`Version actuelle : ${currentFw}\n\nVoulez-vous vraiment installer la version ${binUrl.split('/').pop()} ? L'appareil va redémarrer puis télécharger le binaire de production.`)) {
                 return;
             }
 
-            showMessage('config_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
+            showMessage('update_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
 
             fetch('/api/config', {
                 method: 'POST',
@@ -1295,18 +1515,32 @@
             })
                 .then(res => {
                     if (res.ok) {
-                        showMessage('config_status', 'Installation lancée avec succès ! Redémarrage ou téléchargement en cours...', 'success');
+                        startUpdatePolling();
                     } else {
-                        showMessage('config_status', 'Erreur lors du lancement de l\'installation.', 'error');
+                        showMessage('update_status', 'Erreur lors du lancement de l\'installation.', 'error');
                     }
                 })
-                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+                .catch(err => showMessage('update_status', 'Erreur de connexion : ' + err, 'error'));
+        }
+
+        function installManualUrl() {
+            const urlInput = document.getElementById('manual_bin_url');
+            const url = urlInput.value.trim();
+            if (!url) {
+                alert("Veuillez saisir une URL de firmware binaire valide.");
+                return;
+            }
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                alert("L'URL doit commencer par http:// ou https://");
+                return;
+            }
+            installFirmware(url);
         }
 
         // Auto update toggle immediate saving
         document.getElementById('auto_update_toggle').addEventListener('change', function () {
             const autoUpdateVal = this.checked;
-            showMessage('config_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
+            showMessage('update_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
             fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1316,30 +1550,37 @@
             })
                 .then(res => {
                     if (res.ok) {
-                        showMessage('config_status', 'Configuration de mise à jour enregistrée !', 'success');
+                        showMessage('update_status', 'Configuration de mise à jour enregistrée !', 'success');
                     } else {
-                        showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
+                        showMessage('update_status', 'Erreur lors de la sauvegarde.', 'error');
                     }
                 })
-                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+                .catch(err => showMessage('update_status', 'Erreur de connexion : ' + err, 'error'));
         });
 
-        function deleteTotpKey() {
-            if (!confirm("Voulez-vous vraiment supprimer la clé de sécurité TOTP ? L'extendeur ne pourra plus communiquer de manière sécurisée avec la station Probe sans ré-enregistrement.")) {
+        function triggerFactoryReset() {
+            const confirmWord = prompt("ATTENTION : Cette action va supprimer la clé de sécurité TOTP et effacer toute la configuration Wi-Fi enregistrée. L'extendeur va redémarrer en mode Point d'Accès (Access Point) avec l'adresse IP : 192.168.71.1.\n\nPour confirmer, veuillez saisir le mot 'RESET' en majuscules :");
+            if (confirmWord === null) {
+                return; // User cancelled prompt
+            }
+            if (confirmWord !== "RESET") {
+                alert("Confirmation incorrecte. Action annulée.");
                 return;
             }
 
-            showMessage('config_status', SPINNER_SVG + 'Suppression de la clé TOTP en cours...', 'success');
+            showMessage('config_status', SPINNER_SVG + 'Réinitialisation d\'usine en cours (effacement TOTP + Wi-Fi)...', 'success');
 
-            fetch('/api/totp/delete', {
-                method: 'POST'
+            fetch('/api/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirm: "RESET" })
             })
                 .then(res => {
                     if (res.ok) {
-                        showMessage('config_status', 'Clé de sécurité TOTP supprimée avec succès !', 'success');
+                        showMessage('config_status', 'Réinitialisation réussie ! Redémarrage de l\'appareil en mode Point d\'Accès (IP: 192.168.71.1) dans 2 secondes...', 'success');
                         fetchStatus();
                     } else {
-                        showMessage('config_status', 'Erreur lors de la suppression de la clé TOTP.', 'error');
+                        showMessage('config_status', 'Erreur lors de la réinitialisation de l\'appareil.', 'error');
                     }
                 })
                 .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));

@@ -11,7 +11,7 @@ use log::{info, error, warn};
 use std::time::SystemTime;
 use std::thread;
 use std::sync::{Arc, Mutex};
-// use std::io::Read;
+
 
 mod wifi;
 mod ota;
@@ -32,16 +32,44 @@ struct ConfigPayload {
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-recovery-0024";
+const FW_VERSION: &str = "1.0.0-recovery-0032";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
 const AUTHOR_LINK: &str = "https://github.com/sctfic/WhisperEye/blob/main/README.md";
 
+struct CustomLogger;
+
+impl log::Log for CustomLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            let marker = match record.level() {
+                log::Level::Error => "E",
+                log::Level::Warn => "W",
+                log::Level::Info => "I",
+                log::Level::Debug => "D",
+                log::Level::Trace => "V",
+            };
+            let timestamp = unsafe { esp_idf_sys::esp_log_timestamp() };
+            // Recovery: first letter in Orange (\x1b[38;5;208m)
+            println!("\x1b[38;5;208m{}\x1b[0m ({}) {}: {}", marker, timestamp, record.target(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: CustomLogger = CustomLogger;
+
 fn main() -> Result<()> {
-    // Bind the ESP-IDF logging
-    esp_idf_svc::log::EspLogger::initialize_default();
-    info!("WhisperEye Recovery Boot Firmware Starting Up...");
+    log::set_logger(&LOGGER)
+        .map(|()| log::set_max_level(log::LevelFilter::Info))
+        .expect("Failed to initialize custom logger");
+    info!("\x1b[38;5;208mWhisperEye Recovery Boot Firmware Starting Up...\x1b[0m");
 
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
     let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
@@ -165,7 +193,10 @@ fn main() -> Result<()> {
                             let _ = storage.set_str("lastOtaWrite", &now_str);
                             let _ = storage.set_str("fwVersion", "empty");
                         }
-                        info!("OTA completed successfully. Rebooting into Production Firmware!");
+                        info!("\x1b[35;1m[ÉTAPE 6] Reboot de l'appareil\x1b[0m");
+                        info!("\x1b[36;1m  -> Firmware actif lors du reboot : recovery_boot ({})\x1b[0m", FW_VERSION);
+                        info!("\x1b[36;1m  -> Clés NVS configurées pour forcer la validation (fwVersion = empty)\x1b[0m");
+                        info!("\x1b[36;1m  -> Démarrage du firmware de production dans 2 secondes...\x1b[0m");
                         thread::sleep(std::time::Duration::from_secs(2));
                         unsafe {
                             esp_idf_sys::esp_restart();
@@ -297,6 +328,23 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+    // GET /api/updateStatus
+    server.fn_handler("/api/updateStatus", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let (pct, size, written, msg) = {
+            let status = crate::ota::UPDATE_STATUS.lock().unwrap();
+            (status.percentage, status.size, status.written, status.status)
+        };
+        let json = serde_json::json!({
+            "percentage": pct,
+            "size": size,
+            "written": written,
+            "status": msg
+        });
+        let mut response = req.into_ok_response()?;
+        response.write(json.to_string().as_bytes())?;
+        Ok(())
+    })?;
+
     // GET /api/check_updates (proxies firmware.json from updateAvailable NVS key to bypass CORS!)
     let nvs_updates_clone = Arc::clone(&nvs_storage);
     server.fn_handler("/api/check_updates", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
@@ -305,12 +353,16 @@ fn main() -> Result<()> {
             storage.get_str("updateAvailable")?.unwrap_or_default()
         };
 
+        info!("\x1b[35;1m[ÉTAPE 1] Vérification des mises à jour à l'URL : {}\x1b[0m", update_url);
+
         if update_url.is_empty() {
+            warn!("Aucune URL de mise à jour configurée dans la NVS.");
             let mut response = req.into_status_response(400)?;
             response.write(b"No update URL configured")?;
             return Ok(());
         }
 
+        info!("Lancement de la requête HTTP GET vers l'URL amont...");
         // Fetch JSON from update_url on ESP32 side to bypass CORS!
         let config = esp_idf_svc::http::client::Configuration {
             buffer_size: Some(2048),
@@ -322,6 +374,7 @@ fn main() -> Result<()> {
         connection.initiate_response()?;
 
         let status = connection.status();
+        info!("Réponse reçue de l'URL amont. Statut HTTP : {}", status);
         if status != 200 {
             let mut response = req.into_status_response(502)?;
             response.write(format!("Upstream error: HTTP {}", status).as_bytes())?;
@@ -342,17 +395,29 @@ fn main() -> Result<()> {
             }
         }
 
+        if let Ok(body_str) = std::str::from_utf8(&body) {
+            info!("Contenu brut de la réponse amont :\n{}", body_str);
+        } else {
+            info!("Contenu brut de la réponse amont : [Binaire ou UTF-8 invalide]");
+        }
+
         let list: serde_json::Value = serde_json::from_slice(&body)?;
         let mut matched_entry = serde_json::Value::Null;
 
-        if let Some(arr) = list.as_array() {
-            for entry in arr {
-                let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
-                let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-                if b_type == "v2.0" && c_type == "ESP32-S3" {
-                    matched_entry = entry.clone();
-                    break;
-                }
+        let entries = if let Some(arr) = list.as_array() {
+            arr.clone()
+        } else if list.is_object() {
+            vec![list.clone()]
+        } else {
+            vec![]
+        };
+
+        for entry in entries {
+            let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
+            let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
+            if b_type == "v2.0" && c_type == "ESP32-S3" {
+                matched_entry = entry.clone();
+                break;
             }
         }
 
@@ -582,12 +647,15 @@ fn main() -> Result<()> {
                                      let _ = storage.set_str("lastOtaDl", &now_str);
                                      let _ = storage.set_str("lastOtaWrite", &now_str);
                                      let _ = storage.set_str("fwVersion", "empty");
+                                     info!("\x1b[35;1m[ÉTAPE 6] Reboot de l'appareil\x1b[0m");
+                                     info!("\x1b[36;1m  -> Firmware actif lors du reboot : recovery_boot ({})\x1b[0m", FW_VERSION);
+                                     info!("\x1b[36;1m  -> Clés NVS configurées pour forcer la validation (fwVersion = empty)\x1b[0m");
+                                     info!("\x1b[36;1m  -> Redémarrage en cours (esp_restart)...\x1b[0m");
+                                     thread::sleep(std::time::Duration::from_secs(1));
+                                     unsafe {
+                                         esp_idf_sys::esp_restart();
+                                     }
                                  }
-                                info!("OTA Succeeded. Rebooting...");
-                                thread::sleep(std::time::Duration::from_secs(1));
-                                unsafe {
-                                    esp_idf_sys::esp_restart();
-                                }
                             }
                             Err(e) => {
                                 error!("OTA failed after config update: {:?}", e);
@@ -608,11 +676,29 @@ fn main() -> Result<()> {
 
     // POST /api/upload-ota (Direct HTTP partition flashing)
     server.fn_handler("/api/upload-ota", esp_idf_svc::http::Method::Post, |mut req| -> Result<(), anyhow::Error> {
-        info!("Direct firmware binary upload initiated...");
+        info!("\x1b[35;1m[ÉTAPE 4] Téléchargement du binaire bloc par bloc\x1b[0m");
+        info!("\x1b[36;1m  -> Réception et flashage direct du binaire uploadé par morceaux...\x1b[0m");
+        
+        {
+            let mut status = crate::ota::UPDATE_STATUS.lock().unwrap();
+            status.percentage = 0;
+            status.size = 0;
+            status.written = 0;
+            status.status = "Téléchargement et flashage de l'upload direct...";
+        }
+
+        let content_len = req.header("Content-Length")
+            .and_then(|h| h.parse::<usize>().ok())
+            .unwrap_or(0);
+        {
+            let mut status = crate::ota::UPDATE_STATUS.lock().unwrap();
+            status.size = content_len;
+        }
+
         let mut ota = EspOta::new().context("Failed to init ESP OTA")?;
         let mut ota_write = ota.initiate_update().context("Failed to initiate OTA update")?;
         
-        let mut buf = [0u8; 1024]; // 1KB Buffer size constraint
+        let mut buf = [0u8; 2048]; // 2KB Buffer size constraint
         let mut total_read = 0;
         
         loop {
@@ -621,17 +707,54 @@ fn main() -> Result<()> {
                 Ok(n) => {
                     ota_write.write(&buf[..n])?;
                     total_read += n;
+                    let progress = if content_len > 0 {
+                        ((total_read as f32 / content_len as f32) * 100.0) as u8
+                    } else {
+                        0
+                    };
+                    {
+                        let mut status = crate::ota::UPDATE_STATUS.lock().unwrap();
+                        status.percentage = progress;
+                        status.written = total_read;
+                    }
+                    if content_len > 0 {
+                        print!("\r\x1b[36;1m  -> Progression : {}% ({} / {} octets)\x1b[0m", progress, total_read, content_len);
+                    } else {
+                        print!("\r\x1b[36;1m  -> Progression : {} octets\x1b[0m", total_read);
+                    }
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
                 }
                 Err(e) => {
+                    if let Ok(mut status) = crate::ota::UPDATE_STATUS.lock() {
+                        status.percentage = 0;
+                        status.status = "Erreur lors de l'upload direct";
+                    }
                     return Err(anyhow!("Failed reading raw post body: {:?}", e));
                 }
             }
         }
+        println!();
         
-        info!("Firmware upload complete ({} bytes). Writing to boot partition...", total_read);
+        info!("\x1b[35;1m[ÉTAPE 5] Écriture en mémoire flash\x1b[0m");
+        info!("\x1b[36;1m  -> Finalisation de la partition (Total écrit : {} octets)...\x1b[0m", total_read);
+        {
+            let mut status = crate::ota::UPDATE_STATUS.lock().unwrap();
+            status.percentage = 100;
+            status.written = total_read;
+            status.status = "Écriture en mémoire flash...";
+        }
         ota_write.complete().context("Failed to complete OTA")?;
+        info!("\x1b[35;1m[ÉTAPE 5] Flashage de l'upload direct terminé avec succès !\x1b[0m");
         
-        info!("Manual flash successful! Scheduling reboot...");
+        info!("\x1b[35;1m[ÉTAPE 6] Reboot de l'appareil\x1b[0m");
+        info!("\x1b[36;1m  -> Firmware actif lors du reboot : recovery_boot ({})\x1b[0m", FW_VERSION);
+        info!("\x1b[36;1m  -> Programmation du redémarrage dans 2 secondes...\x1b[0m");
+        {
+            let mut status = crate::ota::UPDATE_STATUS.lock().unwrap();
+            status.percentage = 100;
+            status.status = "Mise à jour terminée. Redémarrage...";
+        }
         thread::spawn(|| {
             thread::sleep(std::time::Duration::from_secs(2));
             unsafe {
@@ -668,6 +791,14 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
+
+
+
+
+
 
 
 

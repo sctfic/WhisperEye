@@ -234,6 +234,7 @@ impl CronWorker {
             storage.set_i32("otaRetry", 3)?;
             
             thread::sleep(Duration::from_secs(2));
+            crate::set_boot_to_recovery();
             unsafe {
                 esp_idf_sys::esp_restart();
             }
