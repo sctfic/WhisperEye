@@ -420,6 +420,103 @@
         input:checked+.slider:before {
             transform: translateX(24px);
         }
+
+        /* Premium OTA Update Card & Modal styling */
+        #update_status {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(8px);
+            z-index: 99999;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+            padding: 2rem;
+            border: none;
+            border-radius: 0;
+        }
+
+        .ota-card {
+            background: rgba(30, 41, 59, 0.4);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            max-width: 450px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .ota-progress-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 9999px;
+            overflow: hidden;
+            margin: 1.25rem 0;
+            position: relative;
+        }
+
+        .ota-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6 0%, #10b981 50%, #6366f1 100%);
+            background-size: 200% 100%;
+            width: 0%;
+            border-radius: 9999px;
+            transition: width 0.1s ease;
+            animation: ota-shimmer 2s infinite linear;
+        }
+
+        .ota-percentage {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #f1f5f9 0%, #cbd5e1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.25rem;
+            text-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .ota-status-msg {
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .ota-meta {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            font-family: monospace;
+        }
+
+        @keyframes ota-shimmer {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 200% 50%; }
+        }
+
+        .ota-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(16, 185, 129, 0.1);
+            border-radius: 50%;
+            border-top-color: var(--accent-color);
+            border-right-color: var(--secondary-accent);
+            animation: ota-spin 1s infinite linear;
+            margin: 0 auto 1rem auto;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+        }
+
+        @keyframes ota-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 
@@ -624,16 +721,7 @@
                             style="display: none; width: fit-content; margin: 0 auto;"></div>
                     </div>
 
-                    <div class="progress-container" id="progress_container">
-                        <div class="progress-bar-bg">
-                            <div class="progress-bar" id="progress_bar"></div>
-                        </div>
-                        <div
-                            style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-secondary);">
-                            <span id="upload_percentage">0%</span>
-                            <span id="upload_bytes">0 / 0 KB</span>
-                        </div>
-                    </div>
+                    <!-- Progress bar is displayed inside the full-screen modal -->
 
                     <button class="btn" id="upload_btn" style="margin-top: 1.5rem; display: none;"
                         onclick="startManualFlash()">
@@ -760,9 +848,25 @@
 
         function showMessage(elementId, html, type) {
             const el = document.getElementById(elementId);
-            el.innerHTML = html;
-            el.style.display = 'block';
-            el.className = `status-message ${type === 'success' ? 'status-success' : 'status-error'}`;
+            if (elementId === 'update_status') {
+                el.innerHTML = `
+                    <div class="ota-card" style="border: 1px solid ${type === 'success' ? 'var(--success)' : 'var(--error)'};">
+                        <div style="font-size: 1.1rem; font-weight: 600; color: ${type === 'success' ? 'var(--success)' : 'var(--error)'}; margin-bottom: 0.5rem;">
+                            ${type === 'success' ? 'Succès' : 'Erreur'}
+                        </div>
+                        <div style="color: var(--text-primary); font-size: 0.95rem; line-height: 1.4; margin-bottom: 1.5rem;">
+                            ${html}
+                        </div>
+                        ${type === 'error' ? `<button class="btn" style="width: auto; margin: 0 auto; padding: 0.5rem 1.5rem;" onclick="document.getElementById('update_status').style.display='none'">Fermer</button>` : ''}
+                    </div>
+                `;
+                el.style.display = 'flex';
+                el.className = 'status-message';
+            } else {
+                el.innerHTML = html;
+                el.style.display = 'block';
+                el.className = `status-message ${type === 'success' ? 'status-success' : 'status-error'}`;
+            }
         }
 
         function fetchStatus() {
@@ -1163,15 +1267,22 @@
             const file = fileInput.files[0];
             if (!file) return;
 
-            const progressContainer = document.getElementById('progress_container');
-            const progressBar = document.getElementById('progress_bar');
-            const percentageText = document.getElementById('upload_percentage');
-            const bytesText = document.getElementById('upload_bytes');
             const uploadBtn = document.getElementById('upload_btn');
-
-            progressContainer.style.display = 'block';
             uploadBtn.disabled = true;
-            showMessage('update_status', SPINNER_SVG + 'Installation du nouveau firmware en cours...', 'success');
+
+            const statusEl = document.getElementById('update_status');
+            statusEl.style.display = 'flex';
+            statusEl.innerHTML = `
+                <div class="ota-card">
+                    <div class="ota-spinner"></div>
+                    <div class="ota-percentage" id="modal_percentage">0%</div>
+                    <div class="ota-status-msg" id="modal_status_msg">Téléversement du firmware...</div>
+                    <div class="ota-progress-container">
+                        <div class="ota-progress-bar" id="modal_progress_bar" style="width: 0%"></div>
+                    </div>
+                    <div class="ota-meta" id="modal_meta">0 KB / 0 KB</div>
+                </div>
+            `;
 
             const xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/upload-ota', true);
@@ -1180,9 +1291,9 @@
             xhr.upload.onprogress = function (e) {
                 if (e.lengthComputable) {
                     const percentage = Math.round((e.loaded / e.total) * 100);
-                    progressBar.style.width = `${percentage}%`;
-                    percentageText.innerText = `${percentage}%`;
-                    bytesText.innerText = `${(e.loaded / 1024).toFixed(1)} / ${(e.total / 1024).toFixed(1)} KB`;
+                    document.getElementById('modal_progress_bar').style.width = `${percentage}%`;
+                    document.getElementById('modal_percentage').innerText = `${percentage}%`;
+                    document.getElementById('modal_meta').innerText = `${(e.loaded / 1024).toFixed(1)} / ${(e.total / 1024).toFixed(1)} KB`;
                 }
             };
 
