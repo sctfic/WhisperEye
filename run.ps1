@@ -11,7 +11,10 @@ param (
     [switch]$Clean,
 
     [Parameter(Mandatory = $false)]
-    [switch]$NoTests
+    [switch]$NoTests,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Stable
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +29,7 @@ Write-Host "==========================================================" -Foregro
 Write-Host "[*] Configuring ESP Toolchain and Cargo environment..." -ForegroundColor Gray
 $env:CARGO_TARGET_DIR = "C:\t\we"
 $env:LDPROXY_LINKER = "xtensa-esp32s3-elf-gcc"
+$env:CARGO_TARGET_XTENSA_ESP32S3_ESPIDF_RUNNER = "espflash flash"
 Write-Host "    -> Target Directory set to: $env:CARGO_TARGET_DIR (bypassing Windows path limits)" -ForegroundColor DarkGray
 Write-Host "    -> LDProxy Linker set to: $env:LDPROXY_LINKER" -ForegroundColor DarkGray
 
@@ -40,6 +44,9 @@ else {
 
 # Helper functions for versioning and catalog update
 function Increment-ProductionVersion {
+    param(
+        [bool]$StableBuild = $false
+    )
     # Versioning rules:
     #   - Stable  = even patch, no build suffix  (e.g. 1.0.2)
     #   - Unstable = odd patch, with build suffix (e.g. 1.0.3-0001)
@@ -77,14 +84,26 @@ function Increment-ProductionVersion {
         }
     }
 
-    if ($LatestIsStable) {
-        # Latest is stable (even patch) -> next is odd patch, build 0001
-        $NewPatch = $LatestPatch + 1
-        $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $NewPatch, 1
+    if ($StableBuild) {
+        if (-not $LatestIsStable) {
+            # Promote current unstable series (e.g. 1.0.5-0005) to stable (even patch, e.g. 1.0.6)
+            $NewPatch = $LatestPatch + 1
+            $NewVersion = "{0}.{1}.{2}" -f $LatestMajor, $LatestMinor, $NewPatch
+        } else {
+            # Already stable, increment to next stable (e.g. 1.0.4 -> 1.0.6)
+            $NewPatch = $LatestPatch + 2
+            $NewVersion = "{0}.{1}.{2}" -f $LatestMajor, $LatestMinor, $NewPatch
+        }
     } else {
-        # Latest is unstable (odd patch) -> increment build number
-        $NewBuild = $LatestBuild + 1
-        $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $LatestPatch, $NewBuild
+        if ($LatestIsStable) {
+            # Latest is stable (even patch) -> next is odd patch, build 0001
+            $NewPatch = $LatestPatch + 1
+            $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $NewPatch, 1
+        } else {
+            # Latest is unstable (odd patch) -> increment build number
+            $NewBuild = $LatestBuild + 1
+            $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $LatestPatch, $NewBuild
+        }
     }
 
     Write-Host "[+] New WhisperEye build version: $NewVersion" -ForegroundColor Green
@@ -175,16 +194,25 @@ function Update-FirmwareJson {
         }
 
         # Sort descending, keep only the latest stable entry
-        $sortedStable = $stableEntries | Sort-Object sortKey -Descending | Select-Object -First 1 | ForEach-Object {
+        $sortedStableAll = $stableEntries | Sort-Object sortKey -Descending
+        
+        $sortedStable = $sortedStableAll | Select-Object -First 1 | ForEach-Object {
+            [PSCustomObject]@{ version = $_.version; url = $_.url }
+        }
+        
+        $sortedPreviousStable = $sortedStableAll | Select-Object -Skip 1 -First 3 | ForEach-Object {
             [PSCustomObject]@{ version = $_.version; url = $_.url }
         }
 
-        # Sort descending by sortKey, keep only 2 most recent unstable builds
-        $sortedUnstable = $unstableEntries | Sort-Object sortKey -Descending | Select-Object -First 2 | ForEach-Object {
+        $latestStableSortKey = if ($sortedStableAll) { $sortedStableAll[0].sortKey } else { 0 }
+
+        # Sort descending by sortKey, keep only 2 most recent unstable builds that are newer than latest stable
+        $sortedUnstable = $unstableEntries | Where-Object { $_.sortKey -gt $latestStableSortKey } | Sort-Object sortKey -Descending | Select-Object -First 2 | ForEach-Object {
             [PSCustomObject]@{ version = $_.version; url = $_.url }
         }
 
-        $board.stable   = if ($sortedStable)   { @($sortedStable)   } else { @() }
+        $board.stable   = if ($sortedStable)   { $sortedStable[0]   } else { $null }
+        $board.previous_stable = if ($sortedPreviousStable) { @($sortedPreviousStable) } else { @() }
         $board.unstable  = if ($sortedUnstable) { @($sortedUnstable) } else { @() }
     }
 
@@ -257,7 +285,7 @@ if ($Target -eq "all") {
     }
 
     # Automated version incrementation and packaging pipeline
-    $NewVersion = Increment-ProductionVersion
+    $NewVersion = Increment-ProductionVersion -StableBuild $Stable
 
     # Compilation 2/2: production_app
     Write-Host "[*] [2/2] Compiling production_app ($BuildProfile)..." -ForegroundColor Cyan
@@ -352,7 +380,7 @@ if ($Clean) {
 
 # 4. Compile
 if ($Package -eq "production_app") {
-    $NewVersion = Increment-ProductionVersion
+    $NewVersion = Increment-ProductionVersion -StableBuild $Stable
 } elseif ($Package -eq "recovery_boot") {
     $NewRecoveryVersion = Increment-RecoveryVersion
 }

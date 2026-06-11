@@ -113,10 +113,67 @@ impl CronWorker {
     }
 
     fn trigger_simulated_http_api(&self) {
-        info!("Task 300s: Simulating HTTP Telemetry API report sending to cloud...");
-        // Simulator placeholder
-        thread::sleep(Duration::from_millis(200)); // Simulate networking delay
-        info!("Telemetry HTTP POST successfully completed to https://probe.lan/v1/metrics [Payload: SHT45 Temp/Hum & CO2 SCD41]");
+        let metrics_url = {
+            let storage = self.nvs.lock().unwrap();
+            storage.get_str("metricsUrl").unwrap_or(None).unwrap_or_default()
+        };
+
+        if metrics_url.is_empty() || metrics_url == "empty" {
+            info!("Telemetry skipped: metricsUrl is empty or not defined");
+            return;
+        }
+
+        info!("Task 300s: Sending HTTP PUT telemetry to {}...", metrics_url);
+
+        let payload = if let Some(last_entry) = self.history.last() {
+            serde_json::to_string(last_entry).unwrap_or_default()
+        } else {
+            "".to_string()
+        };
+
+        if payload.is_empty() {
+            warn!("Telemetry payload is empty, skipping upload");
+            return;
+        }
+
+        // Perform HTTP PUT
+        let config = esp_idf_svc::http::client::Configuration {
+            buffer_size: Some(2048),
+            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+            ..Default::default()
+        };
+        
+        match esp_idf_svc::http::client::EspHttpConnection::new(&config) {
+            Ok(mut connection) => {
+                let payload_bytes = payload.as_bytes();
+                let len_str = payload_bytes.len().to_string();
+                let headers = [
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", &len_str),
+                ];
+                if let Err(e) = connection.initiate_request(esp_idf_svc::http::Method::Put, &metrics_url, &headers) {
+                    warn!("Failed to initiate PUT request to telemetry: {:?}", e);
+                    return;
+                }
+                
+                use std::io::Write;
+                if let Err(e) = connection.write_all(payload_bytes) {
+                    warn!("Failed to write telemetry payload: {:?}", e);
+                    return;
+                }
+                match connection.initiate_response() {
+                    Ok(_) => {
+                        info!("Telemetry HTTP PUT successfully completed to {} (Status: {})", metrics_url, connection.status());
+                    }
+                    Err(e) => {
+                        warn!("Failed to receive response from telemetry endpoint: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to create EspHttpConnection for telemetry: {:?}", e);
+            }
+        }
     }
 
     fn evaluate_need_update_check(&self, force: bool) -> Result<()> {

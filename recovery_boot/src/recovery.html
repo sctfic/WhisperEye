@@ -422,7 +422,7 @@
         }
 
         /* Premium OTA Update Card & Modal styling */
-        #update_status {
+        #update_status, #wifi_change_modal {
             position: fixed;
             top: 0;
             left: 0;
@@ -731,6 +731,23 @@
             </div>
 
             <div id="update_status" class="status-message"></div>
+            <div id="wifi_change_modal" class="status-message">
+                <div class="ota-card" style="border: 1px solid var(--accent-color); max-width: 450px; width: 100%;">
+                    <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-color); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <svg style="width:24px;height:24px" viewBox="0 0 24 24"><path fill="currentColor" d="M12,3C7.79,3 3.7,4.41 0.38,7C4.41,12.06 7.89,16.37 12,21.5C16.08,16.37 19.56,12.06 23.59,7C20.27,4.41 16.21,3 12,3M12,5C15.46,5 18.81,6.13 21.59,8.19C18.23,12.37 15.18,16.14 12,20.09C8.81,16.14 5.76,12.37 2.4,8.19C5.18,6.13 8.54,5 12,5Z"/></svg>
+                        Changement de réseau Wi-Fi
+                    </div>
+                    <div style="color: var(--text-primary); font-size: 0.95rem; line-height: 1.5; text-align: left;">
+                        L'extendeur se connecte maintenant au réseau Wi-Fi : <strong id="wifi_modal_ssid">...</strong>.<br><br>
+                        <strong>Instructions pour vous reconnecter :</strong>
+                        <ol style="margin-top: 0.5rem; padding-left: 1.2rem; margin-bottom: 0;">
+                            <li style="margin-bottom: 0.4rem;">Connectez votre appareil (ordinateur/smartphone) sur le réseau Wi-Fi <strong id="wifi_modal_ssid_2">...</strong>.</li>
+                            <li style="margin-bottom: 0.4rem;">Identifiez la nouvelle adresse IP de l'extendeur depuis la table DHCP de votre routeur.</li>
+                            <li>Saisissez cette nouvelle adresse IP dans votre navigateur pour vous reconnecter.</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1129,10 +1146,13 @@
             })
                 .then(res => {
                     if (res.ok) {
-                        const successMsg = rebootOrOta
-                            ? 'Configuration enregistrée. L\'ESP32 tente de se connecter et lance la mise à jour OTA !'
-                            : `Configuration Wi-Fi appliquée avec succès ! Reconnectez-vous sur le réseau <strong>"${ssid}"</strong> pour accéder à ce WhisperEye.`;
-                        showMessage('config_status', successMsg, 'success');
+                        if (rebootOrOta) {
+                            showMessage('config_status', 'Configuration enregistrée. L\'ESP32 tente de se connecter et lance la mise à jour OTA !', 'success');
+                        } else {
+                            document.getElementById('wifi_modal_ssid').innerText = ssid;
+                            document.getElementById('wifi_modal_ssid_2').innerText = ssid;
+                            document.getElementById('wifi_change_modal').style.display = 'flex';
+                        }
                     } else {
                         showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
                     }
@@ -1173,10 +1193,14 @@
                         });
                     }
                     // 3. Unstable / Beta versions
-                    if (entry.unstable && Array.isArray(entry.unstable)) {
-                        entry.unstable.forEach(v => {
-                            versions.push({ version: v.version, url: v.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
-                        });
+                    if (entry.unstable) {
+                        if (Array.isArray(entry.unstable)) {
+                            entry.unstable.forEach(v => {
+                                versions.push({ version: v.version, url: v.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
+                            });
+                        } else if (typeof entry.unstable === 'object') {
+                            versions.push({ version: entry.unstable.version, url: entry.unstable.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
+                        }
                     }
 
                     if (versions.length === 0) {
@@ -1228,6 +1252,11 @@
                 return;
             }
 
+            const autoUpdateToggle = document.getElementById('auto_update_toggle');
+            if (autoUpdateToggle) {
+                autoUpdateToggle.checked = false;
+            }
+
             showMessage('update_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
 
             fetch('/api/config', {
@@ -1235,7 +1264,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     update_url: binUrl,
-                    apply_only: false
+                    apply_only: false,
+                    auto_update: false
                 })
             })
                 .then(res => {

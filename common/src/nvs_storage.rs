@@ -26,6 +26,7 @@ impl NvsStorage {
         if self.get_str("wifiKnown")?.is_none() {
             info!("NVS is empty or uninitialized. Writing defaults...");
             self.set_str("ntpServer", "wrt.lan")?;
+            self.set_str("metricsUrl", "empty")?;
             self.set_str("fwVersion", "empty")?;
             self.set_str("lastOtaDl", "1970-01-01T00:00:00Z")?;
             self.set_str("lastOtaSuccess", "1970-01-01T00:00:00Z")?;

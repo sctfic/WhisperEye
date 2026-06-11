@@ -28,11 +28,13 @@ struct ConfigPayload {
     update_interval: Option<String>,
     apply_only: Option<bool>,
     auto_update: Option<bool>,
+    ntp_server: Option<String>,
+    metrics_url: Option<String>,
 }
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-recovery-0033";
+const FW_VERSION: &str = "1.0.0-recovery-0043";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -69,7 +71,12 @@ fn main() -> Result<()> {
     log::set_logger(&LOGGER)
         .map(|()| log::set_max_level(log::LevelFilter::Info))
         .expect("Failed to initialize custom logger");
+    
+    // Allumer la LED en Jaune à 10% (R=25, G=25, B=0)
+    common::led::set_led_color(25, 25, 0);
+
     info!("\x1b[38;5;208mWhisperEye Recovery Boot Firmware Starting Up...\x1b[0m");
+
 
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
     let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
@@ -131,7 +138,10 @@ fn main() -> Result<()> {
             if let Ok(mut storage) = nvs_storage.lock() {
                 let _ = storage.set_default_network_by_ssid(&chosen_ssid);
             }
+            // Allumer la LED en Vert à 10% (R=0, G=25, B=0)
+            common::led::set_led_color(0, 25, 0);
         }
+
     } else {
         info!("No known networks. Staying in AP mode.");
     }
@@ -145,8 +155,21 @@ fn main() -> Result<()> {
 
     // Initialize SNTP if connected to STA
     let _sntp = if connected {
-        info!("Initializing SNTP default pool...");
-        let sntp = EspSntp::new_default();
+        let ntp_server = {
+            let storage = nvs_storage.lock().unwrap();
+            storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
+        };
+
+        let sntp = if !ntp_server.is_empty() {
+            info!("Initializing SNTP with custom server: {}", ntp_server);
+            let mut conf = esp_idf_svc::sntp::SntpConf::default();
+            conf.servers[0] = &ntp_server;
+            EspSntp::new(&conf)
+        } else {
+            info!("Initializing SNTP default pool...");
+            EspSntp::new_default()
+        };
+
         if sntp.is_err() {
             warn!("Failed to initialize SNTP service");
         }
@@ -184,13 +207,10 @@ fn main() -> Result<()> {
 
             if let Some((retries_left, url)) = retry_data {
                 info!("Automatic boot update scheduled. Retries left: {}. Fetching URL: {}", retries_left, url);
-                match ota::perform_ota(&url) {
+                match ota::perform_ota(&url, Arc::clone(&nvs_clone)) {
                     Ok(_) => {
                         // Update NVS keys
                         if let Ok(mut storage) = nvs_clone.lock() {
-                            let now_str = get_formatted_time();
-                            let _ = storage.set_str("lastOtaDl", &now_str);
-                            let _ = storage.set_str("lastOtaWrite", &now_str);
                             let _ = storage.set_str("fwVersion", "empty");
                         }
                         info!("\x1b[35;1m[ÉTAPE 6] Reboot de l'appareil\x1b[0m");
@@ -287,6 +307,8 @@ fn main() -> Result<()> {
         let now_str = get_formatted_time();
 
         let ntp_server = storage.get_str("ntpServer")?.unwrap_or_default();
+        let metrics_url_raw = storage.get_str("metricsUrl")?.unwrap_or_default();
+        let metrics_url = if metrics_url_raw == "empty" { "".to_string() } else { metrics_url_raw };
         let fw_version = storage.get_str("fwVersion")?.unwrap_or_default();
         let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
         let last_ota_dl = storage.get_str("lastOtaDl")?.unwrap_or_default();
@@ -304,6 +326,7 @@ fn main() -> Result<()> {
             "gateway_addr": gateway,
             "sys_time": now_str,
             "ntp_server": ntp_server,
+            "metrics_url": metrics_url,
             "fw_version": fw_version,
             "last_ota_success": last_ota_success,
             "last_ota_dl": last_ota_dl,
@@ -353,14 +376,23 @@ fn main() -> Result<()> {
             storage.get_str("updateAvailable")?.unwrap_or_default()
         };
 
-        info!("\x1b[35;1m[ÉTAPE 1] Vérification des mises à jour à l'URL : {}\x1b[0m", update_url);
-
         if update_url.is_empty() {
             warn!("Aucune URL de mise à jour configurée dans la NVS.");
             let mut response = req.into_status_response(400)?;
             response.write(b"No update URL configured")?;
             return Ok(());
         }
+
+        // Add a random cache-buster to prevent GitHub raw/CDN caching
+        let rand_val = unsafe { esp_idf_sys::esp_random() };
+        let mut cache_busted_url = update_url.clone();
+        if cache_busted_url.contains('?') {
+            cache_busted_url.push_str(&format!("&nocache={}", rand_val));
+        } else {
+            cache_busted_url.push_str(&format!("?nocache={}", rand_val));
+        }
+
+        info!("\x1b[35;1m[ÉTAPE 1] Vérification des mises à jour à l'URL : {} (original: {})\x1b[0m", cache_busted_url, update_url);
 
         info!("Lancement de la requête HTTP GET vers l'URL amont...");
         // Fetch JSON from update_url on ESP32 side to bypass CORS!
@@ -370,7 +402,7 @@ fn main() -> Result<()> {
             ..Default::default()
         };
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-        connection.initiate_request(esp_idf_svc::http::Method::Get, &update_url, &[])?;
+        connection.initiate_request(esp_idf_svc::http::Method::Get, &cache_busted_url, &[])?;
         connection.initiate_response()?;
 
         let status = connection.status();
@@ -424,7 +456,8 @@ fn main() -> Result<()> {
         let response_data = serde_json::to_string(&matched_entry)?;
         let mut response = req.into_response(200, Some("OK"), &[
             ("Content-Type", "application/json"),
-            ("Access-Control-Allow-Origin", "*")
+            ("Access-Control-Allow-Origin", "*"),
+            ("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         ])?;
         response.write(response_data.as_bytes())?;
         Ok(())
@@ -499,6 +532,17 @@ fn main() -> Result<()> {
                 let mut wifi = wifi_clone.lock().unwrap();
                 let mut storage = nvs_clone.lock().unwrap();
                 
+                // Mémoriser la configuration Wi-Fi cliente précédente
+                let prev_client_config = match wifi.wifi.get_configuration() {
+                    Ok(esp_idf_svc::wifi::Configuration::Client(client_cfg)) => {
+                        Some((client_cfg.ssid.as_str().to_string(), client_cfg.password.as_str().to_string()))
+                    }
+                    Ok(esp_idf_svc::wifi::Configuration::Mixed(client_cfg, _)) => {
+                        Some((client_cfg.ssid.as_str().to_string(), client_cfg.password.as_str().to_string()))
+                    }
+                    _ => None,
+                };
+                
                 if psk.is_empty() {
                     // Check if it is in known networks
                     let known_networks = storage.get_known_networks().unwrap_or_default();
@@ -534,48 +578,66 @@ fn main() -> Result<()> {
                 if wifi_success {
                     info!("Connection successful to SSID '{}'. Saving to NVS...", ssid);
                     storage.set_default_network(ssid, &final_psk)?;
+                    common::led::set_led_color(0, 25, 0); // Vert car connecté
                 } else {
-                    warn!("Wi-Fi connection to '{}' failed. Trying known networks from NVS...", ssid);
-                    let known_networks = storage.get_known_networks().unwrap_or_default();
+                    warn!("Wi-Fi connection to '{}' failed. Reverting to previous configuration...", ssid);
                     let mut reconnected = false;
                     let mut chosen_ssid = String::new();
 
-                    // First try default network if any
-                    let default_net = known_networks.iter()
-                        .find(|(_, entry)| entry.default.unwrap_or(false))
-                        .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+                    if let Some((ref prev_ssid, ref prev_psk)) = prev_client_config {
+                        info!("Trying to reconnect to previous network: {}", prev_ssid);
+                        if wifi.start_sta(prev_ssid, prev_psk).unwrap_or(false) {
+                            reconnected = true;
+                            chosen_ssid = prev_ssid.clone();
+                            info!("Successfully reverted to previous Wi-Fi network '{}'", prev_ssid);
+                        } else {
+                            warn!("Revert to previous Wi-Fi network '{}' failed.", prev_ssid);
+                        }
+                    }
 
-                    if let Some((ref d_ssid, ref d_psk)) = default_net {
-                        if d_ssid != ssid {
-                            info!("Trying default network: {}", d_ssid);
-                            if wifi.start_sta(d_ssid, d_psk).unwrap_or(false) {
-                                reconnected = true;
-                                chosen_ssid = d_ssid.clone();
+                    if !reconnected {
+                        info!("Revert failed. Trying known networks from NVS...");
+                        let known_networks = storage.get_known_networks().unwrap_or_default();
+
+                        // First try default network if any
+                        let default_net = known_networks.iter()
+                            .find(|(_, entry)| entry.default.unwrap_or(false))
+                            .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+
+                        if let Some((ref d_ssid, ref d_psk)) = default_net {
+                            if d_ssid != ssid {
+                                info!("Trying default network: {}", d_ssid);
+                                if wifi.start_sta(d_ssid, d_psk).unwrap_or(false) {
+                                    reconnected = true;
+                                    chosen_ssid = d_ssid.clone();
+                                }
+                            }
+                        }
+
+                        if !reconnected {
+                            for (known_ssid, entry) in &known_networks {
+                                if known_ssid == ssid { continue; }
+                                if let Some((ref d_ssid, _)) = default_net {
+                                    if known_ssid == d_ssid { continue; }
+                                }
+                                info!("Trying known network: {}", known_ssid);
+                                if wifi.start_sta(known_ssid, &entry.psk).unwrap_or(false) {
+                                    reconnected = true;
+                                    chosen_ssid = known_ssid.clone();
+                                    break;
+                                }
                             }
                         }
                     }
 
                     if !reconnected {
-                        for (known_ssid, entry) in &known_networks {
-                            if known_ssid == ssid { continue; }
-                            if let Some((ref d_ssid, _)) = default_net {
-                                if known_ssid == d_ssid { continue; }
-                            }
-                            info!("Trying known network: {}", known_ssid);
-                            if wifi.start_sta(known_ssid, &entry.psk).unwrap_or(false) {
-                                reconnected = true;
-                                chosen_ssid = known_ssid.clone();
-                                break;
-                            }
-                        }
-                    }
-
-                    if !reconnected {
-                        warn!("All known networks failed. Restarting Access Point...");
+                        warn!("All connection attempts failed. Restarting Access Point...");
                         let _ = wifi.start_ap();
+                        common::led::set_led_color(25, 25, 0); // Jaune car mode AP
                     } else {
-                        info!("Reconnected to known network '{}'.", chosen_ssid);
+                        info!("Reconnected to network '{}'.", chosen_ssid);
                         let _ = storage.set_default_network_by_ssid(&chosen_ssid);
+                        common::led::set_led_color(0, 25, 0); // Vert car connecté
                     }
                 }
             }
@@ -602,6 +664,25 @@ fn main() -> Result<()> {
             }
         }
         
+        if let Some(ref ntp_server) = payload.ntp_server {
+            let mut storage = nvs_clone.lock().unwrap();
+            let trimmed = ntp_server.trim();
+            info!("Saving ntpServer to NVS: {}", trimmed);
+            storage.set_str("ntpServer", trimmed)?;
+        }
+
+        if let Some(ref metrics_url) = payload.metrics_url {
+            let mut storage = nvs_clone.lock().unwrap();
+            let trimmed = metrics_url.trim();
+            let formatted = if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+                format!("http://{}", trimmed)
+            } else {
+                trimmed.to_string()
+            };
+            info!("Saving metricsUrl to NVS: {}", formatted);
+            storage.set_str("metricsUrl", &formatted)?;
+        }
+
         if let Some(auto_up) = payload.auto_update {
             let mut storage = nvs_clone.lock().unwrap();
             let current_val = storage.get_i32("autoUpdate")?.unwrap_or(1);
@@ -640,12 +721,9 @@ fn main() -> Result<()> {
                         storage.get_str("updateDlUrl").unwrap_or(None).unwrap_or_default()
                     };
                     if !update_bin_url.is_empty() {
-                        match ota::perform_ota(&update_bin_url) {
+                        match ota::perform_ota(&update_bin_url, Arc::clone(&nvs_thread)) {
                             Ok(_) => {
                                  if let Ok(mut storage) = nvs_thread.lock() {
-                                     let now_str = get_formatted_time();
-                                     let _ = storage.set_str("lastOtaDl", &now_str);
-                                     let _ = storage.set_str("lastOtaWrite", &now_str);
                                      let _ = storage.set_str("fwVersion", "empty");
                                      info!("\x1b[35;1m[ÉTAPE 6] Reboot de l'appareil\x1b[0m");
                                      info!("\x1b[36;1m  -> Firmware actif lors du reboot : recovery_boot ({})\x1b[0m", FW_VERSION);
@@ -675,11 +753,16 @@ fn main() -> Result<()> {
     })?;
 
     // POST /api/upload-ota (Direct HTTP partition flashing)
-    server.fn_handler("/api/upload-ota", esp_idf_svc::http::Method::Post, |mut req| -> Result<(), anyhow::Error> {
+    let nvs_upload = Arc::clone(&nvs_storage);
+    server.fn_handler("/api/upload-ota", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
         info!("\x1b[35;1m[ÉTAPE 4] Téléchargement du binaire bloc par bloc\x1b[0m");
         info!("\x1b[36;1m  -> Réception et flashage direct du binaire uploadé par morceaux...\x1b[0m");
         
+        // Allumer la LED en Bleu à 10% (R=0, G=0, B=25) pendant la mise à jour
+        common::led::set_led_color(0, 0, 25);
+        
         {
+
             let mut status = crate::ota::UPDATE_STATUS.lock().unwrap();
             status.percentage = 0;
             status.size = 0;
@@ -693,6 +776,12 @@ fn main() -> Result<()> {
         {
             let mut status = crate::ota::UPDATE_STATUS.lock().unwrap();
             status.size = content_len;
+        }
+
+        // Set lastOtaDl when starting download
+        let now_str = crate::ota::get_formatted_time();
+        if let Ok(mut storage) = nvs_upload.lock() {
+            let _ = storage.set_str("lastOtaDl", &now_str);
         }
 
         let mut ota = EspOta::new().context("Failed to init ESP OTA")?;
@@ -745,6 +834,13 @@ fn main() -> Result<()> {
             status.status = "Écriture en mémoire flash...";
         }
         ota_write.complete().context("Failed to complete OTA")?;
+        
+        // Set lastOtaWrite when write completes successfully
+        let now_str = crate::ota::get_formatted_time();
+        if let Ok(mut storage) = nvs_upload.lock() {
+            let _ = storage.set_str("lastOtaWrite", &now_str);
+        }
+
         info!("\x1b[35;1m[ÉTAPE 5] Flashage de l'upload direct terminé avec succès !\x1b[0m");
         
         info!("\x1b[35;1m[ÉTAPE 6] Reboot de l'appareil\x1b[0m");
@@ -791,6 +887,16 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
+
+
+
+
+
+
+
 
 
 

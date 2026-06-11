@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.8";
+const FW_VERSION: &str = "1.0.10";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -50,6 +50,8 @@ struct ConfigPayload {
     current_totp_secret: Option<String>,
     ext_name: Option<String>,
     ext_desc: Option<String>,
+    ntp_server: Option<String>,
+    metrics_url: Option<String>,
 }
 
 fn get_mac_address() -> String {
@@ -90,7 +92,12 @@ fn main() -> Result<()> {
     log::set_logger(&LOGGER)
         .map(|()| log::set_max_level(log::LevelFilter::Info))
         .expect("Failed to initialize custom logger");
+    
+    // Allumer la LED en Jaune à 10% (R=25, G=25, B=0) à la mise sous tension
+    common::led::set_led_color(25, 25, 0);
+
     info!("\x1b[35mWhisperEye Production Application Starting Up (Version {})...\x1b[0m", FW_VERSION);
+
 
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
     let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
@@ -126,13 +133,14 @@ fn main() -> Result<()> {
 
     // Initialize Static Devices from pins
     let static_devs = Arc::new(std::sync::Mutex::new(static_devices::StaticDevices::init(
-        pins.gpio48,
+        pins.gpio9,
         pins.gpio47,
         pins.gpio21,
         pins.gpio14,
         pins.gpio36,
         pins.gpio35,
     )?));
+
 
     // Scan 1-Wire bus dynamically at boot
     let onewr_pin = pins.gpio39;
@@ -197,7 +205,10 @@ fn main() -> Result<()> {
             if let Ok(mut storage) = nvs_storage.lock() {
                 let _ = storage.set_default_network_by_ssid(&chosen_ssid);
             }
+            // Allumer la LED en Vert à 10% (R=0, G=25, B=0) si connecté
+            common::led::set_led_color(0, 25, 0);
         }
+
     } else {
         info!("No known networks. Staying in AP mode.");
     }
@@ -211,8 +222,21 @@ fn main() -> Result<()> {
 
     // Initialize SNTP if connected to STA
     let _sntp = if connected {
-        info!("Initializing SNTP default pool...");
-        let sntp = EspSntp::new_default();
+        let ntp_server = {
+            let storage = nvs_storage.lock().unwrap();
+            storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
+        };
+
+        let sntp = if !ntp_server.is_empty() {
+            info!("Initializing SNTP with custom server: {}", ntp_server);
+            let mut conf = esp_idf_svc::sntp::SntpConf::default();
+            conf.servers[0] = &ntp_server;
+            EspSntp::new(&conf)
+        } else {
+            info!("Initializing SNTP default pool...");
+            EspSntp::new_default()
+        };
+
         if sntp.is_err() {
             warn!("Failed to initialize SNTP service");
         }
@@ -310,6 +334,8 @@ fn main() -> Result<()> {
         let now_str = get_formatted_time();
 
         let ntp_server = storage.get_str("ntpServer")?.unwrap_or_default();
+        let metrics_url_raw = storage.get_str("metricsUrl")?.unwrap_or_default();
+        let metrics_url = if metrics_url_raw == "empty" { "".to_string() } else { metrics_url_raw };
         let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
         let last_ota_dl = storage.get_str("lastOtaDl")?.unwrap_or_default();
         let last_ota_write = storage.get_str("lastOtaWrite")?.unwrap_or_default();
@@ -341,6 +367,7 @@ fn main() -> Result<()> {
             "gateway_addr": gateway,
             "sys_time": now_str,
             "ntp_server": ntp_server,
+            "metrics_url": metrics_url,
             "fw_version": FW_VERSION,
             "last_ota_success": last_ota_success,
             "last_ota_dl": last_ota_dl,
@@ -467,6 +494,7 @@ fn main() -> Result<()> {
             "mac": mac,
             "name": name,
             "description": desc,
+            "version": FW_VERSION,
             "sensors": sensors,
             "actuators": actuators,
         });
@@ -487,14 +515,23 @@ fn main() -> Result<()> {
             storage.get_str("updateAvailable")?.unwrap_or_default()
         };
 
-        info!("\x1b[35;1m[ÉTAPE 1] Vérification des mises à jour à l'URL : {}\x1b[0m", update_url);
-
         if update_url.is_empty() {
             warn!("Aucune URL de mise à jour configurée dans la NVS.");
             let mut response = req.into_status_response(400)?;
             response.write(b"No update URL configured")?;
             return Ok(());
         }
+
+        // Add a random cache-buster to prevent GitHub raw/CDN caching
+        let rand_val = unsafe { esp_idf_sys::esp_random() };
+        let mut cache_busted_url = update_url.clone();
+        if cache_busted_url.contains('?') {
+            cache_busted_url.push_str(&format!("&nocache={}", rand_val));
+        } else {
+            cache_busted_url.push_str(&format!("?nocache={}", rand_val));
+        }
+
+        info!("\x1b[35;1m[ÉTAPE 1] Vérification des mises à jour à l'URL : {} (original: {})\x1b[0m", cache_busted_url, update_url);
 
         info!("Lancement de la requête HTTP GET vers l'URL amont...");
         // Fetch JSON from update_url on ESP32 side to bypass CORS!
@@ -504,7 +541,7 @@ fn main() -> Result<()> {
             ..Default::default()
         };
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-        connection.initiate_request(esp_idf_svc::http::Method::Get, &update_url, &[])?;
+        connection.initiate_request(esp_idf_svc::http::Method::Get, &cache_busted_url, &[])?;
         connection.initiate_response()?;
 
         let status = connection.status();
@@ -558,7 +595,8 @@ fn main() -> Result<()> {
         let response_data = serde_json::to_string(&matched_entry)?;
         let mut response = req.into_response(200, Some("OK"), &[
             ("Content-Type", "application/json"),
-            ("Access-Control-Allow-Origin", "*")
+            ("Access-Control-Allow-Origin", "*"),
+            ("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         ])?;
         response.write(response_data.as_bytes())?;
         Ok(())
@@ -724,6 +762,59 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+    // POST /api/clear-totp
+    let nvs_clear_totp = Arc::clone(&nvs_storage);
+    server.fn_handler("/api/clear-totp", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
+        let mut buf = vec![0u8; 256];
+        let bytes_read = req.read(&mut buf)?;
+        
+        #[derive(serde::Deserialize)]
+        struct ClearTotpPayload {
+            token: String,
+        }
+        
+        let payload: ClearTotpPayload = match serde_json::from_slice(&buf[..bytes_read]) {
+            Ok(p) => p,
+            Err(_) => {
+                let mut response = req.into_status_response(400)?;
+                response.write(b"Format JSON invalide")?;
+                return Ok(());
+            }
+        };
+        
+        let current_secret = {
+            let storage = nvs_clear_totp.lock().unwrap();
+            storage.get_str("totpSecret")?.unwrap_or_default()
+        };
+        
+        if current_secret.is_empty() {
+            info!("clear-totp: NVS has empty totpSecret, responding success");
+            let mut response = req.into_ok_response()?;
+            response.write(b"OK")?;
+            return Ok(());
+        }
+        
+        // Verify TOTP token by direct secret comparison
+        if !current_secret.eq_ignore_ascii_case(&payload.token) {
+            warn!("Rejected clear-totp: Invalid validation token supplied. Got: '{}'", payload.token);
+            let mut response = req.into_status_response(403)?;
+            let err_msg = format!("Non autorise : token TOTP incorrect. Token fourni : '{}'.", payload.token);
+            response.write(err_msg.as_bytes())?;
+            return Ok(());
+        }
+        
+        {
+            let mut storage = nvs_clear_totp.lock().unwrap();
+            info!("TOTP reset authorized via second-level TOTP: removing totpSecret and metricsUrl");
+            storage.remove_key("totpSecret")?;
+            storage.remove_key("metricsUrl")?;
+        }
+        
+        let mut response = req.into_ok_response()?;
+        response.write(b"OK")?;
+        Ok(())
+    })?;
+
     // POST /api/reset
     let nvs_reset = Arc::clone(&nvs_storage);
     server.fn_handler("/api/reset", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
@@ -839,6 +930,21 @@ fn main() -> Result<()> {
                     info!("Saving extDesc to NVS: {}", trimmed);
                     storage.set_str("extDesc", trimmed)?;
                 }
+                if let Some(ref ntp_server) = payload.ntp_server {
+                    let trimmed = ntp_server.trim();
+                    info!("Saving ntpServer to NVS: {}", trimmed);
+                    storage.set_str("ntpServer", trimmed)?;
+                }
+                if let Some(ref metrics_url) = payload.metrics_url {
+                    let trimmed = metrics_url.trim();
+                    let formatted = if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+                         format!("http://{}", trimmed)
+                    } else {
+                         trimmed.to_string()
+                    };
+                    info!("Saving metricsUrl to NVS: {}", formatted);
+                    storage.set_str("metricsUrl", &formatted)?;
+                }
             }
         }
 
@@ -856,6 +962,17 @@ fn main() -> Result<()> {
                 let mut final_psk = "".to_string();
                 let mut wifi = wifi_clone.lock().unwrap();
                 let mut storage = nvs_clone.lock().unwrap();
+                
+                // Mémoriser la configuration Wi-Fi cliente précédente
+                let prev_client_config = match wifi.wifi.get_configuration() {
+                    Ok(esp_idf_svc::wifi::Configuration::Client(client_cfg)) => {
+                        Some((client_cfg.ssid.as_str().to_string(), client_cfg.password.as_str().to_string()))
+                    }
+                    Ok(esp_idf_svc::wifi::Configuration::Mixed(client_cfg, _)) => {
+                        Some((client_cfg.ssid.as_str().to_string(), client_cfg.password.as_str().to_string()))
+                    }
+                    _ => None,
+                };
                 
                 if psk.is_empty() {
                     // Check if it is in known networks
@@ -892,48 +1009,66 @@ fn main() -> Result<()> {
                 if wifi_success {
                     info!("Connection successful to SSID '{}'. Saving to NVS...", ssid);
                     storage.set_default_network(ssid, &final_psk)?;
+                    common::led::set_led_color(0, 25, 0); // Vert car connecté
                 } else {
-                    warn!("Wi-Fi connection to '{}' failed. Trying known networks from NVS...", ssid);
-                    let known_networks = storage.get_known_networks().unwrap_or_default();
+                    warn!("Wi-Fi connection to '{}' failed. Reverting to previous configuration...", ssid);
                     let mut reconnected = false;
                     let mut chosen_ssid = String::new();
 
-                    // First try default network if any
-                    let default_net = known_networks.iter()
-                        .find(|(_, entry)| entry.default.unwrap_or(false))
-                        .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+                    if let Some((ref prev_ssid, ref prev_psk)) = prev_client_config {
+                        info!("Trying to reconnect to previous network: {}", prev_ssid);
+                        if wifi.start_sta(prev_ssid, prev_psk).unwrap_or(false) {
+                            reconnected = true;
+                            chosen_ssid = prev_ssid.clone();
+                            info!("Successfully reverted to previous Wi-Fi network '{}'", prev_ssid);
+                        } else {
+                            warn!("Revert to previous Wi-Fi network '{}' failed.", prev_ssid);
+                        }
+                    }
 
-                    if let Some((ref d_ssid, ref d_psk)) = default_net {
-                        if d_ssid != ssid {
-                            info!("Trying default network: {}", d_ssid);
-                            if wifi.start_sta(d_ssid, d_psk).unwrap_or(false) {
-                                reconnected = true;
-                                chosen_ssid = d_ssid.clone();
+                    if !reconnected {
+                        info!("Revert failed. Trying known networks from NVS...");
+                        let known_networks = storage.get_known_networks().unwrap_or_default();
+
+                        // First try default network if any
+                        let default_net = known_networks.iter()
+                            .find(|(_, entry)| entry.default.unwrap_or(false))
+                            .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+
+                        if let Some((ref d_ssid, ref d_psk)) = default_net {
+                            if d_ssid != ssid {
+                                info!("Trying default network: {}", d_ssid);
+                                if wifi.start_sta(d_ssid, d_psk).unwrap_or(false) {
+                                    reconnected = true;
+                                    chosen_ssid = d_ssid.clone();
+                                }
+                            }
+                        }
+
+                        if !reconnected {
+                            for (known_ssid, entry) in &known_networks {
+                                if known_ssid == ssid { continue; }
+                                if let Some((ref d_ssid, _)) = default_net {
+                                    if known_ssid == d_ssid { continue; }
+                                }
+                                info!("Trying known network: {}", known_ssid);
+                                if wifi.start_sta(known_ssid, &entry.psk).unwrap_or(false) {
+                                    reconnected = true;
+                                    chosen_ssid = known_ssid.clone();
+                                    break;
+                                }
                             }
                         }
                     }
 
                     if !reconnected {
-                        for (known_ssid, entry) in &known_networks {
-                            if known_ssid == ssid { continue; }
-                            if let Some((ref d_ssid, _)) = default_net {
-                                if known_ssid == d_ssid { continue; }
-                            }
-                            info!("Trying known network: {}", known_ssid);
-                            if wifi.start_sta(known_ssid, &entry.psk).unwrap_or(false) {
-                                reconnected = true;
-                                chosen_ssid = known_ssid.clone();
-                                break;
-                            }
-                        }
-                    }
-
-                    if !reconnected {
-                        warn!("All known networks failed. Restarting Access Point...");
+                        warn!("All connection attempts failed. Restarting Access Point...");
                         let _ = wifi.start_ap();
+                        common::led::set_led_color(25, 25, 0); // Jaune car mode AP
                     } else {
-                        info!("Reconnected to known network '{}'.", chosen_ssid);
+                        info!("Reconnected to network '{}'.", chosen_ssid);
                         let _ = storage.set_default_network_by_ssid(&chosen_ssid);
+                        common::led::set_led_color(0, 25, 0); // Vert car connecté
                     }
                 }
             }
@@ -1107,126 +1242,6 @@ fn is_web_accessible() -> bool {
     false
 }
 
-#[allow(dead_code)]
-fn check_and_trigger_ota(nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
-    let (update_available_url, current_fw) = {
-        let storage = nvs.lock().unwrap();
-        let url = storage.get_str("updateAvailable")?.unwrap_or_default();
-        let fw = storage.get_str("fwVersion")?.unwrap_or_else(|| "v1.0.0-poc".to_string());
-        (url, fw)
-    };
-
-    if update_available_url.is_empty() {
-        info!("No updateAvailable URL configured in NVS.");
-        return Ok(());
-    }
-
-    if !is_web_accessible() {
-        info!("Skipping OTA update check: Internet is not accessible.");
-        return Ok(());
-    }
-
-    info!("\x1b[35;1m[ÉTAPE 1] Vérification automatique des mises à jour\x1b[0m");
-    info!("\x1b[36;1m  -> Version locale active : {}\x1b[0m", current_fw);
-    info!("\x1b[36;1m  -> URL du manifest interrogé : {}\x1b[0m", update_available_url);
-
-    let config = esp_idf_svc::http::client::Configuration {
-        buffer_size: Some(2048),
-        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
-        ..Default::default()
-    };
-    let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)
-        .context("Failed to create HTTP connection")?;
-    
-    info!("\x1b[36;1m  -> Envoi de la requête HTTP GET...\x1b[0m");
-    connection.initiate_request(esp_idf_svc::http::Method::Get, &update_available_url, &[])
-        .context("Failed to initiate request")?;
-    
-    connection.initiate_response()
-        .context("Failed to get response")?;
-    
-    let status = connection.status();
-    info!("\x1b[36;1m  -> Réponse HTTP reçue. Statut : {}\x1b[0m", status);
-    if status != 200 {
-        return Err(anyhow::anyhow!("Failed fetching update JSON: HTTP {}", status));
-    }
-
-    let mut body = Vec::new();
-    let mut chunk = [0u8; 1024];
-    loop {
-        match connection.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => body.extend_from_slice(&chunk[..n]),
-            Err(e) => return Err(anyhow::anyhow!("Error reading JSON: {:?}", e)),
-        }
-    }
-
-    if let Ok(body_str) = std::str::from_utf8(&body) {
-        info!("\x1b[36;1m  -> Contenu brut du manifest amont :\n{}\x1b[0m", body_str);
-    } else {
-        info!("\x1b[36;1m  -> Contenu brut du manifest amont : [Binaire ou UTF-8 invalide]\x1b[0m");
-    }
-
-    let list: serde_json::Value = serde_json::from_slice(&body)
-        .context("Failed to parse updateAvailable JSON")?;
-    
-    let mut new_stable_url = None;
-    let mut new_version = None;
-
-    let entries = if let Some(arr) = list.as_array() {
-        arr.clone()
-    } else if list.is_object() {
-        vec![list.clone()]
-    } else {
-        vec![]
-    };
-
-    for entry in entries {
-        let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
-        let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-        if b_type == "v2.0" && c_type == "ESP32-S3" {
-            if let Some(stable_val) = entry.get("stable") {
-                for v_obj in version_entries(stable_val) {
-                    if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
-                        if let Some(url_str) = v_obj.get("url").and_then(|v| v.as_str()) {
-                            if parse_version(ver_str) > parse_version(&current_fw) {
-                                let current_best = new_version.as_deref().unwrap_or(current_fw.as_str());
-                                if parse_version(ver_str) > parse_version(current_best) {
-                                    new_stable_url = Some(url_str.to_string());
-                                    new_version = Some(ver_str.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if let (Some(url), Some(ver)) = (new_stable_url, new_version) {
-        info!("\x1b[35;1m[ÉTAPE 3] Redémarrage sur Recovery\x1b[0m");
-        info!("\x1b[36;1m  -> Firmware actif lors de la demande : production_app ({})\x1b[0m", FW_VERSION);
-        info!("\x1b[36;1m  -> Nouvelle version disponible détectée : {}\x1b[0m", ver);
-        info!("\x1b[36;1m  -> Enregistrement URL de téléchargement (updateDlUrl) : {}\x1b[0m", url);
-        {
-            let mut storage = nvs.lock().unwrap();
-            storage.set_str("updateDlUrl", &url)?;
-            storage.set_i32("otaRetry", 3)?;
-        }
-        
-        info!("\x1b[36;1m  -> Nombre d'essais configuré à 3. Redémarrage matériel dans 2 secondes...\x1b[0m");
-        thread::sleep(std::time::Duration::from_secs(2));
-        set_boot_to_recovery();
-        unsafe {
-            esp_idf_sys::esp_restart();
-        }
-    } else {
-        info!("\x1b[36;1m  -> Aucune version plus récente trouvée. Version actuelle : {}\x1b[0m", current_fw);
-    }
-
-    Ok(())
-}
-
 fn get_formatted_time() -> String {
     let now = SystemTime::now();
     let duration = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
@@ -1262,6 +1277,19 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

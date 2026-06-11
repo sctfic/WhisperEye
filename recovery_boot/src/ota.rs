@@ -5,6 +5,8 @@ use anyhow::{Result, Context, anyhow};
 use log::{info};
 use std::sync::Mutex;
 
+use std::sync::Arc;
+
 pub struct UpdateStatus {
     pub percentage: u8,
     pub size: usize,
@@ -19,8 +21,8 @@ pub static UPDATE_STATUS: Mutex<UpdateStatus> = Mutex::new(UpdateStatus {
     status: "En attente",
 });
 
-pub fn perform_ota(update_url: &str) -> Result<()> {
-    match perform_ota_inner(update_url) {
+pub fn perform_ota(update_url: &str, nvs: Arc<Mutex<common::nvs_storage::NvsStorage>>) -> Result<()> {
+    match perform_ota_inner(update_url, nvs) {
         Ok(()) => {
             if let Ok(mut status) = UPDATE_STATUS.lock() {
                 status.percentage = 100;
@@ -38,9 +40,25 @@ pub fn perform_ota(update_url: &str) -> Result<()> {
     }
 }
 
-fn perform_ota_inner(update_url: &str) -> Result<()> {
+pub fn get_formatted_time() -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now();
+    let duration = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+    let total_secs = duration.as_secs();
+    if total_secs < 86400 {
+        return "1970-01-01T00:00:00Z".to_string();
+    }
+    let secs = total_secs % 60;
+    let mins = (total_secs / 60) % 60;
+    let hours = (total_secs / 3600) % 24;
+    format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
+}
+
+fn perform_ota_inner(update_url: &str, nvs: Arc<Mutex<common::nvs_storage::NvsStorage>>) -> Result<()> {
     info!("Starting automatic OTA from URL: {}", update_url);
+    common::led::set_led_color(0, 0, 25); // Bleu à 10%
     {
+
         let mut status = UPDATE_STATUS.lock().unwrap();
         status.percentage = 0;
         status.size = 0;
@@ -76,6 +94,12 @@ fn perform_ota_inner(update_url: &str) -> Result<()> {
         status.size = content_len as usize;
     }
     
+    // Set lastOtaDl when starting download
+    let now_str = get_formatted_time();
+    if let Ok(mut storage) = nvs.lock() {
+        let _ = storage.set_str("lastOtaDl", &now_str);
+    }
+    
     // 2. Initialize ESP OTA
     let mut ota = EspOta::new().context("Failed to initialize ESP OTA")?;
     let mut ota_write = ota.initiate_update().context("Failed to initiate OTA partition update")?;
@@ -93,7 +117,7 @@ fn perform_ota_inner(update_url: &str) -> Result<()> {
         status.percentage = 0;
         status.status = "Téléchargement du firmware...";
     }
-
+ 
     loop {
         match connection.read(&mut buffer) {
             Ok(0) => break, // EOF
@@ -136,6 +160,12 @@ fn perform_ota_inner(update_url: &str) -> Result<()> {
         status.status = "Écriture en mémoire flash...";
     }
     ota_write.complete().context("Failed to finalize OTA update")?;
+    
+    // Set lastOtaWrite when write completes successfully
+    let now_str = get_formatted_time();
+    if let Ok(mut storage) = nvs.lock() {
+        let _ = storage.set_str("lastOtaWrite", &now_str);
+    }
     
     info!("\x1b[35;1m[ÉTAPE 5] Flashage terminé avec succès !\x1b[0m");
     Ok(())

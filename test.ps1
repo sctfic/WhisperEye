@@ -151,6 +151,8 @@ Describe "WhisperEye Production API Integration" {
             $j.sys_time | Should Not BeNullOrEmpty
             # ntp_server may be empty before NTP sync
             ($j.PSObject.Properties.Name -contains "ntp_server") | Should Be $true
+            # metrics_url may be empty by default
+            ($j.PSObject.Properties.Name -contains "metrics_url") | Should Be $true
             $j.fw_version | Should Not BeNullOrEmpty
             $j.wifi_known | Should Not Be $null
             # Booleans: $false would fail BeNullOrEmpty, use Not Be $null instead
@@ -268,6 +270,43 @@ Describe "WhisperEye Production API Integration" {
             $body = '{"confirm": "WRONG"}'
             $res = Get-HttpStatus "$BaseUrl/api/reset" -Method POST -Body $body
             $res.StatusCode | Should Be 400
+        }
+
+        It "should validate the complete clear-totp lifecycle (setting, reject bad token, accept good token)" {
+            $status_res = Get-HttpStatus "$BaseUrl/api/status"
+            $status_res.StatusCode | Should Be 200
+            $status = $status_res.Content | ConvertFrom-Json
+            
+            if (-not $status.has_totp) {
+                # 1. Configuration d'une clé de test
+                $config_body = '{"apply_only": true, "totp_secret": "PesterTestKey123"}'
+                $cfg_res = Get-HttpStatus "$BaseUrl/api/config" -Method POST -Body $config_body
+                $cfg_res.StatusCode | Should Be 200
+                
+                # 2. Vérification que la clé est active
+                $status_res2 = Get-HttpStatus "$BaseUrl/api/status"
+                $status2 = $status_res2.Content | ConvertFrom-Json
+                $status2.has_totp | Should Be $true
+                
+                # 3. Test de rejet d'une clé incorrecte (doit renvoyer 403)
+                $bad_clear_res = Get-HttpStatus "$BaseUrl/api/clear-totp" -Method POST -Body '{"token": "DefinitelyWrongKey"}'
+                $bad_clear_res.StatusCode | Should Be 403
+                $bad_clear_res.Content | Should Like "*Non autorise*"
+                
+                # 4. Test d'acceptation de la bonne clé (doit renvoyer 200)
+                $good_clear_res = Get-HttpStatus "$BaseUrl/api/clear-totp" -Method POST -Body '{"token": "PesterTestKey123"}'
+                $good_clear_res.StatusCode | Should Be 200
+                $good_clear_res.Content | Should Be "OK"
+                
+                # 5. Vérification que la clé a bien été effacée
+                $status_res3 = Get-HttpStatus "$BaseUrl/api/status"
+                $status3 = $status_res3.Content | ConvertFrom-Json
+                $status3.has_totp | Should Be $false
+            } else {
+                # S'il a déjà une clé TOTP, on s'assure qu'une mauvaise clé est rejetée avec 403
+                $bad_clear_res = Get-HttpStatus "$BaseUrl/api/clear-totp" -Method POST -Body '{"token": "DefinitelyWrongKey"}'
+                $bad_clear_res.StatusCode | Should Be 403
+            }
         }
     }
 }

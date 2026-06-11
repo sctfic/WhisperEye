@@ -499,8 +499,13 @@
         }
 
         @keyframes ota-shimmer {
-            0% { background-position: 0% 50%; }
-            100% { background-position: 200% 50%; }
+            0% {
+                background-position: 0% 50%;
+            }
+
+            100% {
+                background-position: 200% 50%;
+            }
         }
 
         /* Pulsing Ring Spinner */
@@ -517,11 +522,17 @@
         }
 
         @keyframes ota-spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
-        #update_status {
+        #update_status,
+        #wifi_change_modal {
             position: fixed;
             top: 0;
             left: 0;
@@ -621,6 +632,14 @@
                 <span class="info-value" id="ntp_server">wrt.lan</span>
             </div>
             <div class="info-group">
+                <span class="info-label">URL PUT Métriques</span>
+                <span class="info-value" id="status_metrics_url">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Clé TOTP</span>
+                <span class="info-value" id="status_totp">--</span>
+            </div>
+            <div class="info-group">
                 <span class="info-label">Firmware Production Actif</span>
                 <span class="info-value" id="prod_version">v1.0.0-poc</span>
             </div>
@@ -698,17 +717,6 @@
             <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 2rem;"
                 onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
 
-            <div id="totp_section" class="form-group"
-                style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem; display: none;">
-                <label>Secret de sécurité TOTP</label>
-                <div
-                    style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
-                    <span style="font-size: 0.95rem; color: var(--text-primary);">Statut : <span id="totp_status_badge"
-                            class="badge badge-green">Actif</span></span>
-                    <span style="font-size: 0.95rem; color: var(--text-secondary); font-family: monospace;"
-                        id="totp_key_display"></span>
-                </div>
-            </div>
 
             <div class="form-group"
                 style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem;">
@@ -765,6 +773,30 @@
             </div>
 
             <div id="update_status" class="status-message"></div>
+            <div id="wifi_change_modal" class="status-message">
+                <div class="ota-card" style="border: 1px solid var(--accent-color); max-width: 450px; width: 100%;">
+                    <div
+                        style="font-size: 1.2rem; font-weight: 600; color: var(--accent-color); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <svg style="width:24px;height:24px" viewBox="0 0 24 24">
+                            <path fill="currentColor"
+                                d="M12,3C7.79,3 3.7,4.41 0.38,7C4.41,12.06 7.89,16.37 12,21.5C16.08,16.37 19.56,12.06 23.59,7C20.27,4.41 16.21,3 12,3M12,5C15.46,5 18.81,6.13 21.59,8.19C18.23,12.37 15.18,16.14 12,20.09C8.81,16.14 5.76,12.37 2.4,8.19C5.18,6.13 8.54,5 12,5Z" />
+                        </svg>
+                        Changement de réseau Wi-Fi
+                    </div>
+                    <div style="color: var(--text-primary); font-size: 0.95rem; line-height: 1.5; text-align: left;">
+                        L'extendeur se connecte maintenant au réseau Wi-Fi : <strong
+                            id="wifi_modal_ssid">...</strong>.<br><br>
+                        <strong>Instructions pour vous reconnecter :</strong>
+                        <ol style="margin-top: 0.5rem; padding-left: 1.2rem; margin-bottom: 0;">
+                            <li style="margin-bottom: 0.4rem;">Connectez votre appareil (ordinateur/smartphone) sur le
+                                réseau Wi-Fi <strong id="wifi_modal_ssid_2">...</strong>.</li>
+                            <li style="margin-bottom: 0.4rem;">Identifiez la nouvelle adresse IP de l'extendeur depuis
+                                la table DHCP de votre routeur.</li>
+                            <li>Saisissez cette nouvelle adresse IP dans votre navigateur pour vous reconnecter.</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -905,9 +937,13 @@
                         document.getElementById('auto_update_toggle').checked = data.auto_update;
                     }
 
-                    const totpSec = document.getElementById('totp_section');
-                    if (totpSec) {
-                        totpSec.style.display = data.has_totp ? 'block' : 'none';
+                    const statusTotpEl = document.getElementById('status_totp');
+                    if (statusTotpEl) {
+                        if (data.has_totp) {
+                            statusTotpEl.innerHTML = (data.partial_totp || 'Actif') + getStatusSvg('green');
+                        } else {
+                            statusTotpEl.innerHTML = 'Non définie' + getStatusSvg('red');
+                        }
                     }
 
                     if (data.ext_name) {
@@ -921,10 +957,6 @@
                         if (hDesc) hDesc.innerText = data.ext_desc;
                         const sDesc = document.getElementById('status_ext_desc');
                         if (sDesc) sDesc.innerText = data.ext_desc;
-                    }
-                    if (data.partial_totp) {
-                        const kDisp = document.getElementById('totp_key_display');
-                        if (kDisp) kDisp.innerText = data.partial_totp;
                     }
 
                     // Dynamic system status calculation
@@ -984,6 +1016,15 @@
                         document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('yellow', 'En attente / Échec');
                     } else {
                         document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('red', 'Hors ligne / AP');
+                    }
+
+                    const statusMetricsUrlEl = document.getElementById('status_metrics_url');
+                    if (statusMetricsUrlEl) {
+                        if (data.metrics_url && data.metrics_url !== 'empty' && data.metrics_url !== '') {
+                            statusMetricsUrlEl.innerHTML = data.metrics_url + getStatusSvg('green');
+                        } else {
+                            statusMetricsUrlEl.innerHTML = 'Non définie' + getStatusSvg('red');
+                        }
                     }
 
                     // 5. firmware (pas de firmware de prod, version deja demare, derniere version en place)
@@ -1347,8 +1388,9 @@
             })
                 .then(res => {
                     if (res.ok) {
-                        const successMsg = `Configuration Wi-Fi appliquée avec succès ! Reconnectez-vous sur le réseau <strong>"${ssid}"</strong> pour accéder à ce WhisperEye.`;
-                        showMessage('config_status', successMsg, 'success');
+                        document.getElementById('wifi_modal_ssid').innerText = ssid;
+                        document.getElementById('wifi_modal_ssid_2').innerText = ssid;
+                        document.getElementById('wifi_change_modal').style.display = 'flex';
                     } else {
                         showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
                     }
@@ -1391,10 +1433,14 @@
                         });
                     }
                     // 3. Unstable / Beta versions
-                    if (entry.unstable && Array.isArray(entry.unstable)) {
-                        entry.unstable.forEach(v => {
-                            versions.push({ version: v.version, url: v.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
-                        });
+                    if (entry.unstable) {
+                        if (Array.isArray(entry.unstable)) {
+                            entry.unstable.forEach(v => {
+                                versions.push({ version: v.version, url: v.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
+                            });
+                        } else if (typeof entry.unstable === 'object') {
+                            versions.push({ version: entry.unstable.version, url: entry.unstable.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
+                        }
                     }
 
                     if (versions.length === 0) {
@@ -1446,14 +1492,14 @@
             if (updatePollInterval) {
                 clearInterval(updatePollInterval);
             }
-            
+
             const statusEl = document.getElementById('update_status');
             statusEl.style.display = 'flex';
             statusEl.className = 'status-message';
             statusEl.style.background = 'none';
             statusEl.style.border = 'none';
             statusEl.style.padding = '0';
-            
+
             statusEl.innerHTML = `
                 <div class="ota-card">
                     <div class="ota-spinner"></div>
@@ -1465,7 +1511,7 @@
                     <div class="ota-meta">0 KB</div>
                 </div>
             `;
-            
+
             updatePollInterval = setInterval(() => {
                 fetch('/api/updateStatus')
                     .then(res => {
@@ -1479,7 +1525,7 @@
                         const statusText = data.status || 'Mise à jour en cours';
                         const size = data.size || 0;
                         const written = data.written || 0;
-                        
+
                         let metaText = "";
                         if (size > 0) {
                             metaText = `${(written / 1024).toFixed(1)} KB / ${(size / 1024).toFixed(1)} KB`;
@@ -1488,7 +1534,7 @@
                         } else {
                             metaText = "-";
                         }
-                        
+
                         statusEl.innerHTML = `
                             <div class="ota-card">
                                 <div class="ota-spinner"></div>
@@ -1500,14 +1546,14 @@
                                 <div class="ota-meta">${metaText}</div>
                             </div>
                         `;
-                        
+
                         if (statusText.includes("reboot") || statusText.includes("Redémarrage") || statusText.includes("terminée")) {
                             clearInterval(updatePollInterval);
                             updatePollInterval = null;
-                            showMessage('update_status', 'Mise à jour réussie ! L\'extendeur redémarre sur le nouveau firmware. Reconnexion dans 5 secondes...', 'success');
+                            showMessage('update_status', 'Mise à jour réussie ! L\'extendeur redémarre sur le nouveau firmware. Reconnexion ...', 'success');
                             setTimeout(() => {
                                 window.location.reload();
-                            }, 5000);
+                            }, 1000);
                         } else if (statusText.toLowerCase().includes("erreur") || statusText.toLowerCase().includes("failed")) {
                             clearInterval(updatePollInterval);
                             updatePollInterval = null;
@@ -1537,6 +1583,11 @@
                 return;
             }
 
+            const autoUpdateToggle = document.getElementById('auto_update_toggle');
+            if (autoUpdateToggle) {
+                autoUpdateToggle.checked = false;
+            }
+
             showMessage('update_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
 
             fetch('/api/config', {
@@ -1544,7 +1595,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     update_url: binUrl,
-                    apply_only: false
+                    apply_only: false,
+                    auto_update: false
                 })
             })
                 .then(res => {

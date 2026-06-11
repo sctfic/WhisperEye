@@ -12,7 +12,7 @@ pub struct StaticDevices {
 
 impl StaticDevices {
     pub fn init(
-        gpio48: Gpio48<'static>,
+        gpio9: Gpio9<'static>,
         gpio47: Gpio47<'static>,
         gpio21: Gpio21<'static>,
         gpio14: Gpio14<'static>,
@@ -21,8 +21,9 @@ impl StaticDevices {
     ) -> Result<Self, anyhow::Error> {
         info!("Initializing static board devices...");
         
-        let mut relay_a = PinDriver::output(gpio48)?;
+        let mut relay_a = PinDriver::output(gpio9)?;
         relay_a.set_low()?;
+
         
         let mut relay_b = PinDriver::output(gpio47)?;
         relay_b.set_low()?;
