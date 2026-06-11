@@ -1,7 +1,3 @@
+target/
 otadata_*.bin
-target/*
 Cargo.lock
-target/release/build/rustversion-a5a9300a2ba9c80a/build_script_build-a5a9300a2ba9c80a.exe
-target/.rustc_info.json
-target/release/build/rustversion-a5a9300a2ba9c80a/build_script_build-a5a9300a2ba9c80a.exe
-target/release/build/rustversion-a5a9300a2ba9c80a/build_script_build-a5a9300a2ba9c80a.pdb

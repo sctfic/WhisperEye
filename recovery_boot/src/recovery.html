@@ -442,7 +442,7 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('status-tab')">Statut ESP32</button>
             <button class="tab-btn" onclick="switchTab('config-tab')">Configuration</button>
-            <button class="tab-btn" onclick="switchTab('upload-tab')">Flash Direct</button>
+            <button class="tab-btn" onclick="switchTab('update-tab')">Mise à jour</button>
         </div>
 
         <!-- TAB 1: STATUS -->
@@ -568,14 +568,21 @@
             <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 0.75rem;"
                 onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
             <button id="wifi_ota_btn" class="btn" type="button"
-                style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 2rem;"
+                style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1.5rem;"
                 onclick="saveConfiguration(true)">Sauvegarder & Démarrer l'OTA</button>
 
+            <div id="config_status" class="status-message"></div>
+        </div>
 
+        <!-- TAB 3: UPDATE -->
+        <div id="update-tab" class="tab-content">
+            <h3
+                style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Mise à Jour du Firmware
+            </h3>
 
-            <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
-                <label>Mise à Jour du Firmware</label>
-                <div class="switch-container" style="margin-bottom: 1rem;">
+            <div class="form-group">
+                <div class="switch-container" style="margin-bottom: 1.5rem;">
                     <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite
                         Wi-Fi)</span>
                     <label class="switch">
@@ -584,43 +591,58 @@
                     </label>
                 </div>
                 <button type="button" class="btn"
-                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1rem;"
-                    onclick="checkUpdates()">Vérifier maintenant</button>
-                <div id="updates_list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
-            </div>
+                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1.5rem;"
+                    onclick="checkUpdates()">Vérifier les versions disponibles</button>
+                <div id="updates_list"
+                    style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;"></div>
 
-            <div id="config_status" class="status-message"></div>
-        </div>
-
-        <!-- TAB 3: FLASH DIRECT -->
-        <div id="upload-tab" class="tab-content">
-            <div class="file-upload-area">
-                <p style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">
-                    Glissez & Déposez le fichier de production .bin
-                </p>
-                <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem;">
-                    ou cliquez pour parcourir vos fichiers
-                </p>
-                <input type="file" id="firmware_file" accept=".bin" onchange="handleFileSelected()">
-                <div class="badge badge-cyan" id="selected_filename"
-                    style="display: none; width: fit-content; margin: 0 auto;"></div>
-            </div>
-
-            <div class="progress-container" id="progress_container">
-                <div class="progress-bar-bg">
-                    <div class="progress-bar" id="progress_bar"></div>
+                <div class="form-group"
+                    style="margin-top: 1.5rem; border-top: 1px dashed var(--border-color); padding-top: 1.5rem;">
+                    <label style="font-size: 0.95rem; color: var(--text-secondary);">Installation manuelle depuis une
+                        URL directe (.bin)</label>
+                    <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem; flex-wrap: wrap;">
+                        <input type="text" id="manual_bin_url" placeholder="https://example.com/firmware.bin"
+                            style="flex: 1; min-width: 200px; margin-bottom: 0;">
+                        <button type="button" class="btn"
+                            style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem;"
+                            onclick="installManualUrl()">Installer depuis l'URL</button>
+                    </div>
                 </div>
-                <div
-                    style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-secondary);">
-                    <span id="upload_percentage">0%</span>
-                    <span id="upload_bytes">0 / 0 KB</span>
+
+                <div class="form-group"
+                    style="margin-top: 1.5rem; border-top: 1px dashed var(--border-color); padding-top: 1.5rem;">
+                    <label style="font-size: 0.95rem; color: var(--text-secondary);">Mise à jour locale directe (.bin)</label>
+                    <div class="file-upload-area" style="margin-top: 0.5rem;">
+                        <p style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">
+                            Glissez & Déposez le fichier de production .bin
+                        </p>
+                        <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem;">
+                            ou cliquez pour parcourir vos fichiers
+                        </p>
+                        <input type="file" id="firmware_file" accept=".bin" onchange="handleFileSelected()">
+                        <div class="badge badge-cyan" id="selected_filename"
+                            style="display: none; width: fit-content; margin: 0 auto;"></div>
+                    </div>
+
+                    <div class="progress-container" id="progress_container">
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar" id="progress_bar"></div>
+                        </div>
+                        <div
+                            style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-secondary);">
+                            <span id="upload_percentage">0%</span>
+                            <span id="upload_bytes">0 / 0 KB</span>
+                        </div>
+                    </div>
+
+                    <button class="btn" id="upload_btn" style="margin-top: 1.5rem; display: none;"
+                        onclick="startManualFlash()">
+                        Lancer le Flashage
+                    </button>
                 </div>
             </div>
 
-            <button class="btn" id="upload_btn" style="margin-top: 1.5rem; display: none;" onclick="startManualFlash()">
-                Lancer le Flashage
-            </button>
-            <div id="upload_status" class="status-message"></div>
+            <div id="update_status" class="status-message"></div>
         </div>
     </div>
 
@@ -1030,14 +1052,26 @@
                     }
 
                     const versions = [];
-                    if (entry.stable && Array.isArray(entry.stable)) {
-                        entry.stable.forEach(v => {
-                            versions.push({ version: v.version, url: v.url, stable: true });
+                    // 1. Current latest stable
+                    if (entry.stable) {
+                        if (Array.isArray(entry.stable)) {
+                            entry.stable.forEach(v => {
+                                versions.push({ version: v.version, url: v.url, label: 'Stable (Dernière)', badgeClass: 'badge-success' });
+                            });
+                        } else if (typeof entry.stable === 'object') {
+                            versions.push({ version: entry.stable.version, url: entry.stable.url, label: 'Stable (Dernière)', badgeClass: 'badge-success' });
+                        }
+                    }
+                    // 2. Previous stable versions (rollback)
+                    if (entry.previous_stable && Array.isArray(entry.previous_stable)) {
+                        entry.previous_stable.forEach(v => {
+                            versions.push({ version: v.version, url: v.url, label: 'Stable (Précédente)', badgeClass: 'badge-cyan' });
                         });
                     }
+                    // 3. Unstable / Beta versions
                     if (entry.unstable && Array.isArray(entry.unstable)) {
                         entry.unstable.forEach(v => {
-                            versions.push({ version: v.version, url: v.url, stable: false });
+                            versions.push({ version: v.version, url: v.url, label: 'Bêta / Instable', badgeClass: 'badge-warn' });
                         });
                     }
 
@@ -1059,9 +1093,9 @@
                         title.innerText = 'Version ' + vInfo.version;
 
                         const badge = document.createElement('span');
-                        badge.className = vInfo.stable ? 'badge badge-success' : 'badge badge-warn';
+                        badge.className = 'badge ' + vInfo.badgeClass;
                         badge.style = 'width: fit-content; margin-top: 0.25rem; font-size: 0.75rem; padding: 0.15rem 0.4rem;';
-                        badge.innerText = vInfo.stable ? 'Stable' : 'Bêta / Instable';
+                        badge.innerText = vInfo.label;
 
                         left.appendChild(title);
                         left.appendChild(badge);
@@ -1090,7 +1124,7 @@
                 return;
             }
 
-            showMessage('config_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
+            showMessage('update_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
 
             fetch('/api/config', {
                 method: 'POST',
@@ -1102,12 +1136,26 @@
             })
                 .then(res => {
                     if (res.ok) {
-                        showMessage('config_status', 'Installation lancée avec succès ! Redémarrage ou téléchargement en cours...', 'success');
+                        showMessage('update_status', 'Installation lancée avec succès ! Redémarrage ou téléchargement en cours...', 'success');
                     } else {
-                        showMessage('config_status', 'Erreur lors du lancement de l\'installation.', 'error');
+                        showMessage('update_status', 'Erreur lors du lancement de l\'installation.', 'error');
                     }
                 })
-                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+                .catch(err => showMessage('update_status', 'Erreur de connexion : ' + err, 'error'));
+        }
+
+        function installManualUrl() {
+            const urlInput = document.getElementById('manual_bin_url');
+            const url = urlInput.value.trim();
+            if (!url) {
+                alert("Veuillez saisir une URL de firmware binaire valide.");
+                return;
+            }
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                alert("L'URL doit commence par http:// ou https://");
+                return;
+            }
+            installFirmware(url);
         }
 
         function startManualFlash() {
@@ -1123,7 +1171,7 @@
 
             progressContainer.style.display = 'block';
             uploadBtn.disabled = true;
-            showMessage('upload_status', SPINNER_SVG + 'Installation du nouveau firmware en cours...', 'success');
+            showMessage('update_status', SPINNER_SVG + 'Installation du nouveau firmware en cours...', 'success');
 
             const xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/upload-ota', true);
@@ -1141,15 +1189,15 @@
             xhr.onload = function () {
                 uploadBtn.disabled = false;
                 if (xhr.status === 200) {
-                    showMessage('upload_status', 'Flashage réussi ! Redémarrage sur le firmware de production en cours...', 'success');
+                    showMessage('update_status', 'Flashage réussi ! Redémarrage sur le firmware de production en cours...', 'success');
                 } else {
-                    showMessage('upload_status', `Erreur de flashage (${xhr.status}) : ${xhr.responseText}`, 'error');
+                    showMessage('update_status', `Erreur de flashage (${xhr.status}) : ${xhr.responseText}`, 'error');
                 }
             };
 
             xhr.onerror = function () {
                 uploadBtn.disabled = false;
-                showMessage('upload_status', 'Erreur réseau durant l\'upload.', 'error');
+                showMessage('update_status', 'Erreur réseau durant l\'upload.', 'error');
             };
 
             xhr.send(file);
@@ -1158,7 +1206,7 @@
         // Auto update toggle immediate saving
         document.getElementById('auto_update_toggle').addEventListener('change', function () {
             const autoUpdateVal = this.checked;
-            showMessage('config_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
+            showMessage('update_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
             fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1168,12 +1216,12 @@
             })
                 .then(res => {
                     if (res.ok) {
-                        showMessage('config_status', 'Configuration de mise à jour enregistrée !', 'success');
+                        showMessage('update_status', 'Configuration de mise à jour enregistrée !', 'success');
                     } else {
-                        showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
+                        showMessage('update_status', 'Erreur lors de la sauvegarde.', 'error');
                     }
                 })
-                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+                .catch(err => showMessage('update_status', 'Erreur de connexion : ' + err, 'error'));
         });
 
         // Initial fetch
