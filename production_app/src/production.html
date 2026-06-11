@@ -1553,7 +1553,7 @@
                             showMessage('update_status', 'Mise à jour réussie ! L\'extendeur redémarre sur le nouveau firmware. Reconnexion ...', 'success');
                             setTimeout(() => {
                                 window.location.reload();
-                            }, 1000);
+                            }, 3000);
                         } else if (statusText.toLowerCase().includes("erreur") || statusText.toLowerCase().includes("failed")) {
                             clearInterval(updatePollInterval);
                             updatePollInterval = null;
