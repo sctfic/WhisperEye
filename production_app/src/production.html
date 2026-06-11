@@ -34,12 +34,12 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 2rem 1rem;
+            padding: 0 .3rem;
         }
 
         header {
             text-align: center;
-            margin-bottom: 2rem;
+            margin-bottom: .2rem;
             max-width: 650px;
             width: 100%;
         }
@@ -50,7 +50,6 @@
             background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 0.5rem;
         }
 
         header p {
@@ -396,7 +395,7 @@
 
             70% {
                 transform: scale(1);
-                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+                box-shadow: 0 0 0 16px rgba(16, 185, 129, 0);
             }
 
             100% {
@@ -447,8 +446,8 @@
 
 <body>
     <header>
-        <h1 id="header_ext_name">WhisperEye</h1>
-        <p id="header_ext_desc" style="color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;"></p>
+        <h1 id="header_ext_name">-</h1>
+        <p id="header_ext_desc" style="color: var(--text-secondary); font-style: italic;"></p>
         <p><span class="pulse"></span>Firmware Applicatif de Production (Production App)</p>
     </header>
 
@@ -461,10 +460,11 @@
 
         <!-- TAB 1: DEVICES & ACTUATORS -->
         <div id="devices-tab" class="tab-content active">
-            <h3 style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+            <h3
+                style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
                 Registre & Valeurs Périphériques
             </h3>
-            
+
             <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 2rem;">
                 <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des périphériques...</p>
             </div>
@@ -550,7 +550,9 @@
         <div id="config-tab" class="tab-content">
             <div class="form-group">
                 <label for="ssid_select">Réseau Wi-Fi (SSID)</label>
-                <div id="known_networks_help" style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;"></div>
+                <div id="known_networks_help"
+                    style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-style: italic;">
+                </div>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
                     <select id="ssid_select" onchange="toggleCustomSsid()">
                         <option value="custom">-- Saisir un SSID --</option>
@@ -596,19 +598,26 @@
             <button id="wifi_apply_btn" class="btn" type="button" style="margin-bottom: 2rem;"
                 onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
 
-            <div id="totp_section" class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem; display: none;">
+            <div id="totp_section" class="form-group"
+                style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem; display: none;">
                 <label>Secret de sécurité TOTP</label>
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
-                    <span style="font-size: 0.95rem; color: var(--text-primary);">Statut : <span id="totp_status_badge" class="badge badge-green">Actif</span></span>
-                    <span style="font-size: 0.95rem; color: var(--text-secondary); font-family: monospace;" id="totp_key_display"></span>
-                    <button type="button" class="btn" style="background-color: var(--danger); color: #fff; width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem;" onclick="deleteTotpKey()">Supprimer</button>
+                <div
+                    style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
+                    <span style="font-size: 0.95rem; color: var(--text-primary);">Statut : <span id="totp_status_badge"
+                            class="badge badge-green">Actif</span></span>
+                    <span style="font-size: 0.95rem; color: var(--text-secondary); font-family: monospace;"
+                        id="totp_key_display"></span>
+                    <button type="button" class="btn"
+                        style="background-color: var(--danger); color: #fff; width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem;"
+                        onclick="deleteTotpKey()">Supprimer</button>
                 </div>
             </div>
 
             <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
                 <label>Mise à Jour du Firmware</label>
                 <div class="switch-container" style="margin-bottom: 1rem;">
-                    <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite Wi-Fi)</span>
+                    <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite
+                        Wi-Fi)</span>
                     <label class="switch">
                         <input type="checkbox" id="auto_update_toggle" checked>
                         <span class="slider"></span>
@@ -624,8 +633,14 @@
         </div>
     </div>
 
-    <footer style="margin-top: 2rem; margin-bottom: 1rem; text-align: center; font-size: 0.85rem; color: var(--text-secondary);">
-        Auteur : <span id="author_name">LOPEZ Alban</span> (<a id="author_email" href="mailto:alban.lopez+whisperEye@gmail.com" style="color: var(--text-secondary); text-decoration: none; border-bottom: 1px dashed var(--text-secondary);">alban.lopez+whisperEye@gmail.com</a>) sur <a id="author_link" href="https://github.com/sctfic/WhisperEye/blob/main/README.md" target="_blank" style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a> - v<span id="footer_version">--</span>
+    <footer
+        style="margin-top: 2rem; margin-bottom: 1rem; text-align: center; font-size: 0.85rem; color: var(--text-secondary);">
+        Auteur : <span id="author_name">LOPEZ Alban</span> (<a id="author_email"
+            href="mailto:alban.lopez+whisperEye@gmail.com"
+            style="color: var(--text-secondary); text-decoration: none; border-bottom: 1px dashed var(--text-secondary);">alban.lopez+whisperEye@gmail.com</a>)
+        sur <a id="author_link" href="https://github.com/sctfic/WhisperEye/blob/main/README.md" target="_blank"
+            style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a> - v<span
+            id="footer_version">--</span>
     </footer>
 
     <script>
@@ -960,10 +975,10 @@
 
                     let html = '';
                     data.forEach(dev => {
-                        const statusBadge = dev.present 
-                            ? `<span id="badge_${dev.id}" class="badge badge-green">Présent</span>` 
+                        const statusBadge = dev.present
+                            ? `<span id="badge_${dev.id}" class="badge badge-green">Présent</span>`
                             : `<span id="badge_${dev.id}" class="badge badge-error">Absent</span>`;
-                        
+
                         let valueHtml = '';
                         if (dev.id === 'rla' || dev.id === 'rlb' || dev.id === 'swpwr') {
                             const checkedAttr = dev.value === 'ON' ? 'checked' : '';
@@ -1055,24 +1070,24 @@
         function saveRename(id, newName) {
             editingDeviceId = null;
             editingOriginalName = null;
-            
+
             fetch('/api/peripherals', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: id, name: newName })
             })
-            .then(res => {
-                if (res.ok) {
+                .then(res => {
+                    if (res.ok) {
+                        fetchDevices();
+                    } else {
+                        alert('Erreur lors du changement de nom');
+                        fetchDevices();
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
                     fetchDevices();
-                } else {
-                    alert('Erreur lors du changement de nom');
-                    fetchDevices();
-                }
-            })
-            .catch(err => {
-                console.error(err);
-                fetchDevices();
-            });
+                });
         }
 
         function toggleDeviceOutput(id) {
@@ -1085,18 +1100,18 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(window.actuatorStates)
             })
-            .then(res => {
-                if (!res.ok) {
-                    alert('Erreur lors de la modification de l\'état');
+                .then(res => {
+                    if (!res.ok) {
+                        alert('Erreur lors de la modification de l\'état');
+                        checkbox.checked = !checkbox.checked;
+                        window.actuatorStates[id] = checkbox.checked;
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
                     checkbox.checked = !checkbox.checked;
                     window.actuatorStates[id] = checkbox.checked;
-                }
-            })
-            .catch(err => {
-                console.error(err);
-                checkbox.checked = !checkbox.checked;
-                window.actuatorStates[id] = checkbox.checked;
-            });
+                });
         }
 
 
@@ -1289,7 +1304,7 @@
         }
 
         // Auto update toggle immediate saving
-        document.getElementById('auto_update_toggle').addEventListener('change', function() {
+        document.getElementById('auto_update_toggle').addEventListener('change', function () {
             const autoUpdateVal = this.checked;
             showMessage('config_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
             fetch('/api/config', {
@@ -1299,14 +1314,16 @@
                     auto_update: autoUpdateVal
                 })
             })
-            .then(res => {
-                if (res.ok) {
-                    showMessage('config_status', 'Configuration de mise à jour enregistrée !', 'success');
-                } else {
-                    showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
-                }
-            })
-            .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+                .then(res => {
+                    if (res.ok) {
+                        showMessage('config_status', 'Configuration de mise à jour enregistrée !', 'success');
+                    } else {
+                        showMessage('config_status', 'Erreur lors de la sauvegarde.', 'error');
+                    }
+                })
+                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+        });
+
         function deleteTotpKey() {
             if (!confirm("Voulez-vous vraiment supprimer la clé de sécurité TOTP ? L'extendeur ne pourra plus communiquer de manière sécurisée avec la station Probe sans ré-enregistrement.")) {
                 return;
@@ -1317,15 +1334,15 @@
             fetch('/api/totp/delete', {
                 method: 'POST'
             })
-            .then(res => {
-                if (res.ok) {
-                    showMessage('config_status', 'Clé de sécurité TOTP supprimée avec succès !', 'success');
-                    fetchStatus();
-                } else {
-                    showMessage('config_status', 'Erreur lors de la suppression de la clé TOTP.', 'error');
-                }
-            })
-            .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
+                .then(res => {
+                    if (res.ok) {
+                        showMessage('config_status', 'Clé de sécurité TOTP supprimée avec succès !', 'success');
+                        fetchStatus();
+                    } else {
+                        showMessage('config_status', 'Erreur lors de la suppression de la clé TOTP.', 'error');
+                    }
+                })
+                .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
         }
 
         // Initial setup
