@@ -532,7 +532,8 @@
         }
 
         #update_status,
-        #wifi_change_modal {
+        #wifi_change_modal,
+        #rename_warning_modal {
             position: fixed;
             top: 0;
             left: 0;
@@ -549,16 +550,108 @@
             border: none;
             border-radius: 0;
         }
+
+        /* Collapsible Advanced Configuration Section */
+        .advanced-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            padding: 0.85rem 0;
+            border-top: 1px solid var(--border-color);
+            margin-top: 1.5rem;
+            user-select: none;
+            transition: color 0.2s ease;
+        }
+
+        .advanced-toggle:hover {
+            color: var(--accent-color);
+        }
+
+        .advanced-toggle-label {
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .advanced-toggle:hover .advanced-toggle-label {
+            color: var(--accent-color);
+        }
+
+        .advanced-chevron {
+            width: 20px;
+            height: 20px;
+            color: var(--text-secondary);
+            transition: transform 0.3s ease;
+        }
+
+        .advanced-toggle.open .advanced-chevron {
+            transform: rotate(180deg);
+        }
+
+        .advanced-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, padding 0.3s ease;
+            padding: 0;
+        }
+
+        .advanced-content.open {
+            max-height: 500px;
+            padding: 1rem 0;
+        }
     </style>
 </head>
 
 <body>
-    <header>
-        <h1 id="header_ext_name">-</h1>
-        <p>
-            <span class="pulse"></span>Firmware Production
-            <span id="header_ext_desc" style="color: var(--text-secondary); font-style: italic;"></span>
-        </p>
+    <header
+        style="display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box; padding: 1rem 2rem;">
+        <div style="display: flex; flex-direction: column; gap: 0.25rem; max-width: 80%;">
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <h1 id="header_ext_name_display" style="margin: 0; font-size: 1.8rem; cursor: pointer;"
+                    onclick="startEditingExtName()">-</h1>
+                <span id="header_ext_name_input_container" style="display: none; align-items: center; gap: 0.25rem;">
+                    <input type="text" id="header_ext_name_input" maxlength="16"
+                        style="padding: 0.25rem 0.5rem; font-size: 1.2rem; font-weight: bold; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;"
+                        onblur="handleBlurExtName()" onkeydown="handleKeyDownExtName(event)">
+                </span>
+                <button id="header_ext_name_edit_btn" onclick="startEditingExtName()"
+                    style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;"
+                    title="Renommer l'extendeur">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round" style="width: 16px; height: 16px;">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                </button>
+            </div>
+            <p style="margin: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <span class="pulse"></span>Firmware Production —
+                <span id="header_ext_desc_display"
+                    style="color: var(--text-secondary); font-style: italic; cursor: pointer;"
+                    onclick="startEditingExtDesc()">--</span>
+                <span id="header_ext_desc_input_container" style="display: none; align-items: center; gap: 0.25rem;">
+                    <input type="text" id="header_ext_desc_input" maxlength="64"
+                        style="padding: 0.1rem 0.4rem; font-size: 0.9rem; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;"
+                        onblur="handleBlurExtDesc()" onkeydown="handleKeyDownExtDesc(event)">
+                </span>
+                <button id="header_ext_desc_edit_btn" onclick="startEditingExtDesc()"
+                    style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.1rem;"
+                    title="Modifier la description">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round" style="width: 12px; height: 12px;">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                </button>
+            </p>
+        </div>
+        <div style="flex-shrink: 0;">
+            <span id="header_version" style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 600; background: rgba(255, 255, 255, 0.05); padding: 0.35rem 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">--</span>
+        </div>
     </header>
 
     <div class="container">
@@ -663,6 +756,10 @@
                 <span class="info-label">Dernier boot OTA réussi</span>
                 <span class="info-value" id="last_ota">1970-01-01 00:00:00</span>
             </div>
+            <div class="info-group">
+                <span class="info-label">Renommage devices</span>
+                <span class="info-value" id="status_rename_enabled">--</span>
+            </div>
         </div>
 
         <!-- TAB 3: CONFIGURATION -->
@@ -718,18 +815,52 @@
                 onclick="saveConfiguration(false)">Appliquer la configuration Wi-Fi</button>
 
 
-            <div class="form-group"
-                style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-bottom: 2rem;">
-                <label>Réinitialisation d'Usine</label>
+            <!-- Collapsible Advanced Configuration Section -->
+            <div class="advanced-toggle" onclick="toggleAdvancedConfig()">
+                <span class="advanced-toggle-label">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round" style="width: 16px; height: 16px;">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
+                    Configuration avancée
+                </span>
+                <svg class="advanced-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+            </div>
+            <div id="advanced_config_content" class="advanced-content">
+                <!-- Rename Enabled Switch -->
                 <div
-                    style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 0.5rem;">
-                    <span
-                        style="font-size: 0.95rem; color: var(--text-secondary); flex: 1; min-width: 280px; line-height: 1.4;">Cette
-                        action supprime la clé TOTP, efface toute la configuration Wi-Fi et redémarre l'extendeur en
-                        mode Point d'Accès (Access Point) avec l'adresse IP 192.168.71.1.</span>
-                    <button type="button" class="btn"
-                        style="background-color: var(--danger); color: #fff; width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem;"
-                        onclick="triggerFactoryReset()">Réinitialiser</button>
+                    style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
+                    <div style="flex: 1; min-width: 0;">
+                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Renommage des
+                            périphériques</span>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">Autoriser le
+                            renommage des devices via l'interface Web et l'API</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="rename_enabled_toggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <!-- Factory Reset -->
+                <div class="form-group" style="padding-top: 1rem; margin-bottom: 0;">
+                    <label>Réinitialisation d'Usine</label>
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 0.5rem;">
+                        <span
+                            style="font-size: 0.95rem; color: var(--text-secondary); flex: 1; min-width: 280px; line-height: 1.4;">Cette
+                            action supprime la clé TOTP, efface toute la configuration Wi-Fi et redémarre l'extendeur en
+                            mode Point d'Accès (Access Point) avec l'adresse IP 192.168.71.1.</span>
+                        <button type="button" class="btn"
+                            style="background-color: var(--danger); color: #fff; width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem;"
+                            onclick="triggerFactoryReset()">Réinitialiser</button>
+                    </div>
                 </div>
             </div>
 
@@ -798,6 +929,33 @@
                 </div>
             </div>
         </div>
+
+        <!-- Rename Warning Modal -->
+        <div id="rename_warning_modal" class="status-message">
+            <div class="ota-card" style="border: 1px solid var(--warning); max-width: 450px; width: 100%;">
+                <div
+                    style="font-size: 1.2rem; font-weight: 600; color: var(--warning); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <svg style="width:24px;height:24px" viewBox="0 0 24 24">
+                        <path fill="currentColor" d="M1,21H23L12,2L1,21M13,18H11V16H13V18M13,14H11V10H13V14Z" />
+                    </svg>
+                    Attention — Renommage activé
+                </div>
+                <div style="color: var(--text-primary); font-size: 0.95rem; line-height: 1.5; text-align: left;">
+                    Les noms des périphériques sont utilisés comme identifiants dans la base de données. Une
+                    modification entraînerait un <strong>désalignement des données</strong> existantes.
+                    <br><br>
+                    Êtes-vous sûr de vouloir autoriser le renommage ?
+                </div>
+                <div style="display: flex; gap: 0.75rem; margin-top: 1.25rem; justify-content: center;">
+                    <button type="button" class="btn"
+                        style="width: auto; padding: 0.5rem 1.5rem; background-color: var(--border-color); color: var(--text-primary);"
+                        onclick="cancelRenameEnable()">Annuler</button>
+                    <button type="button" class="btn"
+                        style="width: auto; padding: 0.5rem 1.5rem; background-color: var(--warning); color: #0b0f19;"
+                        onclick="confirmRenameEnable()">Confirmer</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <footer
@@ -806,8 +964,7 @@
             href="mailto:alban.lopez+whisperEye@gmail.com"
             style="color: var(--text-secondary); text-decoration: none; border-bottom: 1px dashed var(--text-secondary);">alban.lopez+whisperEye@gmail.com</a>)
         sur <a id="author_link" href="https://github.com/sctfic/WhisperEye/blob/main/README.md" target="_blank"
-            style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a> - v<span
-            id="footer_version">--</span>
+            style="color: var(--accent-color); text-decoration: none; font-weight: 600;">github.com</a>
     </footer>
 
     <script>
@@ -937,6 +1094,21 @@
                         document.getElementById('auto_update_toggle').checked = data.auto_update;
                     }
 
+                    // Update renameEnabled state
+                    window.renameEnabled = data.rename_enabled !== undefined ? data.rename_enabled : true;
+                    const renameToggle = document.getElementById('rename_enabled_toggle');
+                    if (renameToggle) {
+                        renameToggle.checked = window.renameEnabled;
+                    }
+                    const statusRenameEl = document.getElementById('status_rename_enabled');
+                    if (statusRenameEl) {
+                        if (window.renameEnabled) {
+                            statusRenameEl.innerHTML = '<span class="badge badge-green">Autorisé</span>';
+                        } else {
+                            statusRenameEl.innerHTML = '<span class="badge badge-warn">Verrouillé</span>';
+                        }
+                    }
+
                     const statusTotpEl = document.getElementById('status_totp');
                     if (statusTotpEl) {
                         if (data.has_totp) {
@@ -947,16 +1119,25 @@
                     }
 
                     if (data.ext_name) {
-                        const hName = document.getElementById('header_ext_name');
-                        if (hName) hName.innerText = data.ext_name;
+                        const hNameDisp = document.getElementById('header_ext_name_display');
+                        if (hNameDisp) hNameDisp.innerText = data.ext_name;
                         const sName = document.getElementById('status_ext_name');
                         if (sName) sName.innerText = data.ext_name;
                     }
                     if (data.ext_desc !== undefined) {
-                        const hDesc = document.getElementById('header_ext_desc');
-                        if (hDesc) hDesc.innerText = data.ext_desc;
+                        const hDescDisp = document.getElementById('header_ext_desc_display');
+                        if (hDescDisp) hDescDisp.innerText = data.ext_desc || '--';
                         const sDesc = document.getElementById('status_ext_desc');
-                        if (sDesc) sDesc.innerText = data.ext_desc;
+                        if (sDesc) sDesc.innerText = data.ext_desc || '--';
+                    }
+
+                    const hNameDisp = document.getElementById('header_ext_name_display');
+                    if (hNameDisp) {
+                        hNameDisp.style.cursor = window.renameEnabled ? 'pointer' : 'default';
+                    }
+                    const hNameEditBtn = document.getElementById('header_ext_name_edit_btn');
+                    if (hNameEditBtn) {
+                        hNameEditBtn.style.display = window.renameEnabled ? 'flex' : 'none';
                     }
 
                     // Dynamic system status calculation
@@ -1095,7 +1276,7 @@
                         const aName = document.getElementById('author_name');
                         const aEmail = document.getElementById('author_email');
                         const aLink = document.getElementById('author_link');
-                        const aVersion = document.getElementById('footer_version');
+                        const aVersion = document.getElementById('header_version');
                         if (aName) aName.textContent = data.author.name;
                         if (aEmail) {
                             aEmail.href = "mailto:" + data.author.email;
@@ -1188,16 +1369,16 @@
                         <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
                             <div style="flex: 1; min-width: 0;">
                                 <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-                                    <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: pointer;" onclick="startEditing('${dev.id}')">${dev.name}</span>
+                                    <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: ${window.renameEnabled ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
                                     <span id="edit_input_container_${dev.id}" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
                                         <input type="text" id="input_${dev.id}" maxlength="64" value="${dev.name}" 
                                             style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;"
                                             onblur="handleBlur('${dev.id}')"
                                             onkeydown="handleKeyDown(event, '${dev.id}')">
                                     </span>
-                                    <button id="edit_btn_${dev.id}" onclick="startEditing('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                    ${window.renameEnabled ? `<button id="edit_btn_${dev.id}" onclick="startEditing('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                                    </button>
+                                    </button>` : ''}
                                 </div>
                                 <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">${dev.id} [${dev.is_static ? 'Fixe' : 'Dynamique'}]</div>
                             </div>
@@ -1214,6 +1395,9 @@
         }
 
         function startEditing(id) {
+            if (!window.renameEnabled) {
+                return;
+            }
             const dev = (window.currentDevices || []).find(d => d.id === id);
             if (!dev) return;
             editingDeviceId = id;
@@ -1279,6 +1463,115 @@
                 .catch(err => {
                     console.error(err);
                     fetchDevices();
+                });
+        }
+
+        let editingExtName = false;
+        let editingExtDesc = false;
+
+        function startEditingExtName() {
+            if (!window.renameEnabled) return;
+            editingExtName = true;
+            document.getElementById('header_ext_name_display').style.display = 'none';
+            document.getElementById('header_ext_name_edit_btn').style.display = 'none';
+            const container = document.getElementById('header_ext_name_input_container');
+            container.style.display = 'flex';
+            const input = document.getElementById('header_ext_name_input');
+            input.value = document.getElementById('header_ext_name_display').innerText;
+            input.focus();
+            input.select();
+        }
+
+        function cancelEditingExtName() {
+            editingExtName = false;
+            document.getElementById('header_ext_name_display').style.display = 'inline';
+            document.getElementById('header_ext_name_edit_btn').style.display = 'flex';
+            document.getElementById('header_ext_name_input_container').style.display = 'none';
+        }
+
+        function handleBlurExtName() {
+            if (!editingExtName) return;
+            const input = document.getElementById('header_ext_name_input');
+            const newName = input.value.trim();
+            const oldName = document.getElementById('header_ext_name_display').innerText;
+            if (newName === oldName || !newName) {
+                cancelEditingExtName();
+            } else {
+                saveExtNameAndDesc(newName, null);
+            }
+        }
+
+        function handleKeyDownExtName(event) {
+            if (event.key === 'Enter') {
+                document.getElementById('header_ext_name_input').blur();
+            } else if (event.key === 'Escape') {
+                cancelEditingExtName();
+            }
+        }
+
+        function startEditingExtDesc() {
+            editingExtDesc = true;
+            document.getElementById('header_ext_desc_display').style.display = 'none';
+            document.getElementById('header_ext_desc_edit_btn').style.display = 'none';
+            const container = document.getElementById('header_ext_desc_input_container');
+            container.style.display = 'flex';
+            const input = document.getElementById('header_ext_desc_input');
+            const currentDesc = document.getElementById('header_ext_desc_display').innerText;
+            input.value = currentDesc === '--' ? '' : currentDesc;
+            input.focus();
+            input.select();
+        }
+
+        function cancelEditingExtDesc() {
+            editingExtDesc = false;
+            document.getElementById('header_ext_desc_display').style.display = 'inline';
+            document.getElementById('header_ext_desc_edit_btn').style.display = 'flex';
+            document.getElementById('header_ext_desc_input_container').style.display = 'none';
+        }
+
+        function handleBlurExtDesc() {
+            if (!editingExtDesc) return;
+            const input = document.getElementById('header_ext_desc_input');
+            const newDesc = input.value.trim();
+            const oldDesc = document.getElementById('header_ext_desc_display').innerText;
+            if (newDesc === oldDesc || (newDesc === '' && oldDesc === '--')) {
+                cancelEditingExtDesc();
+            } else {
+                saveExtNameAndDesc(null, newDesc);
+            }
+        }
+
+        function handleKeyDownExtDesc(event) {
+            if (event.key === 'Enter') {
+                document.getElementById('header_ext_desc_input').blur();
+            } else if (event.key === 'Escape') {
+                cancelEditingExtDesc();
+            }
+        }
+
+        function saveExtNameAndDesc(name, desc) {
+            editingExtName = false;
+            editingExtDesc = false;
+            const payload = {};
+            if (name !== null) payload.ext_name = name;
+            if (desc !== null) payload.ext_desc = desc;
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(res => {
+                    if (res.ok) {
+                        fetchStatus();
+                    } else {
+                        alert('Erreur lors de la mise à jour de la configuration de l\'extendeur');
+                        fetchStatus();
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    fetchStatus();
                 });
         }
 
@@ -1623,10 +1916,9 @@
             installFirmware(url);
         }
 
-        // Auto update toggle immediate saving
+        // Auto update toggle immediate saving (no modal)
         document.getElementById('auto_update_toggle').addEventListener('change', function () {
             const autoUpdateVal = this.checked;
-            showMessage('update_status', SPINNER_SVG + 'Enregistrement de la configuration de mise à jour...', 'success');
             fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1634,15 +1926,52 @@
                     auto_update: autoUpdateVal
                 })
             })
-                .then(res => {
-                    if (res.ok) {
-                        showMessage('update_status', 'Configuration de mise à jour enregistrée !', 'success');
-                    } else {
-                        showMessage('update_status', 'Erreur lors de la sauvegarde.', 'error');
-                    }
-                })
-                .catch(err => showMessage('update_status', 'Erreur de connexion : ' + err, 'error'));
+                .catch(err => console.error('Erreur auto_update:', err));
         });
+
+        // Advanced config collapsible toggle
+        function toggleAdvancedConfig() {
+            const toggle = document.querySelector('.advanced-toggle');
+            const content = document.getElementById('advanced_config_content');
+            toggle.classList.toggle('open');
+            content.classList.toggle('open');
+        }
+
+        // Rename Enabled toggle with warning modal on enable
+        document.getElementById('rename_enabled_toggle').addEventListener('change', function () {
+            if (this.checked) {
+                // Show warning modal before enabling
+                this.checked = false; // revert until confirmed
+                document.getElementById('rename_warning_modal').style.display = 'flex';
+            } else {
+                // Disable directly, no warning
+                saveRenameEnabled(false);
+            }
+        });
+
+        function cancelRenameEnable() {
+            document.getElementById('rename_warning_modal').style.display = 'none';
+            document.getElementById('rename_enabled_toggle').checked = false;
+        }
+
+        function confirmRenameEnable() {
+            document.getElementById('rename_warning_modal').style.display = 'none';
+            document.getElementById('rename_enabled_toggle').checked = true;
+            saveRenameEnabled(true);
+        }
+
+        function saveRenameEnabled(enabled) {
+            window.renameEnabled = enabled;
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    rename_enabled: enabled
+                })
+            })
+                .then(() => fetchStatus())
+                .catch(err => console.error('Erreur rename_enabled:', err));
+        }
 
         function triggerFactoryReset() {
             const confirmWord = prompt("ATTENTION : Cette action va supprimer la clé de sécurité TOTP et effacer toute la configuration Wi-Fi enregistrée. L'extendeur va redémarrer en mode Point d'Accès (Access Point) avec l'adresse IP : 192.168.71.1.\n\nPour confirmer, veuillez saisir le mot 'RESET' en majuscules :");

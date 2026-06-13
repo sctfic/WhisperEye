@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.10";
+const FW_VERSION: &str = "1.0.16";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -52,6 +52,7 @@ struct ConfigPayload {
     ext_desc: Option<String>,
     ntp_server: Option<String>,
     metrics_url: Option<String>,
+    rename_enabled: Option<bool>,
 }
 
 fn get_mac_address() -> String {
@@ -227,11 +228,19 @@ fn main() -> Result<()> {
             storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
         };
 
-        let sntp = if !ntp_server.is_empty() {
-            info!("Initializing SNTP with custom server: {}", ntp_server);
+        let sntp = if !ntp_server.is_empty() && ntp_server != "empty" {
+            info!("Initializing SNTP with custom server: {} and fallback pool.ntp.org", ntp_server);
             let mut conf = esp_idf_svc::sntp::SntpConf::default();
             conf.servers[0] = &ntp_server;
-            EspSntp::new(&conf)
+            let s = EspSntp::new(&conf);
+            if s.is_ok() {
+                unsafe {
+                    if let Ok(fallback) = std::ffi::CString::new("pool.ntp.org") {
+                        esp_idf_sys::esp_sntp_setservername(1, fallback.as_ptr());
+                    }
+                }
+            }
+            s
         } else {
             info!("Initializing SNTP default pool...");
             EspSntp::new_default()
@@ -343,6 +352,7 @@ fn main() -> Result<()> {
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
         let wifi_known = storage.get_known_networks().unwrap_or_default();
         let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1) == 1;
+        let rename_enabled = storage.get_i32("renameEnabled")?.unwrap_or(1) == 1;
         let totp_secret = storage.get_str("totpSecret")?.unwrap_or_default();
         let has_totp = !totp_secret.is_empty();
         let partial_totp = if totp_secret.len() >= 12 {
@@ -379,6 +389,7 @@ fn main() -> Result<()> {
             "chip_type": CHIP_TYPE,
             "wifi_known": wifi_known,
             "auto_update": auto_update,
+            "rename_enabled": rename_enabled,
             "has_totp": has_totp,
             "partial_totp": partial_totp,
             "ext_name": ext_name,
@@ -479,7 +490,7 @@ fn main() -> Result<()> {
             }
         }
 
-        let (mac, name, desc) = {
+        let (mac, name, desc, rename_enabled) = {
             let storage = cap_nvs.lock().unwrap();
             let m = get_mac_address();
             let name = storage.get_str("extName")?.unwrap_or_else(|| {
@@ -487,7 +498,8 @@ fn main() -> Result<()> {
                 format!("WE-{}", &clean[8..12])
             });
             let desc = storage.get_str("extDesc")?.unwrap_or_else(|| "WhisperEye Extender".to_string());
-            (m, name, desc)
+            let rename_enabled = storage.get_i32("renameEnabled")?.unwrap_or(1) == 1;
+            (m, name, desc, rename_enabled)
         };
 
         let cap_json = serde_json::json!({
@@ -495,6 +507,7 @@ fn main() -> Result<()> {
             "name": name,
             "description": desc,
             "version": FW_VERSION,
+            "rename_enabled": rename_enabled,
             "sensors": sensors,
             "actuators": actuators,
         });
@@ -945,6 +958,11 @@ fn main() -> Result<()> {
                     info!("Saving metricsUrl to NVS: {}", formatted);
                     storage.set_str("metricsUrl", &formatted)?;
                 }
+                if let Some(rename_en) = payload.rename_enabled {
+                    let new_val = if rename_en { 1 } else { 0 };
+                    info!("Saving renameEnabled to NVS: {}", new_val);
+                    storage.set_i32("renameEnabled", new_val)?;
+                }
             }
         }
 
@@ -1277,6 +1295,11 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
+
+
 
 
 

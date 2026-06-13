@@ -184,7 +184,7 @@ function Update-FirmwareJson {
                 # Unstable build: odd patch with build suffix
                 $verStr = "{0}.{1}.{2}-{3}" -f $Matches[1], $Matches[2], $Matches[3], $Matches[4]
                 $sortKey = [int]$Matches[1] * 100000000 + [int]$Matches[2] * 1000000 + [int]$Matches[3] * 100000 + [int]$Matches[4]
-                $unstableEntries += [PSCustomObject]@{ version = $verStr; url = $url; sortKey = $sortKey }
+                $unstableEntries += [PSCustomObject]@{ version = $verStr; url = $url; sortKey = $sortKey; fileName = $file }
             } elseif ($file -match "$prefix(\d+)\.(\d+)\.(\d+)\.bin") {
                 # Stable release: even patch, no build suffix
                 $verStr = "{0}.{1}.{2}" -f $Matches[1], $Matches[2], $Matches[3]
@@ -206,9 +206,21 @@ function Update-FirmwareJson {
 
         $latestStableSortKey = if ($sortedStableAll) { $sortedStableAll[0].sortKey } else { 0 }
 
-        # Sort descending by sortKey, keep only 2 most recent unstable builds that are newer than latest stable
-        $sortedUnstable = $unstableEntries | Where-Object { $_.sortKey -gt $latestStableSortKey } | Sort-Object sortKey -Descending | Select-Object -First 2 | ForEach-Object {
+        # Sort descending by sortKey, keep only 2 most recent unstable builds
+        $sortedUnstable = $unstableEntries | Sort-Object sortKey -Descending | Select-Object -First 2 | ForEach-Object {
             [PSCustomObject]@{ version = $_.version; url = $_.url }
+        }
+
+        # Automatically delete unstable version files that do not appear in the JSON
+        $keptUnstableVersions = $sortedUnstable | Select-Object -ExpandProperty version
+        foreach ($unstable in $unstableEntries) {
+            if ($unstable.version -notin $keptUnstableVersions) {
+                $filePathToDelete = Join-Path "boards\board_default" $unstable.fileName
+                if (Test-Path $filePathToDelete) {
+                    Write-Host "    [-] Removing old unstable binary: $filePathToDelete" -ForegroundColor Yellow
+                    Remove-Item $filePathToDelete -Force
+                }
+            }
         }
 
         $board.stable   = if ($sortedStable)   { $sortedStable[0]   } else { $null }

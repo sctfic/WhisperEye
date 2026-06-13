@@ -34,7 +34,7 @@ struct ConfigPayload {
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-recovery-0043";
+const FW_VERSION: &str = "1.0.0-recovery-0049";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -160,11 +160,19 @@ fn main() -> Result<()> {
             storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
         };
 
-        let sntp = if !ntp_server.is_empty() {
-            info!("Initializing SNTP with custom server: {}", ntp_server);
+        let sntp = if !ntp_server.is_empty() && ntp_server != "empty" {
+            info!("Initializing SNTP with custom server: {} and fallback pool.ntp.org", ntp_server);
             let mut conf = esp_idf_svc::sntp::SntpConf::default();
             conf.servers[0] = &ntp_server;
-            EspSntp::new(&conf)
+            let s = EspSntp::new(&conf);
+            if s.is_ok() {
+                unsafe {
+                    if let Ok(fallback) = std::ffi::CString::new("pool.ntp.org") {
+                        esp_idf_sys::esp_sntp_setservername(1, fallback.as_ptr());
+                    }
+                }
+            }
+            s
         } else {
             info!("Initializing SNTP default pool...");
             EspSntp::new_default()
@@ -887,6 +895,12 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
+
+
+
 
 
 

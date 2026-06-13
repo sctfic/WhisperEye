@@ -24,28 +24,43 @@ impl NvsStorage {
 
     pub fn ensure_defaults(&mut self) -> Result<()> {
         if self.get_str("wifiKnown")?.is_none() {
-            info!("NVS is empty or uninitialized. Writing defaults...");
-            self.set_str("ntpServer", "wrt.lan")?;
-            self.set_str("metricsUrl", "empty")?;
-            self.set_str("fwVersion", "empty")?;
-            self.set_str("lastOtaDl", "1970-01-01T00:00:00Z")?;
-            self.set_str("lastOtaSuccess", "1970-01-01T00:00:00Z")?;
-            self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
-            self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.json")?;
-            self.set_str("updateDlUrl", "https://.../firmware.bin")?;
-            self.set_i32("otaRetry", -1)?;
-            self.set_i32("autoUpdate", 1)?;
-            self.set_str("nextCheck", "0")?;
             self.set_str("wifiKnown", r#"{"IoT":{"psk":"Esp32&Cie2026","default":true}}"#)?;
         }
-        if self.get_i32("autoUpdate")?.is_none() {
-            self.set_i32("autoUpdate", 1)?;
+        if self.get_str("ntpServer")?.is_none() {
+            self.set_str("ntpServer", "empty")?;
+        }
+        if self.get_str("metricsUrl")?.is_none() {
+            self.set_str("metricsUrl", "empty")?;
+        }
+        if self.get_str("fwVersion")?.is_none() {
+            self.set_str("fwVersion", "empty")?;
+        }
+        if self.get_str("lastOtaDl")?.is_none() {
+            self.set_str("lastOtaDl", "1970-01-01T00:00:00Z")?;
+        }
+        if self.get_str("lastOtaSuccess")?.is_none() {
+            self.set_str("lastOtaSuccess", "1970-01-01T00:00:00Z")?;
         }
         if self.get_str("lastOtaWrite")?.is_none() {
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
         }
+        if self.get_str("updateAvailable")?.is_none() {
+            self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.json")?;
+        }
+        if self.get_str("updateDlUrl")?.is_none() {
+            self.set_str("updateDlUrl", "https://.../firmware.bin")?;
+        }
+        if self.get_i32("otaRetry")?.is_none() {
+            self.set_i32("otaRetry", -1)?;
+        }
+        if self.get_i32("autoUpdate")?.is_none() {
+            self.set_i32("autoUpdate", 1)?;
+        }
         if self.get_str("nextCheck")?.is_none() {
             self.set_str("nextCheck", "0")?;
+        }
+        if self.get_i32("renameEnabled")?.is_none() {
+            self.set_i32("renameEnabled", 1)?;
         }
         Ok(())
     }
@@ -141,6 +156,9 @@ impl NvsStorage {
             "updateDlUrl",
             "wifiKnown",
             "nextCheck",
+            "extName",
+            "extDesc",
+            "metricsUrl",
         ];
         for key in keys_str {
             match self.get_str(key) {
@@ -161,7 +179,7 @@ impl NvsStorage {
             }
         }
         
-        let keys_i32 = &["otaRetry", "autoUpdate"];
+        let keys_i32 = &["otaRetry", "autoUpdate", "renameEnabled"];
         for key in keys_i32 {
             match self.get_i32(key) {
                 Ok(Some(val)) => info!("  {} : {}", key, val),
