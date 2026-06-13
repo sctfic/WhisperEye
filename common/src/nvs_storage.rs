@@ -45,10 +45,10 @@ impl NvsStorage {
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
         }
         if self.get_str("updateAvailable")?.is_none() {
-            self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware.json")?;
+            self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-c3.json")?;
         }
         if self.get_str("updateDlUrl")?.is_none() {
-            self.set_str("updateDlUrl", "https://.../firmware.bin")?;
+            self.set_str("updateDlUrl", "empty")?;
         }
         if self.get_i32("otaRetry")?.is_none() {
             self.set_i32("otaRetry", -1)?;

@@ -110,7 +110,7 @@
         .info-group {
             display: flex;
             justify-content: space-between;
-            padding: 0.8rem 0;
+            /* padding: 0.8rem 0; */
             border-bottom: 1px solid rgba(30, 41, 59, 0.6);
         }
 
@@ -650,7 +650,8 @@
             </p>
         </div>
         <div style="flex-shrink: 0;">
-            <span id="header_version" style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 600; background: rgba(255, 255, 255, 0.05); padding: 0.35rem 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">--</span>
+            <span id="header_version"
+                style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 600; background: rgba(255, 255, 255, 0.05); padding: 0.35rem 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">--</span>
         </div>
     </header>
 
@@ -846,6 +847,19 @@
                         <input type="checkbox" id="rename_enabled_toggle" checked>
                         <span class="slider"></span>
                     </label>
+                </div>
+                <!-- Repository URL (updateAvailable) -->
+                <div class="form-group"
+                    style="padding-top: 1rem; border-top: 1px solid rgba(30, 41, 59, 0.6); margin-bottom: 1rem;">
+                    <label for="repo_url">URL du dépôt (Mise à jour)</label>
+                    <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem; flex-wrap: wrap;">
+                        <input type="text" id="repo_url" placeholder="https://example.com/firmware-s3.json"
+                            style="flex: 1; min-width: 200px; margin-bottom: 0;">
+                        <button type="button" class="btn" id="btn_save_repo_url"
+                            style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem;"
+                            onclick="saveRepoUrl()">Enregistrer l'URL</button>
+                    </div>
+                    <div id="repo_url_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;"></div>
                 </div>
 
                 <!-- Factory Reset -->
@@ -1092,6 +1106,11 @@
 
                     if (document.getElementById('auto_update_toggle') && data.auto_update !== undefined) {
                         document.getElementById('auto_update_toggle').checked = data.auto_update;
+                    }
+
+                    const repoUrlInput = document.getElementById('repo_url');
+                    if (repoUrlInput && data.update_url !== undefined && !repoUrlInput.matches(':focus')) {
+                        repoUrlInput.value = data.update_url;
                     }
 
                     // Update renameEnabled state
@@ -1366,7 +1385,7 @@
                         }
 
                         html += `
-                        <div class="info-group" style="align-items: center; gap: 0.5rem; padding: 0.8rem 0;">
+                        <div class="info-group" style="align-items: center; gap: 0.5rem; /*padding: 0.8rem 0;*/">
                             <div style="flex: 1; min-width: 0;">
                                 <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                                     <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: ${window.renameEnabled ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
@@ -1914,6 +1933,73 @@
                 return;
             }
             installFirmware(url);
+        }
+
+        function saveRepoUrl() {
+            const urlInput = document.getElementById('repo_url');
+            const statusEl = document.getElementById('repo_url_status');
+            const btn = document.getElementById('btn_save_repo_url');
+            const url = urlInput.value.trim();
+
+            if (!url) {
+                showMessage('repo_url_status', 'Veuillez saisir une URL !', 'error');
+                return;
+            }
+
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                showMessage('repo_url_status', 'L\'URL doit commencer par http:// ou https://', 'error');
+                return;
+            }
+
+            try {
+                new URL(url);
+            } catch (e) {
+                showMessage('repo_url_status', 'Format d\'URL invalide !', 'error');
+                return;
+            }
+
+            if (!url.toLowerCase().endsWith('.json')) {
+                showMessage('repo_url_status', 'L\'URL doit se terminer par un fichier .json', 'error');
+                return;
+            }
+
+            showMessage('repo_url_status', SPINNER_SVG + ' Validation de l\'URL et du JSON en cours...', 'success');
+            btn.disabled = true;
+
+            fetch(url, { cache: 'no-cache' })
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    return res.json();
+                })
+                .then(json => {
+                    if (!json || (json.ChipType === undefined && json.stable === undefined)) {
+                        throw new Error('Structure JSON de catalogue invalide (clés ChipType ou stable manquantes).');
+                    }
+
+                    return fetch('/api/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            update_url: url,
+                            apply_only: true
+                        })
+                    });
+                })
+                .then(res => {
+                    if (!res || !res.ok) {
+                        throw new Error('Erreur lors de la sauvegarde sur l\'appareil.');
+                    }
+                    showMessage('repo_url_status', 'URL du dépôt validée et enregistrée avec succès !', 'success');
+                    fetchStatus();
+                })
+                .catch(err => {
+                    showMessage('repo_url_status', `Validation échouée : ${err.message || err}`, 'error');
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                });
         }
 
         // Auto update toggle immediate saving (no modal)
