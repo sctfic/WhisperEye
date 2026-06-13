@@ -28,7 +28,7 @@ def update_chip_catalog(chip_id, chip_name, json_filename, prefix):
             maj, min_val, pat, bld = map(int, m_unstable.groups())
             sort_key = maj * 100000000 + min_val * 1000000 + pat * 100000 + bld
             unstable_entries.append({
-                "version": f"{maj}.{min_val}.{pat}-{bld}",
+                "version": f"{maj}.{min_val}.{pat}-{bld:04d}",
                 "url": url,
                 "sortKey": sort_key,
                 "filename": filename

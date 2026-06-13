@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'boards/board_default/firmware-s3-*.bin'
+      - 'boards/board_default/firmware-c6-*.bin'
 
 permissions:
   contents: write
@@ -34,9 +35,9 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
           if [ -n "$(git status --porcelain)" ]; then
-            git add boards/board_default/firmware.json
+            git add boards/board_default/firmware-s3.json boards/board_default/firmware-c6.json
             git add -u boards/board_default/
-            git commit -m "chore(ota): auto-update firmware.json catalog and clean old binaries"
+            git commit -m "chore(ota): auto-update firmware catalogs and clean old binaries"
             git push origin HEAD:${{ github.ref }}
           else
             echo "No changes to commit"
