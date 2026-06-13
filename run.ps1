@@ -153,86 +153,6 @@ function Increment-RecoveryVersion {
 }
 
 
-function Update-FirmwareJson {
-    param([string]$NewVersion)
-    $JsonPath = "boards\board_default\firmware.json"
-    if (-not (Test-Path $JsonPath)) {
-        Write-Host "    [!] Warning: firmware.json not found at $JsonPath" -ForegroundColor Yellow
-        return
-    }
-
-    $JsonContent = Get-Content $JsonPath -Raw | ConvertFrom-Json
-
-    foreach ($board in $JsonContent) {
-        $chipType = $board.ChipType
-
-        # Only update the ESP32-S3 entries automatically (the chip we just compiled)
-        if ($chipType -ne "ESP32-S3") { continue }
-
-        $prefix = "firmware-s3-"
-        $pattern = "$prefix*.bin"
-        $files = Get-ChildItem "boards\board_default\$pattern" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
-        if (-not $files) { continue }
-
-        $stableEntries = @()
-        $unstableEntries = @()
-
-        foreach ($file in $files) {
-            $url = "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/$file"
-
-            if ($file -match "$prefix(\d+)\.(\d+)\.(\d+)-(\d+)\.bin") {
-                # Unstable build: odd patch with build suffix
-                $verStr = "{0}.{1}.{2}-{3}" -f $Matches[1], $Matches[2], $Matches[3], $Matches[4]
-                $sortKey = [int]$Matches[1] * 100000000 + [int]$Matches[2] * 1000000 + [int]$Matches[3] * 100000 + [int]$Matches[4]
-                $unstableEntries += [PSCustomObject]@{ version = $verStr; url = $url; sortKey = $sortKey; fileName = $file }
-            } elseif ($file -match "$prefix(\d+)\.(\d+)\.(\d+)\.bin") {
-                # Stable release: even patch, no build suffix
-                $verStr = "{0}.{1}.{2}" -f $Matches[1], $Matches[2], $Matches[3]
-                $sortKey = [int]$Matches[1] * 100000000 + [int]$Matches[2] * 1000000 + [int]$Matches[3] * 100000
-                $stableEntries += [PSCustomObject]@{ version = $verStr; url = $url; sortKey = $sortKey }
-            }
-        }
-
-        # Sort descending, keep only the latest stable entry
-        $sortedStableAll = $stableEntries | Sort-Object sortKey -Descending
-        
-        $sortedStable = $sortedStableAll | Select-Object -First 1 | ForEach-Object {
-            [PSCustomObject]@{ version = $_.version; url = $_.url }
-        }
-        
-        $sortedPreviousStable = $sortedStableAll | Select-Object -Skip 1 -First 3 | ForEach-Object {
-            [PSCustomObject]@{ version = $_.version; url = $_.url }
-        }
-
-        $latestStableSortKey = if ($sortedStableAll) { $sortedStableAll[0].sortKey } else { 0 }
-
-        # Sort descending by sortKey, keep only 2 most recent unstable builds
-        $sortedUnstable = $unstableEntries | Sort-Object sortKey -Descending | Select-Object -First 2 | ForEach-Object {
-            [PSCustomObject]@{ version = $_.version; url = $_.url }
-        }
-
-        # Automatically delete unstable version files that do not appear in the JSON
-        $keptUnstableVersions = $sortedUnstable | Select-Object -ExpandProperty version
-        foreach ($unstable in $unstableEntries) {
-            if ($unstable.version -notin $keptUnstableVersions) {
-                $filePathToDelete = Join-Path "boards\board_default" $unstable.fileName
-                if (Test-Path $filePathToDelete) {
-                    Write-Host "    [-] Removing old unstable binary: $filePathToDelete" -ForegroundColor Yellow
-                    Remove-Item $filePathToDelete -Force
-                }
-            }
-        }
-
-        $board.stable   = if ($sortedStable)   { $sortedStable[0]   } else { $null }
-        $board.previous_stable = if ($sortedPreviousStable) { @($sortedPreviousStable) } else { @() }
-        $board.unstable  = if ($sortedUnstable) { @($sortedUnstable) } else { @() }
-    }
-
-    $updatedJson = $JsonContent | ConvertTo-Json -Depth 4
-    Set-Content $JsonPath $updatedJson
-    Write-Host "    [+] boards/board_default/firmware.json successfully updated!" -ForegroundColor Green
-}
-
 
 # 2. Setup targets
 if ($Target -eq "nvs") {
@@ -324,7 +244,7 @@ if ($Target -eq "all") {
         Write-Host "[-] Failed to save ESP32-S3 binary image!" -ForegroundColor Red
         exit 1
     }
-    Update-FirmwareJson -NewVersion $NewVersion
+
 
     Write-Host "[+] All target packages compiled successfully. Ready to flash." -ForegroundColor Green
 
@@ -424,7 +344,7 @@ if ($Package -eq "production_app") {
         Write-Host "[-] Failed to save ESP32-S3 binary image!" -ForegroundColor Red
         exit 1
     }
-    Update-FirmwareJson -NewVersion $NewVersion
+
 } elseif ($Package -eq "recovery_boot") {
     $RecoveryBinPath = "recovery_boot\recovery_boot.bin"
     Write-Host "[*] Exporting recovery binary image to $RecoveryBinPath..." -ForegroundColor Cyan

@@ -1,0 +1,43 @@
+name: Generate Firmware JSON Catalog
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'boards/board_default/firmware-s3-*.bin'
+
+permissions:
+  contents: write
+
+jobs:
+  update-catalog:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Run Catalog Update Script
+        run: python .github/scripts/update_catalog.py
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if [ -n "$(git status --porcelain)" ]; then
+            git add boards/board_default/firmware.json
+            git add -u boards/board_default/
+            git commit -m "chore(ota): auto-update firmware.json catalog and clean old binaries"
+            git push origin HEAD:${{ github.ref }}
+          else
+            echo "No changes to commit"
+          fi
