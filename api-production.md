@@ -65,7 +65,7 @@ Ce document détaille l'ensemble des points d'accès (endpoints) HTTP exposés p
   "mesh_nodes_count": 2,
   "mesh_channel": 11,
   "mesh_id": "WhisperMesh",
-  "mesh_pmk": "WhiperEyes@Mesh!",
+  "mesh_pmk": "",
   "author": {
     "email": "alban.lopez+whisperEye@gmail.com",
     "name": "LOPEZ Alban",
@@ -246,7 +246,7 @@ Ce document détaille l'ensemble des points d'accès (endpoints) HTTP exposés p
   "mesh_enabled": true,
   "mesh_channel": 11,
   "mesh_id": "WhisperMesh",
-  "mesh_pmk": "WhiperEyes@Mesh!"
+  "mesh_pmk": ""
 }
 ```
 *Note : Tous les champs du payload JSON sont optionnels.*
