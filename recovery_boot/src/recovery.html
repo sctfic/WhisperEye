@@ -887,7 +887,7 @@
         }
 
         function fetchStatus() {
-            fetch('/api/status')
+            return fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
                     window.latestStatusData = data;
@@ -1298,6 +1298,9 @@
                                     if (status.status && status.status.includes("terminée")) {
                                         clearInterval(pollInterval);
                                         showMessage('update_status', 'Mise à jour réussie ! Redémarrage sur le nouveau firmware de production...', 'success');
+                                        setTimeout(() => {
+                                            window.location.reload();
+                                        }, 3000);
                                     } else if (status.status && status.status.includes("Erreur")) {
                                         clearInterval(pollInterval);
                                         showMessage('update_status', 'Erreur lors du téléchargement : ' + status.status, 'error');
@@ -1402,8 +1405,9 @@
         });
 
         // Initial fetch
-        fetchStatus();
-        scanSsids();
+        fetchStatus().finally(() => {
+            scanSsids();
+        });
     </script>
 </body>
 

@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.19-0012";
+const FW_VERSION: &str = "1.0.19-0013";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -230,9 +230,6 @@ fn main() -> Result<()> {
 
     // Initialize Wi-Fi (consuming only the modem, leaving other pins untouched)
     let mut wifi_manager = WifiManager::new(modem, sys_loop.clone(), nvs_default)?;
-    
-    // Perform initial scan before any connection attempts
-    let _ = wifi_manager.perform_initial_scan();
     
     let (mesh_enabled, mesh_channel, mesh_id, mesh_pmk) = {
         let storage = nvs_storage.lock().unwrap();
@@ -1614,6 +1611,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 

@@ -20,28 +20,6 @@ impl WifiManager {
         Ok(Self { wifi, scan_cache: Vec::new() })
     }
 
-    pub fn perform_initial_scan(&mut self) -> Result<()> {
-        info!("Performing boot-time active Wi-Fi scan...");
-        let config = Configuration::Client(ClientConfiguration::default());
-        let _ = self.wifi.set_configuration(&config);
-        let _ = self.wifi.start();
-        match self.wifi.scan() {
-            Ok(list) => {
-                let mut ssids: Vec<String> = list.into_iter()
-                    .map(|n| n.ssid.to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                ssids.sort();
-                ssids.dedup();
-                info!("Boot-time scan successful: found {} networks.", ssids.len());
-                self.scan_cache = ssids;
-            }
-            Err(e) => {
-                warn!("Boot-time active Wi-Fi scan failed: {:?}", e);
-            }
-        }
-        Ok(())
-    }
 
     pub fn start_sta(&mut self, ssid: &str, psk: &str) -> Result<bool> {
         info!("Attempting STA connection to SSID: '{}'", ssid);

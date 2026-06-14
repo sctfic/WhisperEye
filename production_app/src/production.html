@@ -1142,7 +1142,7 @@
         }
 
         function fetchStatus() {
-            fetch('/api/status')
+            return fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
                     window.latestStatusData = data;
@@ -1472,9 +1472,9 @@
         };
 
         function fetchDevices() {
-            if (!document.getElementById('devices-tab').classList.contains('active')) return;
+            if (!document.getElementById('devices-tab').classList.contains('active')) return Promise.resolve();
 
-            fetch('/api/peripherals')
+            return fetch('/api/peripherals')
                 .then(res => res.json())
                 .then(data => {
                     window.currentDevices = data;
@@ -2307,9 +2307,10 @@
         }
 
         // Initial setup
-        fetchDevices();
-        fetchStatus();
-        scanSsids();
+        Promise.all([fetchDevices(), fetchStatus()])
+            .finally(() => {
+                scanSsids();
+            });
     </script>
 </body>
 

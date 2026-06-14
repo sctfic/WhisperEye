@@ -34,7 +34,7 @@ struct ConfigPayload {
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-recovery-0061";
+const FW_VERSION: &str = "1.0.0-recovery-0062";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -93,10 +93,6 @@ fn main() -> Result<()> {
     
     // Initialize Wi-Fi
     let mut wifi_manager = WifiManager::new(peripherals, sys_loop.clone(), nvs_default)?;
-    
-    // Perform initial scan before any connection attempts
-    let _ = wifi_manager.perform_initial_scan();
-    
     let mut connected = false;
     let mut chosen_ssid = String::new();
 
@@ -894,6 +890,7 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
 
 
 
