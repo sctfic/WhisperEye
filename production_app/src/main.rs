@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.16";
+const FW_VERSION: &str = "1.0.19-0008";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -53,6 +53,10 @@ struct ConfigPayload {
     ntp_server: Option<String>,
     metrics_url: Option<String>,
     rename_enabled: Option<bool>,
+    mesh_enabled: Option<bool>,
+    mesh_channel: Option<i32>,
+    mesh_id: Option<String>,
+    mesh_pmk: Option<String>,
 }
 
 fn get_mac_address() -> String {
@@ -88,6 +92,71 @@ impl log::Log for CustomLogger {
 }
 
 static LOGGER: CustomLogger = CustomLogger;
+
+struct MeshState {
+    pub enabled: bool,
+    pub is_root: bool,
+    pub distance: i32,
+    pub nodes: std::collections::HashMap<String, std::time::SystemTime>,
+}
+
+fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>) -> Result<i32> {
+    info!("Syncing with Mesh parent at http://192.168.71.1/api/mesh/sync...");
+    let config = esp_idf_svc::http::client::Configuration {
+        buffer_size: Some(1024),
+        crt_bundle_attach: None,
+        ..Default::default()
+    };
+    let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
+    let url = format!("http://192.168.71.1/api/mesh/sync?mac={}", get_mac_address());
+    connection.initiate_request(esp_idf_svc::http::Method::Get, &url, &[])?;
+    connection.initiate_response()?;
+    
+    let status = connection.status();
+    if status != 200 {
+        anyhow::bail!("Parent sync returned HTTP status {}", status);
+    }
+    
+    let mut body = Vec::new();
+    let mut chunk = [0u8; 512];
+    loop {
+        match connection.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => body.extend_from_slice(&chunk[..n]),
+            Err(e) => anyhow::bail!("Failed to read response: {:?}", e),
+        }
+    }
+    
+    #[derive(serde::Deserialize)]
+    struct SyncResponse {
+        wifi_ssid: String,
+        wifi_psk: String,
+        ntp_server: String,
+        distance: i32,
+    }
+    
+    let res: SyncResponse = serde_json::from_slice(&body)?;
+    
+    // Save to NVS
+    {
+        let mut storage = nvs.lock().unwrap();
+        if !res.wifi_ssid.is_empty() {
+            let known = storage.get_known_networks().unwrap_or_default();
+            if !known.contains_key(&res.wifi_ssid) {
+                info!("Sync: Saving wifi SSID '{}' to NVS (newly discovered)", res.wifi_ssid);
+                storage.set_default_network(&res.wifi_ssid, &res.wifi_psk)?;
+            } else {
+                info!("Sync: Wifi SSID '{}' is already known, skipping save", res.wifi_ssid);
+            }
+        }
+        if !res.ntp_server.is_empty() {
+            info!("Sync: Saving ntpServer '{}' to NVS", res.ntp_server);
+            storage.set_str("ntpServer", &res.ntp_server)?;
+        }
+    }
+    
+    Ok(res.distance)
+}
 
 fn main() -> Result<()> {
     log::set_logger(&LOGGER)
@@ -165,61 +234,163 @@ fn main() -> Result<()> {
     // Perform initial scan before any connection attempts
     let _ = wifi_manager.perform_initial_scan();
     
+    let (mesh_enabled, mesh_channel, mesh_id, mesh_pmk) = {
+        let storage = nvs_storage.lock().unwrap();
+        let enabled = storage.get_i32("meshEnabled").unwrap_or(Some(1)).unwrap_or(1) == 1;
+        let channel = storage.get_i32("meshChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
+        let id = storage.get_str("meshId").unwrap_or(Some("Whiper".to_string())).unwrap_or_else(|| "Whiper".to_string());
+        let pmk = storage.get_str("meshPmk").unwrap_or(Some("WhiperEyes@Mesh!".to_string())).unwrap_or_else(|| "WhiperEyes@Mesh!".to_string());
+        (enabled, channel, id, pmk)
+    };
+
     let mut connected = false;
     let mut chosen_ssid = String::new();
+    let mut is_root = false;
+    let mut distance = -1;
 
     let known_networks = {
         let storage = nvs_storage.lock().unwrap();
         storage.get_known_networks().unwrap_or_default()
     };
 
-    if !known_networks.is_empty() {
-        // Find default network first
-        let default_net = known_networks.iter()
-            .find(|(_, entry)| entry.default.unwrap_or(false))
-            .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+    if mesh_enabled {
+        info!("Mesh is enabled. Initiating Mesh boot sequence...");
+        if !known_networks.is_empty() {
+            let default_net = known_networks.iter()
+                .find(|(_, entry)| entry.default.unwrap_or(false))
+                .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
 
-        if let Some((ref ssid, ref psk)) = default_net {
-            info!("Trying default network: {}", ssid);
-            if wifi_manager.start_sta(ssid, psk).unwrap_or(false) {
-                connected = true;
-                chosen_ssid = ssid.clone();
+            if let Some((ref ssid, ref psk)) = default_net {
+                info!("Trying default network in Mesh AP+STA mode: {}", ssid);
+                if wifi_manager.start_ap_sta(ssid, psk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
+                    connected = true;
+                    chosen_ssid = ssid.clone();
+                    is_root = true;
+                    distance = 0;
+                }
+            }
+
+            if !connected {
+                info!("Default network failed or not set in Mesh mode. Trying other known networks...");
+                for (ssid, entry) in &known_networks {
+                    if let Some((ref def_ssid, _)) = default_net {
+                        if ssid == def_ssid { continue; }
+                    }
+                    info!("Trying known network in Mesh AP+STA mode: {}", ssid);
+                    if wifi_manager.start_ap_sta(ssid, &entry.psk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
+                        connected = true;
+                        chosen_ssid = ssid.clone();
+                        is_root = true;
+                        distance = 0;
+                        break;
+                    }
+                }
             }
         }
 
         if !connected {
-            info!("Default network failed or not set. Trying other known networks...");
-            for (ssid, entry) in &known_networks {
-                if let Some((ref def_ssid, _)) = default_net {
-                    if ssid == def_ssid { continue; }
+            info!("Failed to connect to primary Wi-Fi. Scanning for parent Mesh SSID '{}'...", mesh_id);
+            let found_mesh_parent = match wifi_manager.wifi.scan() {
+                Ok(ap_list) => {
+                    ap_list.into_iter().any(|ap| ap.ssid.as_str() == mesh_id)
                 }
-                info!("Trying known network: {}", ssid);
-                if wifi_manager.start_sta(ssid, &entry.psk).unwrap_or(false) {
-                    connected = true;
-                    chosen_ssid = ssid.clone();
-                    break;
+                Err(_) => {
+                    wifi_manager.scan_cache.iter().any(|s| s == &mesh_id)
                 }
+            };
+
+            if found_mesh_parent {
+                info!("Found parent Mesh network '{}'. Attempting connection and sync...", mesh_id);
+                if wifi_manager.start_ap_sta(&mesh_id, &mesh_pmk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
+                    info!("Connected to Mesh parent. Synchronizing configuration...");
+                    match perform_mesh_sync(&nvs_storage) {
+                        Ok(parent_distance) => {
+                            connected = true;
+                            chosen_ssid = mesh_id.clone();
+                            is_root = false;
+                            distance = parent_distance + 1;
+                            info!("Mesh sync successful! Distance to root: {}", distance);
+                        }
+                        Err(e) => {
+                            warn!("Mesh synchronization failed: {:?}", e);
+                        }
+                    }
+                }
+            } else {
+                info!("No parent Mesh network '{}' detected.", mesh_id);
             }
         }
 
-        if connected {
-            if let Ok(mut storage) = nvs_storage.lock() {
-                let _ = storage.set_default_network_by_ssid(&chosen_ssid);
+        if !connected {
+            warn!("Could not connect to router or parent Mesh. Starting fallback local Mesh AP...");
+            let _ = wifi_manager.start_ap_sta("", "", &mesh_id, &mesh_pmk, mesh_channel);
+            is_root = false;
+            distance = -1;
+            common::led::set_led_color(25, 25, 0); // Jaune en AP local
+        } else {
+            if is_root {
+                if let Ok(mut storage) = nvs_storage.lock() {
+                    let _ = storage.set_default_network_by_ssid(&chosen_ssid);
+                }
             }
-            // Allumer la LED en Vert à 10% (R=0, G=25, B=0) si connecté
-            common::led::set_led_color(0, 25, 0);
+            common::led::set_led_color(0, 25, 0); // Vert car connecté
         }
 
     } else {
-        info!("No known networks. Staying in AP mode.");
-    }
-    
-    if !connected {
-        warn!("All STA Connections failed or no known networks. Falling back to Access Point captive mode...");
-        wifi_manager.start_ap()?;
+        info!("Mesh is disabled. Running standard Wi-Fi boot sequence...");
+        if !known_networks.is_empty() {
+            let default_net = known_networks.iter()
+                .find(|(_, entry)| entry.default.unwrap_or(false))
+                .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
+
+            if let Some((ref ssid, ref psk)) = default_net {
+                info!("Trying default network: {}", ssid);
+                if wifi_manager.start_sta(ssid, psk).unwrap_or(false) {
+                    connected = true;
+                    chosen_ssid = ssid.clone();
+                }
+            }
+
+            if !connected {
+                info!("Default network failed or not set. Trying other known networks...");
+                for (ssid, entry) in &known_networks {
+                    if let Some((ref def_ssid, _)) = default_net {
+                        if ssid == def_ssid { continue; }
+                    }
+                    info!("Trying known network: {}", ssid);
+                    if wifi_manager.start_sta(ssid, &entry.psk).unwrap_or(false) {
+                        connected = true;
+                        chosen_ssid = ssid.clone();
+                        break;
+                    }
+                }
+            }
+
+            if connected {
+                if let Ok(mut storage) = nvs_storage.lock() {
+                    let _ = storage.set_default_network_by_ssid(&chosen_ssid);
+                }
+                common::led::set_led_color(0, 25, 0);
+            }
+        } else {
+            info!("No known networks. Staying in AP mode.");
+        }
+
+        if !connected {
+            warn!("All STA Connections failed or no known networks. Falling back to Access Point captive mode...");
+            wifi_manager.start_ap()?;
+            common::led::set_led_color(25, 25, 0); // Jaune en AP
+        }
     }
 
     let wifi_manager = Arc::new(Mutex::new(wifi_manager));
+
+    let mesh_state = Arc::new(Mutex::new(MeshState {
+        enabled: mesh_enabled,
+        is_root,
+        distance,
+        nodes: std::collections::HashMap::new(),
+    }));
 
     // Initialize SNTP if connected to STA
     let _sntp = if connected {
@@ -281,36 +452,101 @@ fn main() -> Result<()> {
 
     // Captive Portal HTTP Redirects for Mobile Auto-Popup (iOS, Android, Windows)
     server.fn_handler("/generate_204", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/hotspot-detect.html", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/ncsi.txt", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/connecttest.txt", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?;
+        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
         response.write(b"Redirecting to captive portal...")?;
+        Ok(())
+    })?;
+
+    // GET /api/mesh/sync
+    let nvs_sync = Arc::clone(&nvs_storage);
+    let mesh_state_sync = Arc::clone(&mesh_state);
+    server.fn_handler("/api/mesh/sync", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let uri = req.uri();
+        let mut mac = if let Some(pos) = uri.find("mac=") {
+            let raw_mac = &uri[pos + 4..];
+            raw_mac.split('&').next().unwrap_or("").to_string()
+        } else {
+            "unknown".to_string()
+        };
+        mac = mac.replace("%3A", ":").replace("%3a", ":");
+        
+        info!("Received Mesh sync request from MAC: {}", mac);
+        
+        if mac != "unknown" {
+            let mut state = mesh_state_sync.lock().unwrap();
+            state.nodes.insert(mac, std::time::SystemTime::now());
+        }
+        
+        let (wifi_ssid, wifi_psk) = {
+            let storage = nvs_sync.lock().unwrap();
+            let known = storage.get_known_networks().unwrap_or_default();
+            known.iter()
+                .find(|(_, entry)| entry.default.unwrap_or(false))
+                .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()))
+                .unwrap_or_default()
+        };
+        let ntp_server = {
+            let storage = nvs_sync.lock().unwrap();
+            storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
+        };
+        let distance = {
+            let state = mesh_state_sync.lock().unwrap();
+            state.distance
+        };
+        
+        let json = serde_json::json!({
+            "wifi_ssid": wifi_ssid,
+            "wifi_psk": wifi_psk,
+            "ntp_server": ntp_server,
+            "distance": distance,
+        });
+        
+        let response_data = serde_json::to_string(&json)?;
+        let mut response = req.into_response(200, Some("OK"), &[
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*")
+        ])?;
+        response.write(response_data.as_bytes())?;
         Ok(())
     })?;
 
     // GET /api/status
     let nvs_clone = Arc::clone(&nvs_storage);
     let wifi_clone = Arc::clone(&wifi_manager);
+    let mesh_state_clone = Arc::clone(&mesh_state);
     server.fn_handler("/api/status", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let storage = nvs_clone.lock().unwrap();
         let wifi = wifi_clone.lock().unwrap();
         
+        let (m_enabled, m_root, m_distance, m_nodes_count) = {
+            let state = mesh_state_clone.lock().unwrap();
+            (state.enabled, state.is_root, state.distance, state.nodes.len())
+        };
+        let (m_channel, m_id, m_pmk) = {
+            let channel = storage.get_i32("meshChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
+            let id = storage.get_str("meshId").unwrap_or(Some("Whiper".to_string())).unwrap_or_else(|| "Whiper".to_string());
+            let pmk = storage.get_str("meshPmk").unwrap_or(Some("WhiperEyes@Mesh!".to_string())).unwrap_or_else(|| "WhiperEyes@Mesh!".to_string());
+            (channel, id, pmk)
+        };
+
         let (active_mode, wifi_ssid) = match wifi.wifi.get_configuration() {
             Ok(esp_idf_svc::wifi::Configuration::Client(client_cfg)) => {
                 ("Station", client_cfg.ssid.as_str().to_string())
@@ -326,7 +562,7 @@ fn main() -> Result<()> {
             }
         };
 
-        let ip_info = if active_mode == "Station" {
+        let ip_info = if active_mode == "Station" || active_mode == "Mixed" {
             wifi.wifi.wifi().sta_netif().get_ip_info().ok()
         } else {
             wifi.wifi.wifi().ap_netif().get_ip_info().ok()
@@ -334,7 +570,7 @@ fn main() -> Result<()> {
 
         let ip_addr = ip_info.map(|i| i.ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
         let gateway = ip_info.map(|i| i.subnet.gateway.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
-        let rssi = if active_mode == "Station" {
+        let rssi = if active_mode == "Station" || active_mode == "Mixed" {
             wifi.wifi.wifi().get_ap_info().ok().map(|i| i.signal_strength)
         } else {
             None
@@ -394,6 +630,13 @@ fn main() -> Result<()> {
             "partial_totp": partial_totp,
             "ext_name": ext_name,
             "ext_desc": ext_desc,
+            "mesh_enabled": m_enabled,
+            "mesh_root": m_root,
+            "mesh_distance": m_distance,
+            "mesh_nodes_count": m_nodes_count,
+            "mesh_channel": m_channel,
+            "mesh_id": m_id,
+            "mesh_pmk": m_pmk,
             "author": {
                 "email": AUTHOR_EMAIL,
                 "name": AUTHOR_NAME,
@@ -893,10 +1136,13 @@ fn main() -> Result<()> {
                 return Ok(());
             }
         };
-        
+
+        // apply_only=true : sauvegarde sans redémarrer (utilisé par le toggle seul)
+        let apply_only = payload.apply_only.unwrap_or(false);
         let mut wifi_success = true;
         let mut totp_success = true;
         let mut totp_err_msg = "";
+        let mut should_reboot_production = false;
 
         {
             let mut storage = nvs_clone.lock().unwrap();
@@ -962,6 +1208,48 @@ fn main() -> Result<()> {
                     let new_val = if rename_en { 1 } else { 0 };
                     info!("Saving renameEnabled to NVS: {}", new_val);
                     storage.set_i32("renameEnabled", new_val)?;
+                }
+                if let Some(mesh_en) = payload.mesh_enabled {
+                    let new_val = if mesh_en { 1 } else { 0 };
+                    let current_val = storage.get_i32("meshEnabled")?.unwrap_or(1);
+                    if new_val != current_val {
+                        info!("Saving meshEnabled to NVS: {} (apply_only={})", new_val, apply_only);
+                        storage.set_i32("meshEnabled", new_val)?;
+                        // Redémarrage uniquement si apply_only=false (bouton complet)
+                        if !apply_only {
+                            should_reboot_production = true;
+                        }
+                    }
+                }
+                if let Some(mesh_chan) = payload.mesh_channel {
+                    let current_chan = storage.get_i32("meshChannel")?.unwrap_or(11);
+                    if mesh_chan != current_chan {
+                        info!("Saving meshChannel to NVS: {}", mesh_chan);
+                        storage.set_i32("meshChannel", mesh_chan)?;
+                        if !apply_only {
+                            should_reboot_production = true;
+                        }
+                    }
+                }
+                if let Some(ref mesh_id) = payload.mesh_id {
+                    let current_id = storage.get_str("meshId")?.unwrap_or_else(|| "Whiper".to_string());
+                    if mesh_id != &current_id {
+                        info!("Saving meshId to NVS: {}", mesh_id);
+                        storage.set_str("meshId", mesh_id)?;
+                        if !apply_only {
+                            should_reboot_production = true;
+                        }
+                    }
+                }
+                if let Some(ref mesh_pmk) = payload.mesh_pmk {
+                    let current_pmk = storage.get_str("meshPmk")?.unwrap_or_else(|| "WhiperEyes@Mesh!".to_string());
+                    if mesh_pmk != &current_pmk {
+                        info!("Saving meshPmk to NVS");
+                        storage.set_str("meshPmk", mesh_pmk)?;
+                        if !apply_only {
+                            should_reboot_production = true;
+                        }
+                    }
                 }
             }
         }
@@ -1141,7 +1429,6 @@ fn main() -> Result<()> {
             }
             
             // Restart condition: different or new update URL is set, and NOT apply_only
-            let apply_only = payload.apply_only.unwrap_or(false);
             if apply_only {
                 false
             } else if let Some(ref update_url) = payload.update_url {
@@ -1167,6 +1454,17 @@ fn main() -> Result<()> {
                 .spawn(|| {
                     thread::sleep(std::time::Duration::from_secs(2));
                     set_boot_to_recovery();
+                    unsafe {
+                        esp_idf_sys::esp_restart();
+                    }
+                });
+        } else if should_reboot_production {
+            info!("Configuration du Mesh modifiée. Redémarrage sur Production dans 2 secondes...");
+            let _ = thread::Builder::new()
+                .name("production_restart_worker".to_string())
+                .stack_size(4096)
+                .spawn(|| {
+                    thread::sleep(std::time::Duration::from_secs(2));
                     unsafe {
                         esp_idf_sys::esp_restart();
                     }
@@ -1264,16 +1562,31 @@ fn get_formatted_time() -> String {
     let now = SystemTime::now();
     let duration = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     let total_secs = duration.as_secs();
-    
+
     if total_secs < 86400 {
-        return "2026-05-27T23:12:00Z".to_string(); // Mock current real date-time for telemetry elegance
+        // NTP pas encore synchronisé : retourner epoch pour que l'UI signale "non synchronisé"
+        return "1970-01-01T00:00:00Z".to_string();
     }
-    
-    let secs = total_secs % 60;
-    let mins = (total_secs / 60) % 60;
-    let hours = (total_secs / 3600) % 24;
-    
-    format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
+
+    // Calcul de l'heure UTC
+    let secs   = total_secs % 60;
+    let mins   = (total_secs / 60) % 60;
+    let hours  = (total_secs / 3600) % 24;
+
+    // Calcul de la date (algorithme civil de Howard Hinnant)
+    let days = (total_secs / 86400) as i64; // jours depuis 1970-01-01
+    let z  = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y   = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp  = (5 * doy + 2) / 153;
+    let d   = doy - (153 * mp + 2) / 5 + 1;
+    let m   = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y   = if m <= 2 { y + 1 } else { y };
+
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, hours, mins, secs)
 }
 
 pub fn set_boot_to_recovery() {
@@ -1295,6 +1608,15 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

@@ -62,6 +62,18 @@ impl NvsStorage {
         if self.get_i32("renameEnabled")?.is_none() {
             self.set_i32("renameEnabled", 1)?;
         }
+        if self.get_i32("meshEnabled")?.is_none() {
+            self.set_i32("meshEnabled", 1)?;
+        }
+        if self.get_i32("meshChannel")?.is_none() {
+            self.set_i32("meshChannel", 11)?;
+        }
+        if self.get_str("meshId")?.is_none() {
+            self.set_str("meshId", "Whiper")?;
+        }
+        if self.get_str("meshPmk")?.is_none() {
+            self.set_str("meshPmk", "WhiperEyes@Mesh!")?;
+        }
         Ok(())
     }
 
@@ -159,6 +171,8 @@ impl NvsStorage {
             "extName",
             "extDesc",
             "metricsUrl",
+            "meshId",
+            "meshPmk",
         ];
         for key in keys_str {
             match self.get_str(key) {
@@ -179,7 +193,7 @@ impl NvsStorage {
             }
         }
         
-        let keys_i32 = &["otaRetry", "autoUpdate", "renameEnabled"];
+        let keys_i32 = &["otaRetry", "autoUpdate", "renameEnabled", "meshEnabled", "meshChannel"];
         for key in keys_i32 {
             match self.get_i32(key) {
                 Ok(Some(val)) => info!("  {} : {}", key, val),

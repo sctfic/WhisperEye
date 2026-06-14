@@ -103,6 +103,52 @@ impl WifiManager {
 
         Ok(())
     }
+
+    pub fn start_ap_sta(&mut self, ssid_sta: &str, psk_sta: &str, ssid_ap: &str, psk_ap: &str, channel_ap: u8) -> Result<bool> {
+        info!("Attempting Mixed mode: STA connect to '{}', AP start '{}' on channel {}", ssid_sta, ssid_ap, channel_ap);
+        
+        let config = Configuration::Mixed(
+            ClientConfiguration {
+                ssid: ssid_sta.try_into().unwrap(),
+                password: psk_sta.try_into().unwrap(),
+                ..Default::default()
+            },
+            AccessPointConfiguration {
+                ssid: ssid_ap.try_into().unwrap(),
+                ssid_hidden: false,
+                channel: channel_ap,
+                auth_method: if psk_ap.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
+                password: psk_ap.try_into().unwrap(),
+                ..Default::default()
+            }
+        );
+
+        self.wifi.set_configuration(&config)?;
+        self.wifi.start()?;
+        
+        info!("Connecting to Wi-Fi STA in Mixed mode...");
+        match self.wifi.connect() {
+            Ok(_) => {
+                info!("Waiting for DHCP lease in Mixed mode...");
+                match self.wifi.wait_netif_up() {
+                    Ok(_) => {
+                        let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
+                        info!("STA Connection successful in Mixed mode! IP: {:?}", ip_info.ip);
+                        return Ok(true);
+                    }
+                    Err(e) => {
+                        warn!("DHCP lease failed in Mixed mode: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Wi-Fi connection failed in Mixed mode: {:?}", e);
+            }
+        }
+        
+        // AP remains active even if STA connection fails
+        Ok(false)
+    }
 }
 
 fn run_captive_dns_server() -> Result<()> {
