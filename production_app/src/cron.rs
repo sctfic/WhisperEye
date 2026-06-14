@@ -2,10 +2,12 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
 use std::time::{SystemTime, Duration};
-use log::{info, warn};
+use log::{info, warn, error};
 use anyhow::{Result, Context};
 use common::nvs_storage::NvsStorage;
 use crate::sensors::{read_sensors, SensorReadings};
+use crate::wifi::WifiManager;
+use crate::MeshState;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricEntry {
@@ -24,37 +26,58 @@ pub struct CronWorker {
     rx: Receiver<CronMessage>,
     history: Vec<MetricEntry>,
     nvs: Arc<Mutex<NvsStorage>>,
+    wifi: Arc<Mutex<WifiManager>>,
+    mesh_state: Arc<Mutex<MeshState>>,
+    last_metrics_run: Option<std::time::Instant>,
+    last_telemetry_run: Option<std::time::Instant>,
+    last_update_check_run: Option<std::time::Instant>,
 }
 
 impl CronWorker {
-    pub fn new(rx: Receiver<CronMessage>, nvs: Arc<Mutex<NvsStorage>>) -> Self {
+    pub fn new(
+        rx: Receiver<CronMessage>,
+        nvs: Arc<Mutex<NvsStorage>>,
+        wifi: Arc<Mutex<WifiManager>>,
+        mesh_state: Arc<Mutex<MeshState>>,
+    ) -> Self {
         Self {
             rx,
             history: Vec::with_capacity(10),
             nvs,
+            wifi,
+            mesh_state,
+            last_metrics_run: None,
+            last_telemetry_run: None,
+            last_update_check_run: None,
         }
     }
 
     pub fn run(mut self) {
         info!("Starting Periodic Task Scheduler Worker Thread...");
-        let mut sec_counter: u64 = 0;
         
         while let Ok(msg) = self.rx.recv() {
             match msg {
                 CronMessage::Tick => {
-                    sec_counter += 1;
+                    let now_instant = std::time::Instant::now();
                     
                     // Task 1: Collect sensor metrics every 30 seconds
-                    if sec_counter % 30 == 0 {
+                    let elapsed_metrics = self.last_metrics_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));
+                    if elapsed_metrics >= Duration::from_secs(30) {
+                        self.last_metrics_run = Some(now_instant);
                         self.collect_sensor_metrics();
                     }
                     
-                        if sec_counter % 300 == 0 {
-                            self.trigger_simulated_http_api();
-                        }
+                    // Task 2: Trigger simulated HTTP API every 300 seconds (5 minutes)
+                    let elapsed_telemetry = self.last_telemetry_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));
+                    if elapsed_telemetry >= Duration::from_secs(300) {
+                        self.last_telemetry_run = Some(now_instant);
+                        self.trigger_simulated_http_api();
+                    }
                     
-                    // Task 3: Check NVS target nextCheck timestamp to prevent drifts
-                    if sec_counter % 60 == 0 { // Check NVS date target every 60 seconds
+                    // Task 3: Check NVS target nextCheck timestamp to prevent drifts every 60 seconds
+                    let elapsed_update = self.last_update_check_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));
+                    if elapsed_update >= Duration::from_secs(60) {
+                        self.last_update_check_run = Some(now_instant);
                         let _ = self.evaluate_need_update_check(false);
                     }
                 }
@@ -110,6 +133,59 @@ impl CronWorker {
             "Task 30s: Collected sensor metrics. Temp SHT45: {:.1}°C, CO2: {} ppm, Probes count: {}. Sliding history size: {}", 
             readings.temperature_sht45, readings.co2_scd41, readings.ds18b20_temperatures.len(), self.history.len()
         );
+
+        // Reconnection logic
+        if !self.check_connection() {
+            warn!("Network is unreachable. Triggering Wi-Fi reconnection...");
+            match crate::perform_wifi_connection(&self.wifi, &self.nvs, &self.mesh_state, false) {
+                Ok(true) => info!("Wi-Fi reconnection successful!"),
+                Ok(false) => warn!("Wi-Fi reconnection failed."),
+                Err(e) => error!("Error during Wi-Fi reconnection: {:?}", e),
+            }
+        }
+    }
+
+    fn check_connection(&self) -> bool {
+        // 1. Get metricsUrl from NVS
+        let metrics_url = {
+            let storage = self.nvs.lock().unwrap();
+            storage.get_str("metricsUrl").ok().flatten().unwrap_or_default()
+        };
+
+        if !metrics_url.is_empty() && metrics_url != "empty" {
+            info!("Checking reachability of metrics server: {}...", metrics_url);
+            if let Some((host, port)) = parse_url_host_port(&metrics_url) {
+                if check_tcp_reachable(&host, port) {
+                    info!("Metrics server is reachable.");
+                    return true;
+                } else {
+                    warn!("Metrics server {} is unreachable.", metrics_url);
+                }
+            } else {
+                warn!("Failed to parse metricsUrl: {}", metrics_url);
+            }
+        }
+
+        // 2. Fallback to NTP server
+        let ntp_server = {
+            let storage = self.nvs.lock().unwrap();
+            storage.get_str("ntpServer").ok().flatten().unwrap_or_else(|| "pool.ntp.org".to_string())
+        };
+        let ntp_server = if ntp_server.is_empty() || ntp_server == "empty" {
+            "pool.ntp.org".to_string()
+        } else {
+            ntp_server
+        };
+
+        info!("Checking reachability of NTP server: {}...", ntp_server);
+        if check_dns_resolvable(&ntp_server) {
+            info!("NTP server is resolvable (DNS check passed).");
+            return true;
+        } else {
+            warn!("NTP server {} is not resolvable.", ntp_server);
+        }
+
+        false
     }
 
     fn trigger_simulated_http_api(&self) {
@@ -263,9 +339,8 @@ impl CronWorker {
 
         if let Some(arr) = list.as_array() {
             for entry in arr {
-                let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
                 let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-                if b_type == "v2.0" && c_type == "ESP32-S3" {
+                if c_type == "ESP32-S3" {
                     if let Some(stable_val) = entry.get("stable") {
                         for v_obj in version_entries(stable_val) {
                             if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
@@ -332,6 +407,51 @@ fn version_entries(val: &serde_json::Value) -> Vec<&serde_json::Value> {
     }
 }
 
+fn parse_url_host_port(url: &str) -> Option<(String, u16)> {
+    let without_scheme = if let Some(stripped) = url.strip_prefix("http://") {
+        (stripped, 80)
+    } else if let Some(stripped) = url.strip_prefix("https://") {
+        (stripped, 443)
+    } else {
+        (url, 80)
+    };
+    
+    let host_part = without_scheme.0.split('/').next()?;
+    if host_part.is_empty() {
+        return None;
+    }
+    
+    if let Some(colon_idx) = host_part.find(':') {
+        let (host, port_str) = host_part.split_at(colon_idx);
+        let port = port_str.strip_prefix(':')?.parse::<u16>().ok()?;
+        Some((host.to_string(), port))
+    } else {
+        Some((host_part.to_string(), without_scheme.1))
+    }
+}
+
+fn check_tcp_reachable(host: &str, port: u16) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let addr_str = format!("{}:{}", host, port);
+    if let Ok(addrs) = addr_str.to_socket_addrs() {
+        for addr in addrs {
+            if let Ok(_stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(3)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn check_dns_resolvable(host: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    let addr_str = format!("{}:123", host);
+    if let Ok(addrs) = addr_str.to_socket_addrs() {
+        return addrs.count() > 0;
+    }
+    false
+}
+
 #[derive(Clone)]
 pub struct CronHandle {
     sender: Sender<CronMessage>,
@@ -353,16 +473,22 @@ impl CronHandle {
     }
 }
 
-pub fn spawn_cron_scheduler(nvs: Arc<Mutex<NvsStorage>>) -> Result<CronHandle> {
+pub fn spawn_cron_scheduler(
+    nvs: Arc<Mutex<NvsStorage>>,
+    wifi: Arc<Mutex<WifiManager>>,
+    mesh_state: Arc<Mutex<MeshState>>,
+) -> Result<CronHandle> {
     let (tx, rx) = channel();
     
     // 1. Spawn Worker Thread with a larger stack size (32KB) to prevent stack overflow
     let worker_nvs = Arc::clone(&nvs);
+    let worker_wifi = Arc::clone(&wifi);
+    let worker_mesh = Arc::clone(&mesh_state);
     thread::Builder::new()
         .name("cron_worker".to_string())
         .stack_size(32768)
         .spawn(move || {
-            let worker = CronWorker::new(rx, worker_nvs);
+            let worker = CronWorker::new(rx, worker_nvs, worker_wifi, worker_mesh);
             worker.run();
         })
         .context("Failed to spawn cron worker thread")?;

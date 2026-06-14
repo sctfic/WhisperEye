@@ -25,7 +25,7 @@ impl NeoPixel {
     }
 
     pub fn init(&self) {
-        let pin_mask = 1u64 << 38;
+        let pin_mask = 1u64 << 48;
         let config = esp_idf_sys::gpio_config_t {
             pin_bit_mask: pin_mask,
             mode: esp_idf_sys::gpio_mode_t_GPIO_MODE_OUTPUT,
@@ -42,11 +42,12 @@ impl NeoPixel {
 
     pub fn set_color(&self, r: u8, g: u8, b: u8) {
         // Limiter la puissance à 10% (max 25 sur 255)
-        let r = r.min(25);
-        let g = g.min(25);
-        let b = b.min(25);
+        let r_limit = r.min(25);
+        let g_limit = g.min(25);
+        let b_limit = b.min(25);
+        log::info!("LED set_color: requested ({}, {}, {}), applied (limit 10%): ({}, {}, {})", r, g, b, r_limit, g_limit, b_limit);
         
-        let color_data: u32 = ((g as u32) << 16) | ((r as u32) << 8) | (b as u32);
+        let color_data: u32 = ((g_limit as u32) << 16) | ((r_limit as u32) << 8) | (b_limit as u32);
         
         let ps = disable_interrupts();
 

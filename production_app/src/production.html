@@ -110,7 +110,7 @@
         .info-group {
             display: flex;
             justify-content: space-between;
-            /* padding: 0.8rem 0; */
+            padding: 0.3rem 0;
             border-bottom: 1px solid rgba(30, 41, 59, 0.6);
         }
 
@@ -600,7 +600,7 @@
         }
 
         .advanced-content.open {
-            max-height: 500px;
+            max-height: 1000px;
             padding: 1rem 0;
         }
     </style>
@@ -689,14 +689,7 @@
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>Opérationnel</span></span>
             </div>
-            <div class="info-group">
-                <span class="info-label">Nom de l'extendeur</span>
-                <span class="info-value" id="status_ext_name">--</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Description</span>
-                <span class="info-value" id="status_ext_desc">--</span>
-            </div>
+
             <div class="info-group">
                 <span class="info-label">Mode Réseau</span>
                 <span class="info-value"><span id="network_mode" class="badge badge-green">Station</span></span>
@@ -761,6 +754,29 @@
                 <span class="info-label">Renommage devices</span>
                 <span class="info-value" id="status_rename_enabled">--</span>
             </div>
+
+            <!-- Section Réseau Mesh -->
+            <h3
+                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Réseau Mesh (Maillage)
+            </h3>
+            <div class="info-group">
+                <span class="info-label">État Mesh</span>
+                <span class="info-value" id="mesh_status">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Rôle dans le maillage</span>
+                <span class="info-value" id="mesh_role">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Distance Racine</span>
+                <span class="info-value" id="mesh_distance">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Nœuds connectés</span>
+                <span class="info-value" id="mesh_nodes_count">--</span>
+            </div>
+
         </div>
 
         <!-- TAB 3: CONFIGURATION -->
@@ -851,7 +867,7 @@
                 <!-- Repository URL (updateAvailable) -->
                 <div class="form-group"
                     style="padding-top: 1rem; border-top: 1px solid rgba(30, 41, 59, 0.6); margin-bottom: 1rem;">
-                    <label for="repo_url">URL du dépôt (Mise à jour)</label>
+                    <label for="repo_url">URL du Update repository</label>
                     <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem; flex-wrap: wrap;">
                         <input type="text" id="repo_url" placeholder="https://example.com/firmware-s3.json"
                             style="flex: 1; min-width: 200px; margin-bottom: 0;">
@@ -860,6 +876,41 @@
                             onclick="saveRepoUrl()">Enregistrer l'URL</button>
                     </div>
                     <div id="repo_url_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;"></div>
+                </div>
+
+                <!-- Section Configuration Mesh -->
+                <div style="padding-top: 1rem; border-top: 1px solid rgba(30, 41, 59, 0.6); margin-bottom: 1rem;">
+                    <label style="font-weight: 600; font-size: 0.95rem; color: var(--text-primary);">Configuration du
+                        Réseau Mesh</label>
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0;">
+                        <div style="flex: 1; min-width: 0;">
+                            <span style="font-size: 0.9rem; color: var(--text-primary); font-weight: 500;">Activer le
+                                maillage Mesh</span>
+                            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">Permettre
+                                la cascade Wi-Fi et la transmission de configurations</div>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="mesh_enabled_toggle_advanced" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0.75rem;">
+                        <label for="mesh_id_input">Mesh ID</label>
+                        <input type="text" id="mesh_id_input" placeholder="WhisperEye" maxlength="32">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0.75rem;">
+                        <label for="mesh_pmk_input">Mesh PMK (Mot de passe)</label>
+                        <input type="text" id="mesh_pmk_input" placeholder="WhisperEye@Mesh!" maxlength="64">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0.75rem;">
+                        <label for="mesh_channel_input">Canal Wi-Fi Mesh</label>
+                        <input type="number" id="mesh_channel_input" placeholder="11" min="1" max="13">
+                    </div>
+                    <button type="button" class="btn" id="btn_save_mesh"
+                        style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem; margin-top: 0.5rem;"
+                        onclick="saveMeshConfig()">Enregistrer le maillage</button>
+                    <div id="mesh_config_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;">
+                    </div>
                 </div>
 
                 <!-- Factory Reset -->
@@ -1098,7 +1149,7 @@
         }
 
         function fetchStatus() {
-            fetch('/api/status')
+            return fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
                     window.latestStatusData = data;
@@ -1202,21 +1253,40 @@
 
                     // 3. Heure système (synchro ou invalide)
                     let timeSynced = false;
+                    let ntpStatusSvg = getStatusSvg('red', 'Non synchronisé');
+                    let deviceTimeDisplay = data.sys_time || '1970-01-01 00:00:00';
+
                     if (data.sys_time && !data.sys_time.startsWith('1970')) {
-                        document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
                         timeSynced = true;
+
+                        // Comparaison de l'heure UTC avec le navigateur
+                        const browserDate = new Date();
+                        const deviceDate = new Date(data.sys_time);
+
+                        const browserSecs = (browserDate.getUTCHours() * 3600) + (browserDate.getUTCMinutes() * 60) + browserDate.getUTCSeconds();
+                        const deviceSecs = (deviceDate.getUTCHours() * 3600) + (deviceDate.getUTCMinutes() * 60) + deviceDate.getUTCSeconds();
+
+                        let diffSec = Math.abs(browserSecs - deviceSecs);
+                        if (diffSec > 43200) {
+                            diffSec = 86400 - diffSec;
+                        }
+
+                        if (diffSec <= 3) {
+                            ntpStatusSvg = getStatusSvg('green', `Synchronisé (décalage : ${diffSec.toFixed(1)}s)`);
+                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
+                        } else if (diffSec <= 10) {
+                            ntpStatusSvg = getStatusSvg('yellow', `Désynchronisé (décalage : ${diffSec.toFixed(1)}s)`);
+                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('yellow', `Décalage de ${diffSec.toFixed(1)}s`);
+                        } else {
+                            ntpStatusSvg = getStatusSvg('red', `Décalage important (décalage : ${diffSec.toFixed(1)}s)`);
+                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('red', `Décalage de ${diffSec.toFixed(1)}s`);
+                        }
                     } else {
-                        document.getElementById('sys_time').innerHTML = (data.sys_time || '1970-01-01 00:00:00') + getStatusSvg('red', 'Invalide / Non synchronisée');
+                        document.getElementById('sys_time').innerHTML = deviceTimeDisplay + getStatusSvg('red', 'Invalide / Non synchronisée');
                     }
 
                     // 4. NTP (accessible, en echec ou injoignable)
-                    if (data.network_mode === 'Station' && timeSynced) {
-                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('green', 'Accessible');
-                    } else if (data.network_mode === 'Station' && !timeSynced) {
-                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('yellow', 'En attente / Échec');
-                    } else {
-                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('red', 'Hors ligne / AP');
-                    }
+                    document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + ntpStatusSvg;
 
                     const statusMetricsUrlEl = document.getElementById('status_metrics_url');
                     if (statusMetricsUrlEl) {
@@ -1291,6 +1361,85 @@
                             knownHelp.innerText = "Aucun réseau enregistré.";
                         }
                     }
+
+                    // Récupération des informations Mesh
+                    if (data.mesh_enabled !== undefined) {
+                        const mStatusEl = document.getElementById('mesh_status');
+                        if (mStatusEl) {
+                            mStatusEl.innerHTML = data.mesh_enabled ? 'Activé' + getStatusSvg('green') : 'Désactivé' + getStatusSvg('red');
+                        }
+                        const mToggle = document.getElementById('mesh_enabled_toggle_advanced');
+                        if (mToggle && !mToggle.matches(':focus')) {
+                            mToggle.checked = data.mesh_enabled;
+                        }
+                    }
+
+                    if (data.mesh_root !== undefined) {
+                        const mRoleEl = document.getElementById('mesh_role');
+                        if (mRoleEl) {
+                            if (data.mesh_enabled) {
+                                mRoleEl.innerHTML = data.mesh_root ? '<span class="badge badge-green">Nœud Racine (Root)</span>' : '<span class="badge badge-blue">Nœud Enfant (Node)</span>';
+                            } else {
+                                mRoleEl.innerText = '--';
+                            }
+                        }
+                    }
+
+                    if (data.mesh_distance !== undefined) {
+                        const mDistanceEl = document.getElementById('mesh_distance');
+                        if (mDistanceEl) {
+                            if (data.mesh_enabled) {
+                                if (data.mesh_distance === -1) {
+                                    mDistanceEl.innerHTML = 'Déconnecté / En attente' + getStatusSvg('yellow');
+                                } else {
+                                    mDistanceEl.innerText = `${data.mesh_distance} bond(s)`;
+                                }
+                            } else {
+                                mDistanceEl.innerText = '--';
+                            }
+                        }
+                    }
+
+                    if (data.mesh_nodes_count !== undefined) {
+                        const mNodesEl = document.getElementById('mesh_nodes_count');
+                        if (mNodesEl) {
+                            mNodesEl.innerText = data.mesh_enabled ? data.mesh_nodes_count : '--';
+                        }
+                    }
+
+                    if (data.mesh_channel !== undefined) {
+                        const mChanEl = document.getElementById('mesh_channel');
+                        if (mChanEl) mChanEl.innerText = data.mesh_channel;
+                        const mChanInput = document.getElementById('mesh_channel_input');
+                        if (mChanInput && !mChanInput.matches(':focus')) {
+                            mChanInput.value = data.mesh_channel;
+                        }
+                    }
+
+                    if (data.mesh_id !== undefined) {
+                        const mIdEl = document.getElementById('mesh_id');
+                        if (mIdEl) mIdEl.innerText = data.mesh_id;
+                        const mIdInput = document.getElementById('mesh_id_input');
+                        if (mIdInput && !mIdInput.matches(':focus')) {
+                            mIdInput.value = data.mesh_id;
+                        }
+                    }
+
+                    if (data.mesh_pmk !== undefined) {
+                        const mPmkEl = document.getElementById('mesh_pmk');
+                        if (mPmkEl) {
+                            if (data.mesh_pmk.length >= 2) {
+                                mPmkEl.innerText = data.mesh_pmk[0] + '...' + data.mesh_pmk[data.mesh_pmk.length - 1];
+                            } else {
+                                mPmkEl.innerText = data.mesh_pmk;
+                            }
+                        }
+                        const mPmkInput = document.getElementById('mesh_pmk_input');
+                        if (mPmkInput && !mPmkInput.matches(':focus')) {
+                            mPmkInput.value = data.mesh_pmk;
+                        }
+                    }
+
                     if (data.author) {
                         const aName = document.getElementById('author_name');
                         const aEmail = document.getElementById('author_email');
@@ -1330,9 +1479,9 @@
         };
 
         function fetchDevices() {
-            if (!document.getElementById('devices-tab').classList.contains('active')) return;
+            if (!document.getElementById('devices-tab').classList.contains('active')) return Promise.resolve();
 
-            fetch('/api/peripherals')
+            return fetch('/api/peripherals')
                 .then(res => res.json())
                 .then(data => {
                     window.currentDevices = data;
@@ -2059,6 +2208,32 @@
                 .catch(err => console.error('Erreur rename_enabled:', err));
         }
 
+        // Mesh Enabled toggle : sauvegarde immédiate dans le NVS (sans redémarrage)
+        document.getElementById('mesh_enabled_toggle_advanced').addEventListener('change', function () {
+            const enabled = this.checked;
+            const statusEl = document.getElementById('mesh_config_status');
+            statusEl.innerHTML = '<span style="color:var(--text-secondary);font-size:0.8rem;">' + SPINNER_SVG + ' Enregistrement…</span>';
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mesh_enabled: enabled,
+                    apply_only: true   // Sauvegarde NVS uniquement, pas de redémarrage
+                })
+            })
+                .then(res => {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    statusEl.innerHTML = '<span style="color:var(--success);font-size:0.8rem;">✓ ' +
+                        (enabled ? 'Mesh activé et enregistré.' : 'Mesh désactivé et enregistré.') +
+                        ' Redémarrez pour appliquer.</span>';
+                    fetchStatus();
+                })
+                .catch(err => {
+                    statusEl.innerHTML = '<span style="color:var(--error);font-size:0.8rem;">✗ Erreur : ' + (err.message || err) + '</span>';
+                    this.checked = !enabled; // Remettre l'état précédent si erreur
+                });
+        });
+
         function triggerFactoryReset() {
             const confirmWord = prompt("ATTENTION : Cette action va supprimer la clé de sécurité TOTP et effacer toute la configuration Wi-Fi enregistrée. L'extendeur va redémarrer en mode Point d'Accès (Access Point) avec l'adresse IP : 192.168.71.1.\n\nPour confirmer, veuillez saisir le mot 'RESET' en majuscules :");
             if (confirmWord === null) {
@@ -2087,10 +2262,62 @@
                 .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
         }
 
+        function saveMeshConfig() {
+            const enabled = document.getElementById('mesh_enabled_toggle_advanced').checked;
+            const channel = parseInt(document.getElementById('mesh_channel_input').value);
+            const id = document.getElementById('mesh_id_input').value.trim();
+            const pmk = document.getElementById('mesh_pmk_input').value.trim();
+            const btn = document.getElementById('btn_save_mesh');
+            const statusEl = document.getElementById('mesh_config_status');
+
+            if (isNaN(channel) || channel < 1 || channel > 13) {
+                showMessage('mesh_config_status', 'Le canal doit être compris entre 1 et 13.', 'error');
+                return;
+            }
+
+            if (!id) {
+                showMessage('mesh_config_status', 'Le Mesh ID est requis !', 'error');
+                return;
+            }
+
+            if (!pmk || pmk.length < 8) {
+                showMessage('mesh_config_status', 'Le Mesh PMK doit faire au moins 8 caractères.', 'error');
+                return;
+            }
+
+            showMessage('mesh_config_status', SPINNER_SVG + ' Enregistrement et redémarrage de la carte...', 'success');
+            btn.disabled = true;
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mesh_enabled: enabled,
+                    mesh_channel: channel,
+                    mesh_id: id,
+                    mesh_pmk: pmk
+                })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    showMessage('mesh_config_status', 'Configuration enregistrée ! Redémarrage de l\'appareil...', 'success');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 4000);
+                })
+                .catch(err => {
+                    showMessage('mesh_config_status', `Échec de l'enregistrement : ${err.message || err}`, 'error');
+                    btn.disabled = false;
+                });
+        }
+
         // Initial setup
-        fetchDevices();
-        fetchStatus();
-        scanSsids();
+        Promise.all([fetchDevices(), fetchStatus()])
+            .finally(() => {
+                scanSsids();
+            });
     </script>
 </body>
 
