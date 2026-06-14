@@ -6,25 +6,32 @@
 
 ## 💾 Architecture de Partitionnement (`partitions.csv`)
 
-Pour éviter tout risque de blocage ou d'inaccessibilité en production, la mémoire flash de 16 Mo de la carte WhisperEye est organisée selon un schéma de partitionnement spécifique défini dans le fichier [partitions.csv](file:///c:/Users/Alban/Desktop/Dev/www/WhisperEye/partitions.csv) :
+Pour éviter tout risque de blocage ou d'inaccessibilité en production, la mémoire flash de 16 Mo de la carte WhisperEye est organisée selon un schéma de partitionnement spécifique défini dans le fichier [partitions.csv](./partitions.csv) :
 
 ```text
-+---------------------------------------------------------------------------------+
-|                                 ESP32-S3 Flash (16 Mo)                          |
-+------------+---------------+--------------+----------------------+--------------+
-| nvs (24K)  | otadata (8K)  | phy_init (4K)| recovery (2M)        | production   |
-| Config/WiFi| Table de Boot | Phys RF Init | Secours (Sub:factory)| (13.8M) App  |
-+------------+---------------+--------------+----------------------+--------------+
++--------------------------------------------------------------------------------+
+|                                 ESP32-S3 Flash (16 Mo)                         |
++------------+---------------+--------------+---------------+--------------------+
+| nvs (24K)  | otadata (8K)  | phy_init (4K)| recovery (2M) | production (13.8M) |
+| Config/WiFi| Table de Boot | Phys RF Init |  Sub:factory  |        App         |
++------------+---------------+--------------+---------------+--------------------+
 ```
+
+![Schéma des partitions](./production_app/partition_layout.png)
+
+> [!TIP]
+> **Optimisation de l'espace disponible** : Cette répartition asymétrique de la mémoire flash est spécifiquement conçue pour maximiser l'espace disponible pour le firmware applicatif de Production (`production_app` à 13.8 Mo). La partition `recovery_boot` est quant à elle minimisée à 2 Mo et la NVS à 24 Ko. Cette structure garantit que les fonctionnalités complexes (capteurs, base de données locale d'historique, interface web premium) disposent de toute la mémoire nécessaire sans compromettre la présence d'une solution de secours autonome en cas de panne de démarrage.
+
 
 ### Rôle détaillé des partitions :
 * **`nvs` (24 Ko)** : Stockage non volatile. Elle contient les identifiants réseaux mémorisés dans le dictionnaire `wifiKnown`, le drapeau `autoUpdate` (activant/désactivant la mise à jour automatique), l'URL du dépôt de mise à jour `updateAvailable`, le compteur de tentatives de boot `otaRetry` (permettant de se prémunir des mises à jour infinies en boucle en cas de binaire défaillant), et la date cible du prochain contrôle `nextCheck`.
 * **`otadata` (8 Ko)** : Coordonne la table de démarrage (boot slot active). L'ESP32 l'utilise pour décider de démarrer sur la partition de production ou de secours.
 * **`phy_init` (4 Ko)** : Contient les données d'initialisation pour la couche physique radio (Wi-Fi et Bluetooth).
 * **`recovery` (2 Mo)** : Contient le firmware de secours autonome `recovery_boot`.
-  > [!IMPORTANT]
-  > Bien que nommée **`recovery`** dans la configuration, son sous-type (subtype) dans la table reste défini sur `factory`. Cela force le bootloader de l'ESP32 à l'utiliser comme fallback automatique si aucune donnée d'OTA valide n'est initialisée ou si une défaillance de démarrage est détectée. Ce binaire de secours n'est jamais écrasé par OTA.
 * **`production` (13.8 Mo)** : Dédiée à l'application métier principale `production_app`. Elle dispose de l'espace de stockage maximal pour héberger la logique des capteurs, l'ordonnanceur Cron, l'historique glissant des mesures et le dashboard web.
+  > [!IMPORTANT]
+  > Bien que nommée **`recovery`** dans la configuration, son sous-type (subtype) dans la table reste défini sur `factory`. Cela force le bootloader de l'ESP32 à l'utiliser comme fallback automatique en cas de défaillance de démarrage. Ce binaire de secours n'est jamais mis à jour par OTA.
+
 
 ---
 
@@ -35,38 +42,77 @@ WhisperEye utilise un cycle de démarrage bidirectionnel sécurisé pour déploy
 ```mermaid
 graph TD
     A[Démarrage de la Carte] --> B{Bootloader ESP32}
-    B --> C{otaRetry > 0 ?}
-    C -- "Oui (MAJ en cours)" --> D[Boot sur RECOVERY]
-    C -- "Non / -1 (Normal)" --> E[Boot sur PRODUCTION]
-
-    D --> D1[Tentative de connexion Wi-Fi]
-    D1 --> D2[Décrémente otaRetry en NVS]
-    D2 --> D3[Télécharge et écrit le nouveau .bin sur Production]
-    D3 --> D4{Flash OK ?}
-    D4 -- Oui --> D5[Drapeau otaRetry = -1]
-    D4 -- Non --> D6["Restart (nouvelle tentative)"]
-    D5 --> D7[Restart]
-    D7 --> B
+    B --> C{demande de MAJ ?}
+    C -- "Oui" --> D[Boot sur RECOVERY]
+    C -- "Non" --> E[Boot sur PRODUCTION]
 
     E --> E1[Exécution application métier]
     E1 --> E2[Cron: auto_update automatique]
-    E2 --> E3{MAJ disponible ?}
+    E2 --> E3{MAJ nécessaire ?}
     E3 -- Oui --> E4[Écrit l'URL en NVS et fixe otaRetry = 3]
     E4 --> E5[Restart de la carte]
     E5 --> B
+
+    D --> D1[re-connexion Wi-Fi]
+    D1 --> D3[Téléchargement + Ecriture séquentiel du .bin sur production]
+    D3 --> D4{Flash OK ?}
+    D4 -- "Oui" --> E5
+    D4 -- "Non" --> D6["Retry (3 tentatives max)"]
+    D6 --> E5
+
 ```
 
 ### 1. Mode Normal (Production)
-Par défaut, la carte démarre et s'exécute sur le firmware `production_app`. Elle récolte les données de capteurs, gère l'historique en mémoire, et expose un dashboard moderne de monitoring. Elle exécute aussi un cron en tâche de fond pour vérifier la présence de nouvelles versions sur le dépôt distant.
+Par défaut, la carte démarre et s'exécute sur le firmware `production_app`. Elle récolte les données de capteurs, gère les 10 dernières mesures d'historique en mémoire, et expose un dashboard moderne et l'API. Elle exécute aussi les cron en tâche de fond :
+- collecter les données de mesures (30 sec, 3 mesures)
+- envoyer les données de mesures (5 minutes, 10 mesures)
+- vérifier la présence de nouvelles versions sur le dépôt distant (tous les samedis à 12h00)
 
-### 2. Mode Mise à Jour & Secours (Recovery)
-Si une mise à jour est initiée (ou si la partition de production ne parvient plus à démarrer) :
-1. La partition de production écrit l'URL du fichier binaire dans la NVS, configure la variable de tentatives `otaRetry` (généralement à `3`) et demande un redémarrage.
-2. L'ESP32-S3 redémarre instantanément en partition de secours `recovery_boot`.
-3. Dès son chargement, le firmware de secours se connecte au Wi-Fi. Avant de commencer tout téléchargement réseau, **il décrémente immédiatement de 1 le compteur `otaRetry` en NVS** pour se prémunir d'une coupure électrique ou d'un bug système durant l'installation.
-4. Il télécharge le nouveau firmware applicatif et le flashe sur la partition `production`.
-5. Si l'installation réussit, `otaRetry` est réinitialisé à `-1` et la carte redémarre sur son nouveau firmware de production.
-6. Si l'installation échoue à plusieurs reprises (jusqu'à ce que `otaRetry` tombe à `0`), la carte reste indéfiniment en mode Recovery. L'utilisateur peut alors se connecter au portail captif généré par la partition Recovery pour diagnostiquer le système, uploader directement un fichier binaire depuis son navigateur, ou corriger la configuration.
+#### 📶 Séquence d'initialisation Wi-Fi & Mesh au démarrage (Production) :
+Lors du démarrage de la partition de production, le système applique la séquence suivante :
+
+```mermaid
+graph TD
+    Start([Démarrage Production]) --> InitHardware[Initialisation Matérielle <br> Capteurs/Actuateurs]
+    InitHardware --> CheckMesh{Mesh activé ?}
+    
+    CheckMesh -- Oui --> StartMeshAP[Démarrer AP Mesh locale <br> SSID du Mesh]
+    StartMeshAP --> TryKnownSTA{Connexion aux routeurs <br> Wi-Fi connus ?}
+    
+    TryKnownSTA -- Succès --> SetRoot[Établi comme ROOT <br> distance = 0 <br> LED Verte]
+    TryKnownSTA -- Échec --> ScanParent{Parent Mesh détecté ?}
+    
+    ScanParent -- Oui --> ConnectParent[Connexion parent & Sync config <br> distance = distance_parent + 1 <br> LED Verte]
+    ScanParent -- Non --> SetAPOnly[AP Mesh isolée <br> distance = -1 <br> LED Jaune]
+    
+    CheckMesh -- Non --> TrySTACap{Connexion aux routeurs <br> Wi-Fi connus ?}
+    TrySTACap -- Succès --> SetSTADirect[Mode STA standard <br> LED Verte]
+    TrySTACap -- Échec --> StartAPCaptive[Démarrer AP captive standard <br> ESP32-Configuration <br> LED Jaune]
+```
+
+1. **Initialisation Matérielle** : Chargement des périphériques et capteurs.
+2. **Si le Mesh est activé (`mesh_enabled`)** :
+   * **Démarrage de l'AP Mesh** : L'AP locale démarre instantanément sur le SSID du Mesh (`meshId`) pour permettre aux clients de s'y connecter immédiatement (adresse IP `192.168.71.1`).
+   * **Tentative STA sur réseaux connus** : Le nœud tente de se connecter en tant que client (STA) sur les réseaux Wi-Fi connus (SSID par défaut puis les autres successivement).
+     * *Succès* : Le nœud s'établit comme **Root** (`distance = 0`), la LED passe au **Vert**.
+     * *Échec* : L'appareil cherche un parent Mesh avec le même `meshId`. S'il est trouvé, il s'y connecte pour synchroniser sa configuration via `/api/mesh/sync`. Le nœud devient secondaire (`distance = distance_parent + 1`).
+     * *Échec global* : L'AP Mesh reste active seule pour administration directe (`distance = -1`), la LED passe au **Jaune**.
+3. **Si le Mesh est désactivé** :
+   * Tentative de connexion client STA sur les réseaux Wi-Fi de la NVS.
+   * En cas d'échec global, ouverture de l'AP captive locale (`ESP32-Configuration`, LED Jaune).
+
+### 2. sequence d'update (via `[Recovery]`)
+  > [!IMPORTANT]
+  > Il n'est pas possible d'uploader un firmware directement depuis la partition de `[Production]`, seulement depuis `[Recovery]`
+
+Si une mise à jour est initiée :
+1. `[Production]` écrit l'URL du fichier binaire dans la NVS, Et demande 3 tentatives de mise à jour.
+2. L'ESP32-S3 redémarre instantanément surs `[Recovery]`.
+3. **Transition et Suivi de Progression** : Pendant que la carte redémarre et se flashe, le frontend de `[production]` (déjà chargé dans le navigateur de l'utilisateur) affiche un écran de progression et **interroge en boucle (polling)** l'API `/api/updateStatus`. Comme la partition `[Recovery]` prend le relais sur la même adresse IP, c'est elle qui répond de manière transparente au frontend pour afficher la progression en temps réel (pourcentage, octets écrits).
+4. Dès son chargement, le firmware de secours se reconnecte au Wi-Fi. Avant de commencer tout téléchargement réseau, **il décrémente immédiatement de 1 le compteur `otaRetry` en NVS** Pour éviter tes tentatives de mise à jour en boucle.
+5. Il télécharge le nouveau firmware applicatif et le flashe sur la partition `[production]` tout en rapportant son statut via l'API de progression.
+6. Si l'installation réussit, la carte redémarre sur son nouveau firmware de `[production]`. Le frontend détecte ce redémarrage final et recharge la page principale.
+7. Si l'installation échoue à 3 reprises, la carte reste indéfiniment en mode `[Recovery]`. L'utilisateur peut alors utiliser l'interface web `[Recovery]` pour diagnostiquer le système, uploader manuellement un binaire ou corriger les configurations.
 
 ---
 
@@ -116,11 +162,11 @@ Le système tourne sur une carte matérielle propriétaire basée sur la puce **
 
 | Visuel Physique | Plan Mécanique |
 |:---:|:---:|
-| ![Visuel de la carte](file:///c:/Users/Alban/Desktop/Dev/www/WhisperEye/production_app/carte.png) | ![Plan mécanique](file:///c:/Users/Alban/Desktop/Dev/www/WhisperEye/production_app/plan.png) |
+| ![Visuel de la carte](./production_app/carte.png) | ![Plan mécanique](./production_app/plan.png) |
 
 * **Schéma Électronique** :
-  ![Schéma de principe électronique](file:///c:/Users/Alban/Desktop/Dev/www/WhisperEye/production_app/schema.png)
-* **Brochage complet de la carte** (détail du fichier [S3-pin.tsv](file:///c:/Users/Alban/Desktop/Dev/www/WhisperEye/production_app/S3-pin.tsv)) :
+  ![Schéma de principe électronique](./production_app/schema.png)
+* **Brochage complet de la carte** (détail du fichier [S3-pin.tsv](./production_app/S3-pin.tsv)) :
 
 | Signal / Label | GPIO (ESP32-S3) | Description |
 |:---|:---:|:---|
@@ -186,7 +232,7 @@ Les firmware Production et Recovery intègrent tous deux des interfaces web emba
 
 Pour adapter le firmware WhisperEye à votre propre projet ou carte électronique, suivez ces étapes :
 
-### 1. Conserver Recovery et Personnaliser Production
+### 1. Conserver `[Recovery]` et Personnaliser `[Production]`
 Le firmware de secours `recovery_boot` est conçu pour rester générique et ne doit pas être modifié afin de préserver votre filet de sécurité (rollback). Vous devez implémenter vos fonctionnalités dans `production_app`.
 
 ### 2. Configurer le BoardType et le ChipType
@@ -199,9 +245,8 @@ const CHIP_TYPE:  &str = "ESP32-S3";         // Type du microcontrôleur cible (
 ### 3. Configurer le Serveur de Mise à Jour OTA
 Le firmware de production interroge régulièrement l'URL stockée dans la NVS sous la clé `updateAvailable`. Le fichier ciblé par cette URL doit respecter la structure JSON attendue.
 
-Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware.json](file:///c:/Users/Alban/Desktop/Dev/www/WhisperEye/boards/board_default/firmware.json) sur votre serveur d'hébergement :
+Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware.json](./boards/board_default/firmware.json) sur votre serveur d'hébergement :
 ```json
-[
   {
     "ChipType": "ESP32-S3",
     "stable": [
@@ -217,12 +262,9 @@ Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware.json
       }
     ]
   }
-]
 ```
-Il s'agit d'un tableau qui peut contenir plusieurs `boardType` et `chipType` selon vos besoins.
-
-### 4. Enregistrer la Clé dans la NVS
-Au premier démarrage ou via l'interface réseau, assurez-vous d'inscrire l'URL de votre catalogue de mise à jour dans le paramètre `updateAvailable` de la NVS.
+### 4. Enregistrer la Clé `updateAvailable` dans la NVS
+Modifier les valeurs par défaut dans le fichier `common/src/nvs_storage.rs`.
 
 ---
 
@@ -248,7 +290,7 @@ La chaîne de compilation Rust pour ESP32 nécessite des outils spécifiques d'E
 
 ### 2. Déploiement sur Windows (Recommandé)
 
-Sous Windows, le script d'automatisation [run.ps1](file:///c:/Users/Alban/Desktop/Dev/www/WhisperEye/run.ps1) gère l'export de l'environnement, l'incrémentation des versions, la compilation et le flashage.
+Sous Windows, le script d'automatisation [run.ps1](./run.ps1) gère l'export de l'environnement, l'incrémentation des versions, la compilation et le flashage.
 
 1. Ouvrez une console **PowerShell** standard.
 2. Lancez la compilation et le flashage d'un composant spécifique :
@@ -307,6 +349,13 @@ cargo +esp espflash flash --flash-size 16mb --package production_app --partition
 
 ---
 
-## 📜 Licence
+## Licence
 
-Ce projet est la propriété de **Sctfic**. Tous droits réservés.
+Ce projet est distribué sous la licence **PolyForm Noncommercial License 1.0.0**.
+
+* **Usage Non-Commercial** : L'utilisation, la modification et la distribution du code sont entièrement gratuites pour des projets personnels, éducatifs, de recherche ou de loisir (hobby).
+* **Usage Commercial** : Toute exploitation commerciale, directe ou indirecte, est interdite sans accord écrit. Pour toute utilisation commerciale, veuillez contacter l'auteur pour obtenir une licence :
+  * **Auteur** : LOPEZ Alban
+  * **Email** : [alban.lopez+whisperEye@gmail.com](mailto:alban.lopez+whisperEye@gmail.com)
+
+Pour consulter l'intégralité des termes juridiques de la licence, veuillez vous référer au fichier [LICENSE](./LICENSE).

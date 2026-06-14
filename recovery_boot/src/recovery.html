@@ -112,7 +112,7 @@
         .info-group {
             display: flex;
             justify-content: space-between;
-            padding: 0.8rem 0;
+            padding: 0.3rem 0;
             border-bottom: 1px solid rgba(51, 65, 85, 0.5);
         }
 
@@ -422,7 +422,8 @@
         }
 
         /* Premium OTA Update Card & Modal styling */
-        #update_status, #wifi_change_modal {
+        #update_status,
+        #wifi_change_modal {
             position: fixed;
             top: 0;
             left: 0;
@@ -497,8 +498,13 @@
         }
 
         @keyframes ota-shimmer {
-            0% { background-position: 0% 50%; }
-            100% { background-position: 200% 50%; }
+            0% {
+                background-position: 0% 50%;
+            }
+
+            100% {
+                background-position: 200% 50%;
+            }
         }
 
         .ota-spinner {
@@ -514,8 +520,13 @@
         }
 
         @keyframes ota-spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
     </style>
 </head>
@@ -708,9 +719,11 @@
 
                 <div class="form-group"
                     style="margin-top: 1.5rem; border-top: 1px dashed var(--border-color); padding-top: 1.5rem;">
-                    <label style="font-size: 0.95rem; color: var(--text-secondary);">Mise à jour locale directe (.bin)</label>
+                    <label style="font-size: 0.95rem; color: var(--text-secondary);">Mise à jour locale directe
+                        (.bin)</label>
                     <div class="file-upload-area" style="margin-top: 0.5rem;">
-                        <p style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">
+                        <p
+                            style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">
                             Glissez & Déposez le fichier de production .bin
                         </p>
                         <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem;">
@@ -733,16 +746,23 @@
             <div id="update_status" class="status-message"></div>
             <div id="wifi_change_modal" class="status-message">
                 <div class="ota-card" style="border: 1px solid var(--accent-color); max-width: 450px; width: 100%;">
-                    <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-color); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
-                        <svg style="width:24px;height:24px" viewBox="0 0 24 24"><path fill="currentColor" d="M12,3C7.79,3 3.7,4.41 0.38,7C4.41,12.06 7.89,16.37 12,21.5C16.08,16.37 19.56,12.06 23.59,7C20.27,4.41 16.21,3 12,3M12,5C15.46,5 18.81,6.13 21.59,8.19C18.23,12.37 15.18,16.14 12,20.09C8.81,16.14 5.76,12.37 2.4,8.19C5.18,6.13 8.54,5 12,5Z"/></svg>
+                    <div
+                        style="font-size: 1.2rem; font-weight: 600; color: var(--accent-color); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <svg style="width:24px;height:24px" viewBox="0 0 24 24">
+                            <path fill="currentColor"
+                                d="M12,3C7.79,3 3.7,4.41 0.38,7C4.41,12.06 7.89,16.37 12,21.5C16.08,16.37 19.56,12.06 23.59,7C20.27,4.41 16.21,3 12,3M12,5C15.46,5 18.81,6.13 21.59,8.19C18.23,12.37 15.18,16.14 12,20.09C8.81,16.14 5.76,12.37 2.4,8.19C5.18,6.13 8.54,5 12,5Z" />
+                        </svg>
                         Changement de réseau Wi-Fi
                     </div>
                     <div style="color: var(--text-primary); font-size: 0.95rem; line-height: 1.5; text-align: left;">
-                        L'extendeur se connecte maintenant au réseau Wi-Fi : <strong id="wifi_modal_ssid">...</strong>.<br><br>
+                        L'extendeur se connecte maintenant au réseau Wi-Fi : <strong
+                            id="wifi_modal_ssid">...</strong>.<br><br>
                         <strong>Instructions pour vous reconnecter :</strong>
                         <ol style="margin-top: 0.5rem; padding-left: 1.2rem; margin-bottom: 0;">
-                            <li style="margin-bottom: 0.4rem;">Connectez votre appareil (ordinateur/smartphone) sur le réseau Wi-Fi <strong id="wifi_modal_ssid_2">...</strong>.</li>
-                            <li style="margin-bottom: 0.4rem;">Identifiez la nouvelle adresse IP de l'extendeur depuis la table DHCP de votre routeur.</li>
+                            <li style="margin-bottom: 0.4rem;">Connectez votre appareil (ordinateur/smartphone) sur le
+                                réseau Wi-Fi <strong id="wifi_modal_ssid_2">...</strong>.</li>
+                            <li style="margin-bottom: 0.4rem;">Identifiez la nouvelle adresse IP de l'extendeur depuis
+                                la table DHCP de votre routeur.</li>
                             <li>Saisissez cette nouvelle adresse IP dans votre navigateur pour vous reconnecter.</li>
                         </ol>
                     </div>
@@ -1290,7 +1310,7 @@
                                     const percentage = status.percentage || 0;
                                     document.getElementById('modal_progress_bar').style.width = `${percentage}%`;
                                     document.getElementById('modal_percentage').innerText = `${percentage}%`;
-                                    
+
                                     const writtenKb = (status.written / 1024).toFixed(1);
                                     const sizeKb = status.size > 0 ? (status.size / 1024).toFixed(1) + " KB" : "-- KB";
                                     document.getElementById('modal_meta').innerText = `${writtenKb} / ${sizeKb}`;
@@ -1309,7 +1329,7 @@
                                 .catch(err => {
                                     console.error("Poll error:", err);
                                 });
-                        }, 1000);
+                        }, 500);
                     } else {
                         showMessage('update_status', 'Erreur lors du lancement de l\'installation.', 'error');
                     }

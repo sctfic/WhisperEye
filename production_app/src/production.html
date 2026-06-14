@@ -110,7 +110,7 @@
         .info-group {
             display: flex;
             justify-content: space-between;
-            /* padding: 0.8rem 0; */
+            padding: 0.3rem 0;
             border-bottom: 1px solid rgba(30, 41, 59, 0.6);
         }
 
@@ -756,7 +756,8 @@
             </div>
 
             <!-- Section Réseau Mesh -->
-            <h3 style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+            <h3
+                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
                 Réseau Mesh (Maillage)
             </h3>
             <div class="info-group">
@@ -879,11 +880,14 @@
 
                 <!-- Section Configuration Mesh -->
                 <div style="padding-top: 1rem; border-top: 1px solid rgba(30, 41, 59, 0.6); margin-bottom: 1rem;">
-                    <label style="font-weight: 600; font-size: 0.95rem; color: var(--text-primary);">Configuration du Réseau Mesh</label>
+                    <label style="font-weight: 600; font-size: 0.95rem; color: var(--text-primary);">Configuration du
+                        Réseau Mesh</label>
                     <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0;">
                         <div style="flex: 1; min-width: 0;">
-                            <span style="font-size: 0.9rem; color: var(--text-primary); font-weight: 500;">Activer le maillage Mesh</span>
-                            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">Permettre la cascade Wi-Fi et la transmission de configurations</div>
+                            <span style="font-size: 0.9rem; color: var(--text-primary); font-weight: 500;">Activer le
+                                maillage Mesh</span>
+                            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">Permettre
+                                la cascade Wi-Fi et la transmission de configurations</div>
                         </div>
                         <label class="switch">
                             <input type="checkbox" id="mesh_enabled_toggle_advanced" checked>
@@ -902,8 +906,11 @@
                         <label for="mesh_channel_input">Canal Wi-Fi Mesh</label>
                         <input type="number" id="mesh_channel_input" placeholder="11" min="1" max="13">
                     </div>
-                    <button type="button" class="btn" id="btn_save_mesh" style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem; margin-top: 0.5rem;" onclick="saveMeshConfig()">Enregistrer le maillage</button>
-                    <div id="mesh_config_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;"></div>
+                    <button type="button" class="btn" id="btn_save_mesh"
+                        style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem; margin-top: 0.5rem;"
+                        onclick="saveMeshConfig()">Enregistrer le maillage</button>
+                    <div id="mesh_config_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;">
+                    </div>
                 </div>
 
                 <!-- Factory Reset -->
@@ -1251,19 +1258,19 @@
 
                     if (data.sys_time && !data.sys_time.startsWith('1970')) {
                         timeSynced = true;
-                        
+
                         // Comparaison de l'heure UTC avec le navigateur
                         const browserDate = new Date();
                         const deviceDate = new Date(data.sys_time);
-                        
+
                         const browserSecs = (browserDate.getUTCHours() * 3600) + (browserDate.getUTCMinutes() * 60) + browserDate.getUTCSeconds();
                         const deviceSecs = (deviceDate.getUTCHours() * 3600) + (deviceDate.getUTCMinutes() * 60) + deviceDate.getUTCSeconds();
-                        
+
                         let diffSec = Math.abs(browserSecs - deviceSecs);
                         if (diffSec > 43200) {
                             diffSec = 86400 - diffSec;
                         }
-                        
+
                         if (diffSec <= 3) {
                             ntpStatusSvg = getStatusSvg('green', `Synchronisé (décalage : ${diffSec.toFixed(1)}s)`);
                             document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
@@ -2214,17 +2221,17 @@
                     apply_only: true   // Sauvegarde NVS uniquement, pas de redémarrage
                 })
             })
-            .then(res => {
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                statusEl.innerHTML = '<span style="color:var(--success);font-size:0.8rem;">✓ ' +
-                    (enabled ? 'Mesh activé et enregistré.' : 'Mesh désactivé et enregistré.') +
-                    ' Redémarrez pour appliquer.</span>';
-                fetchStatus();
-            })
-            .catch(err => {
-                statusEl.innerHTML = '<span style="color:var(--error);font-size:0.8rem;">✗ Erreur : ' + (err.message || err) + '</span>';
-                this.checked = !enabled; // Remettre l'état précédent si erreur
-            });
+                .then(res => {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    statusEl.innerHTML = '<span style="color:var(--success);font-size:0.8rem;">✓ ' +
+                        (enabled ? 'Mesh activé et enregistré.' : 'Mesh désactivé et enregistré.') +
+                        ' Redémarrez pour appliquer.</span>';
+                    fetchStatus();
+                })
+                .catch(err => {
+                    statusEl.innerHTML = '<span style="color:var(--error);font-size:0.8rem;">✗ Erreur : ' + (err.message || err) + '</span>';
+                    this.checked = !enabled; // Remettre l'état précédent si erreur
+                });
         });
 
         function triggerFactoryReset() {
