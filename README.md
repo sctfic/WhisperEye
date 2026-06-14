@@ -203,9 +203,7 @@ Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware.json
 ```json
 [
   {
-    "boardType": "2.0",
     "ChipType": "ESP32-S3",
-    "peripheriques": [],
     "stable": [
       {
         "version": "1.0.0",

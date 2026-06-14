@@ -263,9 +263,8 @@ impl CronWorker {
 
         if let Some(arr) = list.as_array() {
             for entry in arr {
-                let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
                 let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-                if b_type == "v2.0" && c_type == "ESP32-S3" {
+                if c_type == "ESP32-S3" {
                     if let Some(stable_val) = entry.get("stable") {
                         for v_obj in version_entries(stable_val) {
                             if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {

@@ -25,7 +25,7 @@ impl NeoPixel {
     }
 
     pub fn init(&self) {
-        let pin_mask = 1u64 << 38;
+        let pin_mask = 1u64 << 48;
         let config = esp_idf_sys::gpio_config_t {
             pin_bit_mask: pin_mask,
             mode: esp_idf_sys::gpio_mode_t_GPIO_MODE_OUTPUT,

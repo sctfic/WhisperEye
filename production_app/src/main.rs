@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.19-0008";
+const FW_VERSION: &str = "1.0.19-0011";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -254,15 +254,21 @@ fn main() -> Result<()> {
     };
 
     if mesh_enabled {
-        info!("Mesh is enabled. Initiating Mesh boot sequence...");
+        info!("Mesh is enabled. Starting Mesh AP first, then trying STA connections...");
+
+        // 1. Démarrer l'AP Mesh immédiatement → les clients Mesh/frontend peuvent se connecter dès maintenant
+        wifi_manager.start_mesh_ap_only(&mesh_id, &mesh_pmk, mesh_channel)?;
+
+        // 2. Tenter la connexion STA vers les réseaux Wi-Fi connus (sans couper l'AP)
         if !known_networks.is_empty() {
             let default_net = known_networks.iter()
                 .find(|(_, entry)| entry.default.unwrap_or(false))
                 .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
 
+            // Essayer le réseau par défaut en premier
             if let Some((ref ssid, ref psk)) = default_net {
-                info!("Trying default network in Mesh AP+STA mode: {}", ssid);
-                if wifi_manager.start_ap_sta(ssid, psk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
+                info!("Trying default network '{}' with Mesh AP active...", ssid);
+                if wifi_manager.try_sta_on_mesh(ssid, psk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
                     connected = true;
                     chosen_ssid = ssid.clone();
                     is_root = true;
@@ -270,14 +276,14 @@ fn main() -> Result<()> {
                 }
             }
 
+            // Si le défaut échoue, essayer les autres réseaux connus
             if !connected {
-                info!("Default network failed or not set in Mesh mode. Trying other known networks...");
                 for (ssid, entry) in &known_networks {
                     if let Some((ref def_ssid, _)) = default_net {
                         if ssid == def_ssid { continue; }
                     }
-                    info!("Trying known network in Mesh AP+STA mode: {}", ssid);
-                    if wifi_manager.start_ap_sta(ssid, &entry.psk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
+                    info!("Trying known network '{}' with Mesh AP active...", ssid);
+                    if wifi_manager.try_sta_on_mesh(ssid, &entry.psk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
                         connected = true;
                         chosen_ssid = ssid.clone();
                         is_root = true;
@@ -288,8 +294,9 @@ fn main() -> Result<()> {
             }
         }
 
+        // 3. Si toujours pas connecté au Wi-Fi local, chercher un parent Mesh
         if !connected {
-            info!("Failed to connect to primary Wi-Fi. Scanning for parent Mesh SSID '{}'...", mesh_id);
+            info!("No Wi-Fi router available. Scanning for parent Mesh SSID '{}'...", mesh_id);
             let found_mesh_parent = match wifi_manager.wifi.scan() {
                 Ok(ap_list) => {
                     ap_list.into_iter().any(|ap| ap.ssid.as_str() == mesh_id)
@@ -300,8 +307,8 @@ fn main() -> Result<()> {
             };
 
             if found_mesh_parent {
-                info!("Found parent Mesh network '{}'. Attempting connection and sync...", mesh_id);
-                if wifi_manager.start_ap_sta(&mesh_id, &mesh_pmk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
+                info!("Found parent Mesh network '{}'. Connecting and syncing...", mesh_id);
+                if wifi_manager.try_sta_on_mesh(&mesh_id, &mesh_pmk, &mesh_id, &mesh_pmk, mesh_channel).unwrap_or(false) {
                     info!("Connected to Mesh parent. Synchronizing configuration...");
                     match perform_mesh_sync(&nvs_storage) {
                         Ok(parent_distance) => {
@@ -321,19 +328,19 @@ fn main() -> Result<()> {
             }
         }
 
+        // 4. Résultat du boot
         if !connected {
-            warn!("Could not connect to router or parent Mesh. Starting fallback local Mesh AP...");
-            let _ = wifi_manager.start_ap_sta("", "", &mesh_id, &mesh_pmk, mesh_channel);
+            warn!("No STA connection established. Mesh AP '{}' remains active for direct client access.", mesh_id);
             is_root = false;
             distance = -1;
-            common::led::set_led_color(25, 25, 0); // Jaune en AP local
+            common::led::set_led_color(25, 25, 0); // Jaune : AP seul, pas de connexion routeur
         } else {
             if is_root {
                 if let Ok(mut storage) = nvs_storage.lock() {
                     let _ = storage.set_default_network_by_ssid(&chosen_ssid);
                 }
             }
-            common::led::set_led_color(0, 25, 0); // Vert car connecté
+            common::led::set_led_color(0, 25, 0); // Vert : connecté au routeur Wi-Fi
         }
 
     } else {
@@ -840,9 +847,8 @@ fn main() -> Result<()> {
         };
 
         for entry in entries {
-            let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
             let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-            if b_type == "v2.0" && c_type == "ESP32-S3" {
+            if c_type == "ESP32-S3" {
                 matched_entry = entry.clone();
                 break;
             }
@@ -1608,6 +1614,9 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
 
 
 

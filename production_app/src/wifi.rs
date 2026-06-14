@@ -149,6 +149,109 @@ impl WifiManager {
         // AP remains active even if STA connection fails
         Ok(false)
     }
+
+    /// Démarre l'AP Mesh seule (sans connexion STA).
+    /// Appelé une seule fois au boot quand le Mesh est activé.
+    /// L'AP reste active en permanence pour les clients Mesh et le frontend.
+    pub fn start_mesh_ap_only(&mut self, ssid_ap: &str, _psk_ap: &str, channel_ap: u8) -> Result<()> {
+        info!("Starting Mesh AP '{}' on channel {} (no STA yet)...", ssid_ap, channel_ap);
+
+        // Configurer en Mixed avec un client vide : l'AP démarre, le STA n'est pas connecté
+        let config = Configuration::Mixed(
+            ClientConfiguration::default(),
+            AccessPointConfiguration {
+                ssid: ssid_ap.try_into().unwrap(),
+                ssid_hidden: false,
+                channel: channel_ap,
+                auth_method: AuthMethod::None,
+                password: "".try_into().unwrap(),
+                ..Default::default()
+            }
+        );
+
+        self.wifi.set_configuration(&config)?;
+        self.wifi.start()?;
+        info!("Mesh AP '{}' started successfully.", ssid_ap);
+
+        // Démarrer le serveur DNS captive portal pour les clients AP
+        thread::spawn(|| {
+            if let Err(e) = run_captive_dns_server() {
+                error!("Captive DNS Server error: {:?}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Tente une connexion STA vers un SSID sans reconfigurer l'AP.
+    /// L'AP Mesh reste active tout au long de la tentative.
+    /// Retourne true si la connexion STA a réussi.
+    pub fn try_sta_on_mesh(&mut self, ssid_sta: &str, psk_sta: &str, ssid_ap: &str, _psk_ap: &str, channel_ap: u8) -> Result<bool> {
+        info!("Trying STA '{}' while Mesh AP '{}' stays active...", ssid_sta, ssid_ap);
+
+        // Stopper proprement avant de reconfigurer le STA
+        let _ = self.wifi.disconnect();
+        let _ = self.wifi.stop();
+
+        let config = Configuration::Mixed(
+            ClientConfiguration {
+                ssid: ssid_sta.try_into().unwrap(),
+                password: psk_sta.try_into().unwrap(),
+                ..Default::default()
+            },
+            AccessPointConfiguration {
+                ssid: ssid_ap.try_into().unwrap(),
+                ssid_hidden: false,
+                channel: channel_ap,
+                auth_method: AuthMethod::None,
+                password: "".try_into().unwrap(),
+                ..Default::default()
+            }
+        );
+
+        self.wifi.set_configuration(&config)?;
+        self.wifi.start()?;
+
+        match self.wifi.connect() {
+            Ok(_) => {
+                info!("Waiting for DHCP lease (STA on Mesh)...");
+                match self.wifi.wait_netif_up() {
+                    Ok(_) => {
+                        let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
+                        info!("STA connected on Mesh! IP: {:?}", ip_info.ip);
+                        return Ok(true);
+                    }
+                    Err(e) => {
+                        warn!("DHCP failed on Mesh STA: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("STA connect failed on Mesh: {:?}", e);
+            }
+        }
+
+        // En cas d'échec STA, remettre un Mixed propre sans STA (AP seule)
+        let _ = self.wifi.disconnect();
+        let _ = self.wifi.stop();
+
+        let fallback = Configuration::Mixed(
+            ClientConfiguration::default(),
+            AccessPointConfiguration {
+                ssid: ssid_ap.try_into().unwrap(),
+                ssid_hidden: false,
+                channel: channel_ap,
+                auth_method: AuthMethod::None,
+                password: "".try_into().unwrap(),
+                ..Default::default()
+            }
+        );
+        self.wifi.set_configuration(&fallback)?;
+        self.wifi.start()?;
+        info!("STA failed. Mesh AP '{}' restored (AP-only mode).", ssid_ap);
+
+        Ok(false)
+    }
 }
 
 fn run_captive_dns_server() -> Result<()> {
@@ -199,7 +302,7 @@ fn run_captive_dns_server() -> Result<()> {
                     response.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
                     response.extend_from_slice(&[0x00, 0x00, 0x00, 0x3c]);
                     response.extend_from_slice(&[0x00, 0x04]);
-                    response.extend_from_slice(&[192, 168, 4, 1]);
+                    response.extend_from_slice(&[192, 168, 71, 1]);
                     
                     while current_offset < size && buf[current_offset] != 0 {
                         let len = buf[current_offset] as usize;

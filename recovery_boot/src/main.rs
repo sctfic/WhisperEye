@@ -34,7 +34,7 @@ struct ConfigPayload {
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-recovery-0057";
+const FW_VERSION: &str = "1.0.0-recovery-0060";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -453,9 +453,8 @@ fn main() -> Result<()> {
         };
 
         for entry in entries {
-            let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
             let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-            if b_type == "v2.0" && c_type == "ESP32-S3" {
+            if c_type == "ESP32-S3" {
                 matched_entry = entry.clone();
                 break;
             }
@@ -895,6 +894,9 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
 
 
 

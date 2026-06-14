@@ -45,7 +45,8 @@ impl NvsStorage {
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
         }
         if self.get_str("updateAvailable")?.is_none() {
-            self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-c3.json")?;
+            self.set_str("updateAvailable", "https://raw.githubusercontent.com/sctfic/WhisperEye/refs/heads/mesh/boards/board_default/firmware-s3.json")?;
+            // self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-c3.json")?;
         }
         if self.get_str("updateDlUrl")?.is_none() {
             self.set_str("updateDlUrl", "empty")?;
@@ -72,7 +73,7 @@ impl NvsStorage {
             self.set_str("meshId", "Whiper")?;
         }
         if self.get_str("meshPmk")?.is_none() {
-            self.set_str("meshPmk", "WhiperEyes@Mesh!")?;
+            self.set_str("meshPmk", "")?;
         }
         Ok(())
     }
