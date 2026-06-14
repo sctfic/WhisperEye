@@ -1257,7 +1257,19 @@
                 autoUpdateToggle.checked = false;
             }
 
-            showMessage('update_status', SPINNER_SVG + 'Démarrage de la procédure d\'installation du firmware...', 'success');
+            const statusEl = document.getElementById('update_status');
+            statusEl.style.display = 'flex';
+            statusEl.innerHTML = `
+                <div class="ota-card">
+                    <div class="ota-spinner"></div>
+                    <div class="ota-percentage" id="modal_percentage">0%</div>
+                    <div class="ota-status-msg" id="modal_status_msg">Initialisation de la mise à jour...</div>
+                    <div class="ota-progress-container">
+                        <div class="ota-progress-bar" id="modal_progress_bar" style="width: 0%"></div>
+                    </div>
+                    <div class="ota-meta" id="modal_meta">0 KB / -- KB</div>
+                </div>
+            `;
 
             fetch('/api/config', {
                 method: 'POST',
@@ -1270,7 +1282,31 @@
             })
                 .then(res => {
                     if (res.ok) {
-                        showMessage('update_status', 'Installation lancée avec succès ! Redémarrage ou téléchargement en cours...', 'success');
+                        let pollInterval = setInterval(() => {
+                            fetch('/api/updateStatus')
+                                .then(r => r.json())
+                                .then(status => {
+                                    document.getElementById('modal_status_msg').innerText = status.status || "Téléchargement...";
+                                    const percentage = status.percentage || 0;
+                                    document.getElementById('modal_progress_bar').style.width = `${percentage}%`;
+                                    document.getElementById('modal_percentage').innerText = `${percentage}%`;
+                                    
+                                    const writtenKb = (status.written / 1024).toFixed(1);
+                                    const sizeKb = status.size > 0 ? (status.size / 1024).toFixed(1) + " KB" : "-- KB";
+                                    document.getElementById('modal_meta').innerText = `${writtenKb} / ${sizeKb}`;
+
+                                    if (status.status && status.status.includes("terminée")) {
+                                        clearInterval(pollInterval);
+                                        showMessage('update_status', 'Mise à jour réussie ! Redémarrage sur le nouveau firmware de production...', 'success');
+                                    } else if (status.status && status.status.includes("Erreur")) {
+                                        clearInterval(pollInterval);
+                                        showMessage('update_status', 'Erreur lors du téléchargement : ' + status.status, 'error');
+                                    }
+                                })
+                                .catch(err => {
+                                    console.error("Poll error:", err);
+                                });
+                        }, 1000);
                     } else {
                         showMessage('update_status', 'Erreur lors du lancement de l\'installation.', 'error');
                     }
