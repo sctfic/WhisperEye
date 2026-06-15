@@ -489,7 +489,7 @@ impl NetManager {
                             };
 
                             if ssid.is_empty() {
-                                info!("WifiPreferred: No default Wi-Fi configured. Demoting to WifiFallback.");
+                                info!("WifiPreferred: No default Wi-Fi configured. Switching to mesh attempt.");
                                 let mut net = this.lock().unwrap();
                                 net.state = NetState::WifiFallback;
                                 continue;
@@ -503,6 +503,7 @@ impl NetManager {
                                     info!("WifiPreferred: Successfully connected to box Wi-Fi!");
                                     net.state = NetState::WifiOk;
                                     box_retry_count = 0;
+                                    mesh_retry_count = 0;
                                     ap_only_mode = false;
                                     net.backoff_delay = Duration::from_secs(2);
                                     let mut ms = mesh_state.lock().unwrap();
@@ -513,12 +514,9 @@ impl NetManager {
                                 _ => {
                                     box_retry_count += 1;
                                     last_box_retry = now;
-                                    warn!("WifiPreferred: Connection failed. Retry #{}.", box_retry_count);
-                                    if box_retry_count >= 5 {
-                                        info!("WifiPreferred: Max retries reached. Demoting to WifiFallback.");
-                                        net.state = NetState::WifiFallback;
-                                        box_retry_count = 0;
-                                    }
+                                    warn!("WifiPreferred: Connection failed. Retry #{}. Alternating to mesh.", box_retry_count);
+                                    // Alterner : passer au mesh
+                                    net.state = NetState::WifiFallback;
                                 }
                             }
                         }
@@ -533,6 +531,7 @@ impl NetManager {
                                 let mut net = this.lock().unwrap();
                                 net.state = NetState::WifiPreferred;
                                 box_retry_count = 0;
+                                mesh_retry_count = 0;
                                 last_box_retry = now;
                                 net.backoff_delay = Duration::from_secs(2);
                             }
@@ -555,6 +554,7 @@ impl NetManager {
                             match net.try_sta_connect(&mesh_ssid, &mesh_pmk, mesh_pmk.is_empty(), distance) {
                                 Ok(true) => {
                                     mesh_retry_count = 0;
+                                    box_retry_count = 0;
                                     ap_only_mode = false;
                                     let gateway_ip = net.wifi.wifi().sta_netif().get_ip_info().map(|info| info.subnet.gateway).unwrap_or(std::net::Ipv4Addr::new(192, 168, 71, 1));
                                     match crate::perform_mesh_sync(&nvs, gateway_ip) {
@@ -574,9 +574,12 @@ impl NetManager {
                                 }
                                 _ => {
                                     mesh_retry_count += 1;
-                                    warn!("WifiFallback: Failed to connect to parent Mesh. Retry #{}.", mesh_retry_count);
-                                    if !ap_only_mode && mesh_retry_count >= 2 {
-                                        info!("WifiFallback: No network found. Starting AP-only mode.");
+                                    warn!("WifiFallback: Failed to connect to parent Mesh. Retry #{}. Alternating to box.", mesh_retry_count);
+                                    // Alterner : repasser en WifiPreferred
+                                    net.state = NetState::WifiPreferred;
+                                    // Si les deux sont épuisés → AP-only
+                                    if !ap_only_mode && box_retry_count >= 5 && mesh_retry_count >= 3 {
+                                        info!("WifiFallback: Both box and mesh exhausted. Starting AP-only mode.");
                                         let _ = net.wifi.stop();
                                         let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), -1);
                                         ap_only_mode = true;

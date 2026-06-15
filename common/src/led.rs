@@ -39,12 +39,9 @@ pub const MAGENTA: Color = (255, 0, 255);
 pub const WHITE: Color = (255, 255, 255);
 
 pub fn set_led_color(color: Color, intensity: u8) {
-    // Limiter la puissance à 1 (max 1 sur 255)
-    let r = ((color.0 as u32 * intensity as u32) / 255).min(1) as u8;
-    let g = ((color.1 as u32 * intensity as u32) / 255).min(1) as u8;
-    let b = ((color.2 as u32 * intensity as u32) / 255).min(1) as u8;
-
-    log::info!("LED set_color: requested {:?} intensity {}, applied: ({}, {}, {})", color, intensity, r, g, b);
+    let r = ((color.0 as u32 * intensity as u32) / 255).min(255) as u8;
+    let g = ((color.1 as u32 * intensity as u32) / 255).min(255) as u8;
+    let b = ((color.2 as u32 * intensity as u32) / 255).min(255) as u8;
 
     let mut guard = LED_DRIVER.lock().unwrap();
     if let Some(ref mut driver) = *guard {
@@ -57,125 +54,121 @@ pub fn set_led_color(color: Color, intensity: u8) {
     }
 }
 
-// ─── Heartbeat Wi-Fi sur GPIO 44 (PWM logicielle, inchangé) ───
+// ─── Pattern LED RGB 2-impulsions (STA + AP), intensité 2/255 ───
 
-static WIFI_STATUS: AtomicU8 = AtomicU8::new(0); // 0 = Connecting, 1 = Connected
-static START_HEARTBEAT: Once = Once::new();
+static LED_STA_STATUS: AtomicU8 = AtomicU8::new(0);
+// 0 = None (rouge), 1 = WifiAttempting (vert clignotant), 2 = WifiOk (vert),
+// 3 = MeshAttempting (bleu clignotant), 4 = MeshOk (bleu)
+static LED_AP_STATUS: AtomicU8 = AtomicU8::new(0);
+// 0 = Off, 1 = MeshSsid (magenta), 2 = ApPairing (orange clignotant)
+static START_LED_PATTERN: Once = Once::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WifiStatus {
-    Connecting,  // Fast blink (600ms)
-    Connected,   // Slow pulse (2.5s)
-    Off,         // LED off
-    Pairing,     // Heartbeat double-pulse
+pub enum LedStaStatus {
+    None = 0,
+    WifiAttempting = 1,
+    WifiOk = 2,
+    MeshAttempting = 3,
+    MeshOk = 4,
 }
 
-pub fn set_wifi_status(status: WifiStatus) {
-    let val = match status {
-        WifiStatus::Connecting => 0,
-        WifiStatus::Connected => 1,
-        WifiStatus::Off => 2,
-        WifiStatus::Pairing => 3,
-    };
-    WIFI_STATUS.store(val, Ordering::SeqCst);
-    
-    START_HEARTBEAT.call_once(|| {
-        thread::spawn(move || {
-            // Configurer le GPIO 44 en output
-            let pin_mask = 1u64 << 44;
-            let config = esp_idf_sys::gpio_config_t {
-                pin_bit_mask: pin_mask,
-                mode: esp_idf_sys::gpio_mode_t_GPIO_MODE_OUTPUT,
-                pull_up_en: esp_idf_sys::gpio_pullup_t_GPIO_PULLUP_DISABLE,
-                pull_down_en: esp_idf_sys::gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
-                intr_type: esp_idf_sys::gpio_int_type_t_GPIO_INTR_DISABLE,
-            };
-            unsafe {
-                esp_idf_sys::gpio_config(&config);
-            }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedApStatus {
+    Off = 0,
+    MeshSsid = 1,
+    ApPairing = 2,
+}
 
-            let mut t: f64 = 0.0;
-            loop {
-                let status = WIFI_STATUS.load(Ordering::SeqCst);
-                if status == 2 {
-                    // Éteindre la LED
-                    unsafe {
-                        core::ptr::write_volatile(0x6000_401c as *mut u32, 1 << (44 - 32));
-                    }
-                    thread::sleep(Duration::from_millis(100));
-                    continue;
-                }
+pub fn set_sta_status(status: LedStaStatus) {
+    LED_STA_STATUS.store(status as u8, Ordering::SeqCst);
+    ensure_pattern_running();
+}
 
-                if status == 3 {
-                    // Heartbeat double-pulse (Pairing) — cycle de 1.5s
-                    let cycle_duration: f64 = 1.5;
-                    let intensity: u8 = if t < 0.08 {
-                        // Premier flash court (montée)
-                        ((t / 0.08 * std::f64::consts::PI).sin() * 255.0) as u8
-                    } else if t < 0.12 {
-                        0 // pause courte
-                    } else if t < 0.22 {
-                        // Second flash plus long
-                        (((t - 0.12) / 0.10 * std::f64::consts::PI).sin() * 255.0) as u8
-                    } else {
-                        0 // pause longue jusqu'à la fin du cycle
-                    };
+pub fn set_ap_status(status: LedApStatus) {
+    LED_AP_STATUS.store(status as u8, Ordering::SeqCst);
+    ensure_pattern_running();
+}
 
-                    let threshold = (intensity as f64 / 255.0 * 10.0).round() as i32;
-                    for step in 0..10 {
-                        unsafe {
-                            if step < threshold {
-                                core::ptr::write_volatile(0x6000_4010 as *mut u32, 1 << (44 - 32));
-                            } else {
-                                core::ptr::write_volatile(0x6000_401c as *mut u32, 1 << (44 - 32));
+fn ensure_pattern_running() {
+    START_LED_PATTERN.call_once(|| {
+        thread::Builder::new()
+            .name("led_pattern".to_string())
+            .stack_size(4096)
+            .spawn(move || {
+                let intensity: u8 = 2; // 2/255
+                let tick = Duration::from_millis(10);
+                let pulse_duration_ticks: u32 = 20;  // 200ms
+                let off_ticks: u32 = 40;              // 400ms
+                let cycle_ticks: u32 = pulse_duration_ticks + off_ticks + pulse_duration_ticks + off_ticks; // 1200ms
+                let mut phase: u32 = 0;
+
+                loop {
+                    let sta = LED_STA_STATUS.load(Ordering::SeqCst);
+                    let ap = LED_AP_STATUS.load(Ordering::SeqCst);
+
+                    let (r, g, b) = if phase < pulse_duration_ticks {
+                        // --- Pulse 1 : STA ---
+                        let sub = phase; // 0..19
+                        match sta {
+                            1 => { // WifiAttempting: green 50/50/50/50
+                                let m = sub % 10; // 0..9
+                                if m < 5 { (0, intensity, 0) } else { (0, 0, 0) }
+                            }
+                            2 => { // WifiOk: green 200ms
+                                (0, intensity, 0)
+                            }
+                            3 => { // MeshAttempting: blue 30/50/30/50/30
+                                let m = sub;
+                                if m < 3 || (m >= 8 && m < 11) || (m >= 16 && m < 19) {
+                                    (0, 0, intensity)
+                                } else {
+                                    (0, 0, 0)
+                                }
+                            }
+                            4 => { // MeshOk: blue 200ms
+                                (0, 0, intensity)
+                            }
+                            _ => { // None: red 200ms
+                                (intensity, 0, 0)
                             }
                         }
-                        thread::sleep(Duration::from_millis(1));
-                    }
-
-                    t += 0.010 / cycle_duration;
-                    if t >= 1.0 {
-                        t -= 1.0;
-                    }
-                    continue;
-                }
-
-                let cycle_duration = if status == 0 {
-                    0.6 // Connecting (rapide) -> 600 ms
-                } else {
-                    2.5 // Connected (lent) -> 2.5 secondes
-                };
-
-                let intensity = if t < 0.15 {
-                    let angle = (t / 0.15) * std::f64::consts::PI;
-                    (angle.sin() * 80.0) as u8
-                } else if t < 0.22 {
-                    0
-                } else if t < 0.40 {
-                    let angle = ((t - 0.22) / 0.18) * std::f64::consts::PI;
-                    (angle.sin() * 255.0) as u8
-                } else {
-                    0
-                };
-
-                // PWM logicielle : boucle rapide sur 10ms (10 pas de 1ms)
-                let threshold = (intensity as f64 / 255.0 * 10.0).round() as i32;
-                for step in 0..10 {
-                    unsafe {
-                        if step < threshold {
-                            core::ptr::write_volatile(0x6000_4010 as *mut u32, 1 << (44 - 32));
-                        } else {
-                            core::ptr::write_volatile(0x6000_401c as *mut u32, 1 << (44 - 32));
+                    } else if phase < pulse_duration_ticks + off_ticks {
+                        // --- 400ms off ---
+                        (0, 0, 0)
+                    } else if phase < pulse_duration_ticks + off_ticks + pulse_duration_ticks {
+                        // --- Pulse 2 : AP ---
+                        let sub = phase - pulse_duration_ticks - off_ticks; // 0..19
+                        match ap {
+                            1 => { // MeshSsid: magenta 200ms
+                                (intensity, 0, intensity)
+                            }
+                            2 => { // ApPairing: orange 30/50/30/50/30
+                                let m = sub;
+                                if m < 3 || (m >= 8 && m < 11) || (m >= 16 && m < 19) {
+                                    (intensity, intensity / 2, 0) // orange ≈ (R=2, G=1, B=0)
+                                } else {
+                                    (0, 0, 0)
+                                }
+                            }
+                            _ => { (0, 0, 0) }
                         }
-                    }
-                    thread::sleep(Duration::from_millis(1));
-                }
+                    } else {
+                        // --- 400ms off ---
+                        (0, 0, 0)
+                    };
 
-                t += 0.010 / cycle_duration;
-                if t >= 1.0 {
-                    t -= 1.0;
+                    // Écrire sur le WS2812
+                    let mut guard = LED_DRIVER.lock().unwrap();
+                    if let Some(ref mut driver) = *guard {
+                        let led_color = LedPixelColorGrb24::new_with_rgb(r, g, b);
+                        let _ = driver.write_blocking(led_color.as_ref().iter().copied());
+                    }
+                    drop(guard);
+
+                    thread::sleep(tick);
+                    phase = (phase + 1) % cycle_ticks;
                 }
-            }
-        });
+            })
+            .expect("Failed to spawn LED pattern thread");
     });
 }

@@ -66,18 +66,23 @@ impl CronWorker {
                         let wifi = self.wifi.lock().unwrap();
                         wifi.state
                     };
-                    
-                    match current_state {
-                        NetState::ApPairing => {
-                            common::led::set_wifi_status(common::led::WifiStatus::Pairing);
-                        }
-                        NetState::WifiPreferred | NetState::WifiFallback => {
-                            common::led::set_wifi_status(common::led::WifiStatus::Connecting);
-                        }
-                        NetState::WifiOk | NetState::MeshOk => {
-                            common::led::set_wifi_status(common::led::WifiStatus::Connected);
-                        }
-                    }
+
+                    // STA status (pulse 1)
+                    let sta = match current_state {
+                        NetState::WifiOk => common::led::LedStaStatus::WifiOk,
+                        NetState::WifiPreferred => common::led::LedStaStatus::WifiAttempting,
+                        NetState::MeshOk => common::led::LedStaStatus::MeshOk,
+                        NetState::WifiFallback => common::led::LedStaStatus::MeshAttempting,
+                        NetState::ApPairing => common::led::LedStaStatus::None,
+                    };
+                    common::led::set_sta_status(sta);
+
+                    // AP status (pulse 2)
+                    let ap = match current_state {
+                        NetState::ApPairing => common::led::LedApStatus::ApPairing,
+                        _ => common::led::LedApStatus::MeshSsid, // toujours broadcast mesh SSID sauf pairing
+                    };
+                    common::led::set_ap_status(ap);
                     
                     // Task 1: Collect sensor metrics every 30 seconds
                     let elapsed_metrics = self.last_metrics_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));

@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.31-0003";
+const FW_VERSION: &str = "1.0.31-0005";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -278,8 +278,7 @@ fn main() -> Result<()> {
             .context("Failed to init RMT LED driver")?;
     }
 
-    // Allumer la LED en Jaune à 10% (R=25, G=25, B=0) à la mise sous tension
-    common::led::set_led_color(common::led::YELLOW, 25);
+    // La LED est gérée par le thread pattern (led.rs) via set_sta_status/set_ap_status
 
     info!("\x1b[35mWhisperEye Production Application Starting Up (Version {})...\x1b[0m", FW_VERSION);
 
@@ -1504,11 +1503,9 @@ fn main() -> Result<()> {
                         state.distance = 0;
                     }
                     let _ = wifi.setup_persistent_ap(open_ap, 0);
-                    common::led::set_led_color(common::led::GREEN, 25);
                 } else {
                     warn!("Échec de la connexion Wi-Fi à '{}'.", ssid);
                     wifi.state = NetState::WifiFallback;
-                    common::led::set_led_color(common::led::YELLOW, 25);
                 }
             }
         }
@@ -1811,6 +1808,8 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
 
 
 
