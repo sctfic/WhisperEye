@@ -1,7 +1,6 @@
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi, Configuration, ClientConfiguration, AccessPointConfiguration, AuthMethod};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_hal::peripherals::Peripherals;
 use anyhow::{Result, Context};
 use log::{info, error, warn};
 use std::time::Duration;
@@ -14,8 +13,8 @@ pub struct WifiManager {
 }
 
 impl WifiManager {
-    pub fn new(peripherals: Peripherals, sys_loop: EspSystemEventLoop, nvs: EspDefaultNvsPartition) -> Result<Self> {
-        let esp_wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))
+    pub fn new(modem: esp_idf_hal::modem::Modem<'static>, sys_loop: EspSystemEventLoop, nvs: EspDefaultNvsPartition) -> Result<Self> {
+        let esp_wifi = EspWifi::new(modem, sys_loop.clone(), Some(nvs))
             .context("Failed to create EspWifi")?;
         let wifi = BlockingWifi::wrap(esp_wifi, sys_loop)?;
         Ok(Self { wifi, scan_cache: Vec::new() })

@@ -245,7 +245,7 @@ const CHIP_TYPE:  &str = "ESP32-S3";         // Type du microcontrôleur cible (
 ### 3. Configurer le Serveur de Mise à Jour OTA
 Le firmware de production interroge régulièrement l'URL stockée dans la NVS sous la clé `updateAvailable`. Le fichier ciblé par cette URL doit respecter la structure JSON attendue.
 
-Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware.json](./boards/board_default/firmware.json) sur votre serveur d'hébergement :
+Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware-s3.json](./boards/board_default/firmware-s3.json) sur votre serveur d'hébergement :
 ```json
   {
     "ChipType": "ESP32-S3",

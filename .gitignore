@@ -2,3 +2,4 @@ target/
 otadata_*.bin
 Cargo.lock
 a faire.txt
+minimalist_led/

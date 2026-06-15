@@ -59,6 +59,24 @@ impl CronWorker {
             match msg {
                 CronMessage::Tick => {
                     let now_instant = std::time::Instant::now();
+
+                    // Check if pairing mode has expired
+                    let mut pairing_expired = false;
+                    {
+                        let mut state = self.mesh_state.lock().unwrap();
+                        if let Some(until) = state.pairing_until {
+                            if now_instant >= until {
+                                info!("Pairing mode expired, reverting to secure Mesh AP mode...");
+                                state.pairing_until = None;
+                                pairing_expired = true;
+                            }
+                        }
+                    }
+                    if pairing_expired {
+                        if let Err(e) = crate::perform_wifi_connection(&self.wifi, &self.nvs, &self.mesh_state, false) {
+                            error!("Error reverting pairing mode to secure: {:?}", e);
+                        }
+                    }
                     
                     // Task 1: Collect sensor metrics every 30 seconds
                     let elapsed_metrics = self.last_metrics_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));

@@ -45,8 +45,8 @@ impl NvsStorage {
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
         }
         if self.get_str("updateAvailable")?.is_none() {
-            self.set_str("updateAvailable", "https://raw.githubusercontent.com/sctfic/WhisperEye/refs/heads/mesh/boards/board_default/firmware-s3.json")?;
-            // self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-c3.json")?;
+            // self.set_str("updateAvailable", "https://raw.githubusercontent.com/sctfic/WhisperEye/refs/heads/mesh/boards/board_default/firmware-s3.json")?;
+            self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3.json")?;
         }
         if self.get_str("updateDlUrl")?.is_none() {
             self.set_str("updateDlUrl", "empty")?;
@@ -63,11 +63,9 @@ impl NvsStorage {
         if self.get_i32("renameEnabled")?.is_none() {
             self.set_i32("renameEnabled", 1)?;
         }
-        if self.get_i32("meshEnabled")?.is_none() {
-            self.set_i32("meshEnabled", 1)?;
-        }
-        if self.get_i32("meshChannel")?.is_none() {
-            self.set_i32("meshChannel", 11)?;
+
+        if self.get_i32("wifiChannel")?.is_none() {
+            self.set_i32("wifiChannel", 11)?;
         }
         if self.get_str("meshId")?.is_none() {
             self.set_str("meshId", "Whiper")?;
@@ -194,7 +192,7 @@ impl NvsStorage {
             }
         }
         
-        let keys_i32 = &["otaRetry", "autoUpdate", "renameEnabled", "meshEnabled", "meshChannel"];
+        let keys_i32 = &["otaRetry", "autoUpdate", "renameEnabled", "wifiChannel"];
         for key in keys_i32 {
             match self.get_i32(key) {
                 Ok(Some(val)) => info!("  {} : {}", key, val),

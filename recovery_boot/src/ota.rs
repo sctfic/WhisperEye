@@ -56,7 +56,7 @@ pub fn get_formatted_time() -> String {
 
 fn perform_ota_inner(update_url: &str, nvs: Arc<Mutex<common::nvs_storage::NvsStorage>>) -> Result<()> {
     info!("Starting automatic OTA from URL: {}", update_url);
-    common::led::set_led_color(0, 0, 25); // Bleu à 10%
+    common::led::set_led_color(common::led::BLUE, 25); // Bleu à 10%
     {
 
         let mut status = UPDATE_STATUS.lock().unwrap();
