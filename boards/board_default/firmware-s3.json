@@ -16,12 +16,12 @@
     ],
     "unstable": [
         {
-            "version": "1.0.21-0001",
-            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.0.21-0001.bin"
+            "version": "1.0.21-0030",
+            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.0.21-0030.bin"
         },
         {
-            "version": "1.0.19-0017",
-            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.0.19-0017.bin"
+            "version": "1.0.21-0015",
+            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.0.21-0015.bin"
         }
     ]
 }
