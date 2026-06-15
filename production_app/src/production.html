@@ -744,11 +744,7 @@
                 <span class="info-value" id="mesh_ip">--</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Passerelle Mesh (CIDR)</span>
-                <span class="info-value" id="mesh_gateway_cidr">--</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">AP locale Mesh</span>
+                <span class="info-label">AccessPoint Mesh</span>
                 <span class="info-value" id="mesh_ap_ip">--</span>
             </div>
             <div class="info-group">
@@ -767,20 +763,8 @@
                 Variables de Configuration (NVS)
             </h3>
             <div class="info-group">
-                <span class="info-label">URL PUT Métriques</span>
-                <span class="info-value" id="status_metrics_url">--</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Dépôt de Mise à Jour</span>
-                <span class="info-value" id="status_update_url">--</span>
-            </div>
-            <div class="info-group">
                 <span class="info-label">Clé TOTP</span>
                 <span class="info-value" id="status_totp">--</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Firmware Production Actif</span>
-                <span class="info-value" id="prod_version">v1.0.0-poc</span>
             </div>
             <div class="info-group">
                 <span class="info-label">Carte WhisperEye</span>
@@ -895,9 +879,35 @@
                     </label>
                 </div>
 
-
-
-
+                <!-- metricsUrl -->
+                <div style="padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
+                    <div style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500; margin-bottom: 0.2rem;">
+                        URL de dépôt automatique des métriques (PUT)
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                        Dépose automatiquement les valeurs de tous les capteurs toutes les 5 minutes sur cette URL.
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <span id="metrics_url_display"
+                            style="font-size: 0.95rem; color: var(--text-primary); cursor: pointer;"
+                            onclick="startEditingMetricsUrl()">Non configuré</span>
+                        <span id="metrics_url_input_container"
+                            style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                            <input type="text" id="metrics_url_input" placeholder="http://mon-serveur:8080/api/metrics"
+                                style="padding: 0.25rem 0.5rem; font-size: 0.95rem; flex: 1; margin-bottom: 0;"
+                                onblur="handleBlurMetricsUrl()" onkeydown="handleKeyDownMetricsUrl(event)">
+                        </span>
+                        <button id="metrics_url_edit_btn" onclick="startEditingMetricsUrl()"
+                            style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;"
+                            title="Modifier l'URL de dépôt des métriques">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
 
                 <!-- Factory Reset -->
                 <div class="form-group" style="padding-top: 1rem; margin-bottom: 0;">
@@ -957,9 +967,6 @@
                     </div>
                     <div id="repo_url_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;"></div>
                 </div>
-                <button type="button" class="btn"
-                    style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1.5rem;"
-                    onclick="checkUpdates()">Vérifier les versions disponibles</button>
                 <div id="updates_list"
                     style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;"></div>
 
@@ -1063,14 +1070,14 @@
             // Supprime du milieu en partant de l'avant-dernier vers le 3ème (par la droite)
             for (let keepCount = middle.length; keepCount >= 1; keepCount--) {
                 const kept = middle.slice(0, keepCount);
-                const result = head + '/' + kept.join('/') + ' ... ' + tail;
+                const result = head + '/' + kept.join('/') + '/...' + tail;
                 if (result.length <= maxLen) {
                     return result;
                 }
             }
 
             // Même sans milieu c'est trop long → fallback
-            return head + ' ... ' + tail;
+            return head + '/...' + tail;
         }
 
         function formatShortUrl(url) {
@@ -1152,6 +1159,8 @@
                 scanSsids();
             } else if (tabId === 'devices-tab') {
                 fetchDevices();
+            } else if (tabId === 'update-tab') {
+                checkUpdates();
             }
         }
 
@@ -1239,6 +1248,19 @@
                         window.currentUpdateUrl = data.update_url;
                         const rawUrl = data.update_url || 'Non configuré';
                         repoUrlDisp.innerText = rawUrl === 'Non configuré' ? rawUrl : truncateCenter(rawUrl, 64);
+                    }
+
+        // Retirer status_metrics_url — plus affiché
+
+                    // Populate metrics_url editable field
+                    const metricsUrlDisp = document.getElementById('metrics_url_display');
+                    if (metricsUrlDisp) {
+                        window.currentMetricsUrl = data.metrics_url || '';
+                        metricsUrlDisp.innerText = data.metrics_url && data.metrics_url !== 'empty' ? data.metrics_url : 'Non configuré';
+                    }
+                    const metricsUrlInput = document.getElementById('metrics_url_input');
+                    if (metricsUrlInput && data.metrics_url !== undefined && !metricsUrlInput.matches(':focus')) {
+                        metricsUrlInput.value = data.metrics_url === 'empty' ? '' : (data.metrics_url || '');
                     }
 
                     // Update renameEnabled state
@@ -1358,42 +1380,7 @@
                     // 4. NTP (accessible, en echec ou injoignable)
                     document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + ntpStatusSvg;
 
-                    const statusMetricsUrlEl = document.getElementById('status_metrics_url');
-                    if (statusMetricsUrlEl) {
-                        if (data.metrics_url && data.metrics_url !== 'empty' && data.metrics_url !== '') {
-                            statusMetricsUrlEl.innerHTML = data.metrics_url + getStatusSvg('green');
-                        } else {
-                            statusMetricsUrlEl.innerHTML = 'Non définie' + getStatusSvg('red');
-                        }
-                    }
 
-                    const statusUpdateUrlEl = document.getElementById('status_update_url');
-                    if (statusUpdateUrlEl) {
-                        if (data.update_url && data.update_url !== 'empty' && data.update_url !== '') {
-                            const shortUrl = formatShortUrl(data.update_url);
-                            let statusIcon = '';
-                            if (data.update_url_valid === true) {
-                                statusIcon = getStatusSvg('green', 'Dépôt joignable');
-                            } else if (data.update_url_valid === false) {
-                                statusIcon = getStatusSvg('red', 'Dépôt injoignable ou invalide');
-                            } else {
-                                statusIcon = getStatusSvg('yellow', 'Vérification en cours...');
-                            }
-                            statusUpdateUrlEl.innerHTML = `${shortUrl} ${statusIcon}`;
-                        } else {
-                            statusUpdateUrlEl.innerHTML = 'Non configuré' + getStatusSvg('red');
-                        }
-                    }
-
-
-                    // 5. firmware (pas de firmware de prod, version deja demare, derniere version en place)
-                    if (!data.fw_version || data.fw_version === 'empty' || data.fw_version === 'Aucun') {
-                        document.getElementById('prod_version').innerHTML = 'Aucun' + getStatusSvg('yellow', 'En attente de provisionnement');
-                    } else if (data.fw_version.includes('v1.0.0-poc')) {
-                        document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Dernière version en place');
-                    } else {
-                        document.getElementById('prod_version').innerHTML = data.fw_version + getStatusSvg('green', 'Version démarrée');
-                    }
 
                     if (document.getElementById('whispereye_board')) {
                         if (data.whispereye_board && data.whispereye_board !== '--' && data.whispereye_board !== 'empty' && data.whispereye_board !== '') {
@@ -1514,17 +1501,6 @@
                             mIpEl.innerHTML = '--';
                         }
                     }
-
-                    const mGatewayCidrEl = document.getElementById('mesh_gateway_cidr');
-                    if (mGatewayCidrEl) {
-                        if (data.mesh_gateway && data.mesh_gateway !== '0.0.0.0' && data.mesh_gateway !== '') {
-                            const cidr_suffix = data.mesh_cidr ? `/${data.mesh_cidr}` : '/24';
-                            mGatewayCidrEl.innerHTML = `${data.mesh_gateway}${cidr_suffix}` + getStatusSvg('green');
-                        } else {
-                            mGatewayCidrEl.innerHTML = '--';
-                        }
-                    }
-
 
 
 
@@ -2280,7 +2256,69 @@
             installFirmware(url);
         }
 
+        // Rename Enabled toggle with warning modal on enable
         let editingRepoUrl = false;
+        let editingMetricsUrl = false;
+
+        function startEditingMetricsUrl() {
+            editingMetricsUrl = true;
+            const displayEl = document.getElementById('metrics_url_display');
+            const btnEl = document.getElementById('metrics_url_edit_btn');
+            const containerEl = document.getElementById('metrics_url_input_container');
+            if (displayEl) displayEl.style.display = 'none';
+            if (btnEl) btnEl.style.display = 'none';
+            if (containerEl) containerEl.style.display = 'flex';
+            const input = document.getElementById('metrics_url_input');
+            if (input) {
+                input.value = window.currentMetricsUrl === 'empty' ? '' : (window.currentMetricsUrl || '');
+                input.focus();
+                input.select();
+            }
+        }
+
+        function cancelEditingMetricsUrl() {
+            editingMetricsUrl = false;
+            const displayEl = document.getElementById('metrics_url_display');
+            const btnEl = document.getElementById('metrics_url_edit_btn');
+            const containerEl = document.getElementById('metrics_url_input_container');
+            if (displayEl) displayEl.style.display = 'inline';
+            if (btnEl) btnEl.style.display = 'flex';
+            if (containerEl) containerEl.style.display = 'none';
+        }
+
+        function handleBlurMetricsUrl() {
+            if (!editingMetricsUrl) return;
+            const input = document.getElementById('metrics_url_input');
+            if (!input) return;
+            const newUrl = input.value.trim();
+            const oldUrl = window.currentMetricsUrl || '';
+            if (newUrl === oldUrl || (newUrl === '' && oldUrl === 'Non configuré')) {
+                cancelEditingMetricsUrl();
+            } else {
+                saveMetricsUrl(newUrl);
+            }
+        }
+
+        function handleKeyDownMetricsUrl(event) {
+            if (event.key === 'Enter') {
+                const input = document.getElementById('metrics_url_input');
+                if (input) input.blur();
+            } else if (event.key === 'Escape') {
+                editingMetricsUrl = false;
+                cancelEditingMetricsUrl();
+            }
+        }
+
+        function saveMetricsUrl(url) {
+            cancelEditingMetricsUrl();
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ metrics_url: url, apply_only: true })
+            })
+                .then(() => fetchStatus())
+                .catch(err => console.error('Erreur metrics_url:', err));
+        }
 
         function startEditingRepoUrl() {
             editingRepoUrl = true;

@@ -27,7 +27,7 @@ impl NvsStorage {
             self.set_str("wifiKnown", r#"{"IoT":{"psk":"Esp32&Cie2026","default":true}}"#)?;
         }
         if self.get_str("ntpServer")?.is_none() {
-            self.set_str("ntpServer", "empty")?;
+            self.set_str("ntpServer", "default")?;
         }
         if self.get_str("metricsUrl")?.is_none() {
             self.set_str("metricsUrl", "empty")?;
@@ -70,10 +70,10 @@ impl NvsStorage {
         if self.get_str("meshId")?.is_none() {
             self.set_str("meshId", "WE-001")?;
         }
-        if self.get_str("meshPmk")?.is_none() {
+        if self.get_str("meshPmk")?.unwrap_or_default().is_empty() {
             self.set_str("meshPmk", "Mesh-IoT@Espressif!")?;
         }
-        if self.get_str("meshSsid")?.is_none() {
+        if self.get_str("meshSsid")?.unwrap_or_default().is_empty() {
             self.set_str("meshSsid", "Esp32MeshNetwork")?;
         }
         Ok(())

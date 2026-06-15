@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.30";
+const FW_VERSION: &str = "1.0.31-0003";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -362,12 +362,16 @@ fn main() -> Result<()> {
         let _ = registry.scan_and_register((*discovered_probes).clone());
     }
 
-    // Read Mesh configuration parameters from NVS
+    // Read Mesh configuration parameters from NVS (définies en dur, pas de fallback)
     let (mesh_channel, mesh_ssid, mesh_pmk) = {
         let storage = nvs_storage.lock().unwrap();
-        let channel = storage.get_i32("wifiChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
-        let ssid = storage.get_str("meshSsid").unwrap_or(Some("Esp32MeshNetwork".to_string())).unwrap_or_else(|| "Esp32MeshNetwork".to_string());
-        let pmk = storage.get_str("meshPmk").unwrap_or(Some("Mesh-IoT@Espressif!".to_string())).unwrap_or_else(|| "Mesh-IoT@Espressif!".to_string());
+        let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
+        let ssid = storage.get_str("meshSsid")?.unwrap_or_default();
+        let ssid = if ssid.is_empty() { "Esp32MeshNetwork".to_string() } else { ssid };
+        let pmk = storage.get_str("meshPmk")?.unwrap_or_default();
+        let pmk = if pmk.is_empty() { "Mesh-IoT@Espressif!".to_string() } else { pmk };
+        info!("Mesh config: channel={}, ssid='{}', pmk='{}...{}'",
+            channel, ssid, &pmk[..std::cmp::min(2, pmk.len())], &pmk[std::cmp::max(pmk.len().saturating_sub(2), 0)..]);
         (channel, ssid, pmk)
     };
 
@@ -442,8 +446,9 @@ fn main() -> Result<()> {
             storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
         };
 
-        let sntp = if !ntp_server.is_empty() && ntp_server != "default" {
-            info!("Initializing SNTP with custom server: {} and fallback pool.ntp.org", ntp_server);
+        let use_custom = is_valid_fqdn(&ntp_server);
+        let sntp = if use_custom {
+            info!("Initializing SNTP with custom server: {} (fallback pool.ntp.org)", ntp_server);
             let mut conf = esp_idf_svc::sntp::SntpConf::default();
             conf.servers[0] = &ntp_server;
             let s = EspSntp::new(&conf);
@@ -456,7 +461,7 @@ fn main() -> Result<()> {
             }
             s
         } else {
-            info!("Initializing SNTP default pool...");
+            info!("Initializing SNTP with default pool (ntpServer='{}' invalide ou absent)", ntp_server);
             EspSntp::new_default()
         };
 
@@ -687,11 +692,12 @@ fn main() -> Result<()> {
             };
             (state.is_root, state.distance, state.nodes.len(), rem)
         };
-        let (m_channel, m_id, m_pmk) = {
-            let channel = storage.get_i32("wifiChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
-            let id = storage.get_str("meshId").unwrap_or(Some("Whiper".to_string())).unwrap_or_else(|| "Whiper".to_string());
-            let pmk = storage.get_str("meshPmk").unwrap_or(Some("".to_string())).unwrap_or_else(|| "".to_string());
-            (channel, id, pmk)
+        let (m_channel, m_id, m_pmk, m_ssid) = {
+            let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
+            let id = storage.get_str("meshId")?.unwrap_or_default();
+            let pmk = storage.get_str("meshPmk")?.unwrap_or_default();
+            let ssid = storage.get_str("meshSsid")?.unwrap_or_default();
+            (channel, id, pmk, ssid)
         };
 
         let (active_mode, wifi_ssid) = match wifi.wifi.get_configuration() {
@@ -724,25 +730,17 @@ fn main() -> Result<()> {
         };
 
         // 2. Mesh Connection
-        let (mesh_ip, mesh_gateway, mesh_cidr) = if !m_root {
-            if let Some(info) = sta_ip_info {
-                (info.ip.to_string(), info.subnet.gateway.to_string(), info.subnet.mask.0)
-            } else {
-                ("0.0.0.0".to_string(), "0.0.0.0".to_string(), 0)
-            }
+        let mesh_ip = if let Some(info) = sta_ip_info {
+            format!("{}/{}", info.ip, info.subnet.mask.0)
         } else {
-            if let Some(info) = ap_ip_info {
-                (info.ip.to_string(), "".to_string(), 0)
-            } else {
-                ("192.168.71.1".to_string(), "".to_string(), 0)
-            }
+            "0.0.0.0/0".to_string()
         };
 
         let mesh_ap_ip = if let Some(info) = ap_ip_info {
-            info.ip.to_string()
+            format!("{}/24", info.ip)
         } else {
             let subnet = wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
-            format!("192.168.{}.1", subnet)
+            format!("192.168.{}.1/24", subnet)
         };
 
         let rssi = if active_mode == "Station" || active_mode == "Mixed" {
@@ -814,8 +812,6 @@ fn main() -> Result<()> {
             "wifi_gateway": wifi_gateway,
             "wifi_cidr": wifi_cidr,
             "mesh_ip": mesh_ip,
-            "mesh_gateway": mesh_gateway,
-            "mesh_cidr": mesh_cidr,
             "mesh_ap_ip": mesh_ap_ip,
             "sys_time": now_str,
             "ntp_server": ntp_server,
@@ -844,6 +840,7 @@ fn main() -> Result<()> {
             "mesh_channel": m_channel,
             "mesh_id": m_id,
             "mesh_pmk": m_pmk,
+            "mesh_ssid": m_ssid,
             "pairing_seconds_remaining": pairing_seconds_remaining,
             "author": {
                 "email": AUTHOR_EMAIL,
@@ -1424,7 +1421,7 @@ fn main() -> Result<()> {
 
                 // mesh_channel is no longer a user choice, aligned automatically on active wifiChannel.
                 if let Some(ref mesh_id) = payload.mesh_id {
-                    let current_id = storage.get_str("meshId")?.unwrap_or_else(|| "Whiper".to_string());
+                    let current_id = storage.get_str("meshId")?.unwrap_or_default();
                     if mesh_id != &current_id {
                         info!("Saving meshId to NVS: {}", mesh_id);
                         storage.set_str("meshId", mesh_id)?;
@@ -1434,7 +1431,7 @@ fn main() -> Result<()> {
                     }
                 }
                 if let Some(ref mesh_pmk) = payload.mesh_pmk {
-                    let current_pmk = storage.get_str("meshPmk")?.unwrap_or_else(|| "".to_string());
+                    let current_pmk = storage.get_str("meshPmk")?.unwrap_or_default();
                     if mesh_pmk != &current_pmk {
                         info!("Saving meshPmk to NVS");
                         storage.set_str("meshPmk", mesh_pmk)?;
@@ -1661,6 +1658,36 @@ fn is_valid_name(name: &str, max_len: usize) -> bool {
     true
 }
 
+fn is_valid_fqdn(name: &str) -> bool {
+    if name.is_empty() || name == "default" || name == "empty" {
+        return false;
+    }
+    if name.len() > 253 {
+        return false;
+    }
+    // Doit contenir au moins un point (host.domain)
+    if !name.contains('.') {
+        return false;
+    }
+    // Caractères autorisés : alphanumériques, tirets, points
+    for c in name.chars() {
+        if !c.is_ascii_alphanumeric() && c != '-' && c != '.' {
+            return false;
+        }
+    }
+    // Chaque label doit faire 1-63 caractères
+    for label in name.split('.') {
+        if label.is_empty() || label.len() > 63 {
+            return false;
+        }
+        // Un label ne doit pas commencer ni finir par un tiret
+        if label.starts_with('-') || label.ends_with('-') {
+            return false;
+        }
+    }
+    true
+}
+
 fn percent_decode(s: &str) -> String {
     let mut decoded = String::new();
     let mut chars = s.chars();
@@ -1784,6 +1811,9 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
 
 
 

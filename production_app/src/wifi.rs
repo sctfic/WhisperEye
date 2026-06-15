@@ -550,7 +550,7 @@ impl NetManager {
                                 (net.mesh_ssid.clone(), net.mesh_pmk.clone())
                             };
 
-                            info!("WifiFallback: Direct connect to mesh SSID '{}' (retry #{})", mesh_ssid, mesh_retry_count);
+                            info!("WifiFallback: Direct connect to mesh SSID '{}' (retry #{}), PMK len={}", mesh_ssid, mesh_retry_count, mesh_pmk.len());
                             let mut net = this.lock().unwrap();
                             match net.try_sta_connect(&mesh_ssid, &mesh_pmk, mesh_pmk.is_empty(), distance) {
                                 Ok(true) => {

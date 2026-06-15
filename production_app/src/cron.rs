@@ -156,50 +156,6 @@ impl CronWorker {
         // Reconnection handled asynchronously by the net_controller thread
     }
 
-    #[allow(dead_code)]
-    fn check_connection(&self) -> bool {
-        // 1. Get metricsUrl from NVS
-        let metrics_url = {
-            let storage = self.nvs.lock().unwrap();
-            storage.get_str("metricsUrl").ok().flatten().unwrap_or_default()
-        };
-
-        if !metrics_url.is_empty() && metrics_url != "empty" {
-            info!("Checking reachability of metrics server: {}...", metrics_url);
-            if let Some((host, port)) = parse_url_host_port(&metrics_url) {
-                if check_tcp_reachable(&host, port) {
-                    info!("Metrics server is reachable.");
-                    return true;
-                } else {
-                    warn!("Metrics server {} is unreachable.", metrics_url);
-                }
-            } else {
-                warn!("Failed to parse metricsUrl: {}", metrics_url);
-            }
-        }
-
-        // 2. Fallback to NTP server
-        let ntp_server = {
-            let storage = self.nvs.lock().unwrap();
-            storage.get_str("ntpServer").ok().flatten().unwrap_or_else(|| "pool.ntp.org".to_string())
-        };
-        let ntp_server = if ntp_server.is_empty() || ntp_server == "empty" {
-            "pool.ntp.org".to_string()
-        } else {
-            ntp_server
-        };
-
-        info!("Checking reachability of NTP server: {}...", ntp_server);
-        if check_dns_resolvable(&ntp_server) {
-            info!("NTP server is resolvable (DNS check passed).");
-            return true;
-        } else {
-            warn!("NTP server {} is not resolvable.", ntp_server);
-        }
-
-        false
-    }
-
     fn trigger_simulated_http_api(&self) {
         let metrics_url = {
             let storage = self.nvs.lock().unwrap();
