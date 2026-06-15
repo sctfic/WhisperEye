@@ -555,6 +555,10 @@
 
         <!-- TAB 1: STATUS -->
         <div id="status-tab" class="tab-content active">
+            <!-- Section 1: Infosystèmes -->
+            <h3 style="margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Infosystèmes
+            </h3>
             <div class="info-group">
                 <span class="info-label">État Système</span>
                 <span class="info-value"><span id="system_status_badge" class="badge badge-success"><svg
@@ -565,6 +569,19 @@
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>Opérationnel</span></span>
             </div>
+            <div class="info-group">
+                <span class="info-label">NTP Serveur</span>
+                <span class="info-value" id="ntp_server">wrt.lan</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Heure Système</span>
+                <span class="info-value" id="sys_time">1970-01-01 00:00:00</span>
+            </div>
+
+            <!-- Section 2: Réseau Wi-Fi -->
+            <h3 style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Réseau Wi-Fi
+            </h3>
             <div class="info-group">
                 <span class="info-label">Mode Réseau</span>
                 <span class="info-value"><span id="network_mode" class="badge badge-cyan">Station</span></span>
@@ -585,14 +602,11 @@
                 <span class="info-label">Passerelle (Gateway)</span>
                 <span class="info-value" id="gateway_addr">0.0.0.0</span>
             </div>
-            <div class="info-group">
-                <span class="info-label">Heure Système</span>
-                <span class="info-value" id="sys_time">1970-01-01 00:00:00</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">NTP Serveur</span>
-                <span class="info-value" id="ntp_server">wrt.lan</span>
-            </div>
+
+            <!-- Section 3: Variables de Configuration (NVS) -->
+            <h3 style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Variables de Configuration (NVS)
+            </h3>
             <div class="info-group">
                 <span class="info-label">Firmware Production Actif</span>
                 <span class="info-value" id="prod_version">empty</span>
@@ -609,7 +623,6 @@
                 <span class="info-label">Type de Puce</span>
                 <span class="info-value" id="chip_type">--</span>
             </div>
-
             <div class="info-group">
                 <span class="info-label">Dernier Téléchargement OTA</span>
                 <span class="info-value" id="last_ota_dl">1970-01-01 00:00:00</span>
@@ -623,6 +636,7 @@
                 <span class="info-value" id="last_ota">1970-01-01 00:00:00</span>
             </div>
         </div>
+
 
         <!-- TAB 2: CONFIGURATION -->
         <div id="config-tab" class="tab-content">
@@ -951,9 +965,10 @@
                         document.getElementById('ip_addr').innerHTML = (data.ip_addr || '0.0.0.0') + getStatusSvg('red', 'Hors ligne');
                     }
 
-                    // Passerelle (Gateway)
+                    // Passerelle (Gateway) au format CIDR
                     if (data.gateway_addr && data.gateway_addr !== '0.0.0.0' && data.gateway_addr !== '') {
-                        document.getElementById('gateway_addr').innerHTML = data.gateway_addr + getStatusSvg('green', 'Internet disponible');
+                        const cidr_suffix = data.cidr ? `/${data.cidr}` : '';
+                        document.getElementById('gateway_addr').innerHTML = `${data.gateway_addr}${cidr_suffix}` + getStatusSvg('green', 'Internet disponible');
                     } else {
                         document.getElementById('gateway_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
                     }

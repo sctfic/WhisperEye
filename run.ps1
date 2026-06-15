@@ -1,7 +1,7 @@
 # PowerShell Utility script for WhisperEye Workspace compilation and upload
 param (
     [Parameter(Mandatory = $false)]
-    [ValidateSet("recovery", "production", "nvs", "all")]
+    [ValidateSet("recovery", "production", "nvs", "all", "minimalist")]
     [string]$Target = "all",
 
     [Parameter(Mandatory = $false)]
@@ -155,6 +155,49 @@ function Increment-RecoveryVersion {
 
 
 # 2. Setup targets
+if ($Target -eq "minimalist") {
+    Write-Host "[*] Initiating build and flash for minimalist WS2812 RMT firmware..." -ForegroundColor Cyan
+    
+    if ($Clean) {
+        Write-Host "[*] Cleaning Cargo cache..." -ForegroundColor Gray
+        cargo +esp clean
+    }
+
+    $BuildProfile = if ($Debug) { "debug" } else { "release" }
+    Write-Host "[*] Compiling target package: minimalist_led ($BuildProfile)..." -ForegroundColor Cyan
+    $BuildCommand = "cargo +esp build --package minimalist_led"
+    if (-not $Debug) {
+        $BuildCommand += " --release"
+    }
+    Write-Host "    -> Invoking command: $BuildCommand" -ForegroundColor DarkGray
+    Invoke-Expression $BuildCommand
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Compilation of minimalist_led failed!" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "[*] Uploading minimalist_led onto 'production' partition..." -ForegroundColor Cyan
+    $FlashCommand = "cargo +esp espflash flash --flash-size 16mb --package minimalist_led --partition-table partitions.csv --target-app-partition production --monitor"
+    if (-not $Debug) {
+        $FlashCommand += " --release"
+    }
+    if ($Port) {
+        $FlashCommand += " --port $Port"
+    }
+    Write-Host "    -> Invoking command: $FlashCommand" -ForegroundColor DarkGray
+    try {
+        Invoke-Expression $FlashCommand
+    } catch {}
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Flashing of minimalist_led failed!" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "[+] Flashing of minimalist_led completed successfully!" -ForegroundColor Green
+    exit 0
+}
+
 if ($Target -eq "nvs") {
     Write-Host "[*] Initiating NVS erase process..." -ForegroundColor Cyan
     $FlashCommand = "cargo +esp espflash erase-parts --package recovery_boot --partition-table partitions.csv nvs"
