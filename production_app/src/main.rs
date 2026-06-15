@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.31-0005";
+const FW_VERSION: &str = "1.0.31-0007";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -131,7 +131,9 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
         }
     };
 
-    info!("Syncing with Mesh parent at http://{}/api/mesh/sync... (My IP: {})", gateway_ip, my_ip);
+    info!("Syncing with Mesh parent at http://{}/api/mesh/sync?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
+    // Court délai de stabilisation réseau après connexion Wi‑Fi
+    thread::sleep(std::time::Duration::from_millis(500));
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         crt_bundle_attach: None,
@@ -730,9 +732,9 @@ fn main() -> Result<()> {
 
         // 2. Mesh Connection
         let mesh_ip = if let Some(info) = sta_ip_info {
-            format!("{}/{}", info.ip, info.subnet.mask.0)
+            info.ip.to_string()
         } else {
-            "0.0.0.0/0".to_string()
+            "0.0.0.0".to_string()
         };
 
         let mesh_ap_ip = if let Some(info) = ap_ip_info {
@@ -1808,6 +1810,8 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
 
 
 

@@ -567,8 +567,13 @@ impl NetManager {
                                             let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), ms.distance);
                                         }
                                         Err(e) => {
-                                            warn!("WifiFallback: Mesh sync failed: {:?}", e);
-                                            let _ = net.wifi.disconnect();
+                                            warn!("WifiFallback: Mesh sync failed: {:?}. Keeping connection, assuming distance=1.", e);
+                                            // Ne pas déconnecter — la connexion Wi-Fi est établie
+                                            net.state = NetState::MeshOk;
+                                            let mut ms = mesh_state.lock().unwrap();
+                                            ms.is_root = false;
+                                            ms.distance = 1;
+                                            let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), 1);
                                         }
                                     }
                                 }
