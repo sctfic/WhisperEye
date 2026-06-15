@@ -5,6 +5,7 @@ pub struct StaticDevices {
     pub relay_a: PinDriver<'static, Output>,
     pub relay_b: PinDriver<'static, Output>,
     pub sw_pwr: PinDriver<'static, Output>,
+    #[allow(dead_code)]
     pub touch: PinDriver<'static, Input>,
     pub ina: PinDriver<'static, Output>,
     pub inb: PinDriver<'static, Output>,

@@ -205,7 +205,7 @@ impl NetManager {
         } else {
             "***".to_string()
         };
-        info!("Attempting STA connection to SSID: '{}', PSK: {}, Channel: {}, OpenAP: {}",
+        info!("\x1b[35;1m→ Début tentative connexion STA : SSID='{}', PSK={}, Channel={}, OpenAP={}\x1b[0m",
             ssid, masked_psk, self.mesh_channel, open_ap);
 
         let current_ap_cfg = match self.wifi.get_configuration() {
@@ -244,17 +244,17 @@ impl NetManager {
                 match self.wifi.wait_netif_up() {
                     Ok(_) => {
                         let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
-                        info!("STA Connection successful! IP: {:?}", ip_info.ip);
+                        info!("\x1b[35;1m← STA connexion RÉUSSIE ! IP: {:?}\x1b[0m", ip_info.ip);
                         self.current_sta_ssid = Some(ssid.to_string());
                         return Ok(true);
                     }
                     Err(e) => {
-                        warn!("DHCP lease failed: {:?}", e);
+                        warn!("\x1b[35;1m← DHCP échoué : {:?}\x1b[0m", e);
                     }
                 }
             }
             Err(e) => {
-                warn!("Wi-Fi connection failed: {:?}", e);
+                warn!("\x1b[35;1m← Échec connexion Wi-Fi : {:?}\x1b[0m", e);
             }
         }
 
@@ -325,10 +325,14 @@ impl NetManager {
     }
 
     /// Démarre un scan Wi-Fi asynchrone (non-bloquant). Le résultat sera lu via check_async_scan_result().
+    #[allow(dead_code)]
     pub fn start_async_scan(&mut self, ssid: &str, is_box: bool) -> bool {
         let config = ScanConfig {
             ssid: None, // Scan général, pas de filtre — plus fiable
-            scan_type: ScanType::Passive(Duration::from_millis(120)),
+            scan_type: ScanType::Active {
+                min: Duration::from_millis(120),
+                max: Duration::from_millis(400),
+            },
             ..Default::default()
         };
 
@@ -350,13 +354,14 @@ impl NetManager {
 
     /// Vérifie si le scan asynchrone est terminé.
     /// Retourne Some(true) si détecté, Some(false) si pas détecté, None si toujours en cours.
+    #[allow(dead_code)]
     pub fn check_async_scan_result(&mut self) -> Option<bool> {
         if !self.scan_pending {
             return None;
         }
 
         let elapsed = self.scan_start.map(|s| s.elapsed()).unwrap_or(Duration::from_secs(0));
-        let timed_out = elapsed >= Duration::from_secs(2);
+        let timed_out = elapsed >= Duration::from_secs(4);
 
         match self.wifi.wifi().is_scan_done() {
             Ok(true) => {
@@ -389,7 +394,7 @@ impl NetManager {
             }
             Ok(false) => {
                 if timed_out {
-                    warn!("Async scan for '{}' timed out after 2s", self.scan_target_ssid);
+                    warn!("Async scan for '{}' timed out after 4s", self.scan_target_ssid);
                     self.scan_pending = false;
                     self.scan_start = None;
                     // Tenter d'annuler le scan en cours
@@ -417,24 +422,17 @@ impl NetManager {
             .name("net_controller".to_string())
             .stack_size(8192)
             .spawn(move || {
-                info!("Network Controller Thread started (async scan mode).");
+                info!("Network Controller Thread started (direct connect mode).");
                 let mut last_scan_box = std::time::Instant::now() - Duration::from_secs(60);
                 let mut box_retry_count: u32 = 0;
                 let mut last_box_retry = std::time::Instant::now();
                 let mut mesh_retry_count: u32 = 0;
                 let mut last_mesh_retry = std::time::Instant::now();
                 let mut ap_only_mode = false;
-                let mut awaiting_scan_for: Option<NetState> = None; // Quel état attend le résultat du scan ?
 
                 loop {
-                    thread::sleep(Duration::from_millis(120));
+                    thread::sleep(Duration::from_millis(200));
                     let now = std::time::Instant::now();
-
-                    // Vérifier si un scan asynchrone est en cours
-                    let scan_result = {
-                        let mut net = this.lock().unwrap();
-                        net.check_async_scan_result()
-                    };
 
                     let (state, pairing_until, distance) = {
                         let net = this.lock().unwrap();
@@ -467,163 +465,61 @@ impl NetManager {
                                 }
                                 box_retry_count = 0;
                                 last_box_retry = now;
-                                awaiting_scan_for = None;
                             }
                         }
                         continue;
                     }
 
-                    // --- Traiter le résultat d'un scan asynchrone ---
-                    if let Some(result) = scan_result {
-                        let awaited = awaiting_scan_for.take();
-                        match awaited {
-                            Some(NetState::WifiPreferred) => {
-                                let ssid = {
-                                    let net = this.lock().unwrap();
-                                    net.scan_target_ssid.clone()
-                                };
-                                if result {
-                                    info!("WifiPreferred: SSID '{}' detected by async scan. Connecting...", ssid);
-                                    let (psk, open_ap) = {
-                                        let storage = nvs.lock().unwrap();
-                                        let known = storage.get_known_networks().unwrap_or_default();
-                                        let entry = known.get(&ssid);
-                                        (entry.map(|e| e.psk.clone()).unwrap_or_default(), entry.map(|e| e.psk.is_empty()).unwrap_or(true))
-                                    };
-                                    let mut net = this.lock().unwrap();
-                                    match net.try_sta_connect(&ssid, &psk, open_ap, 0) {
-                                        Ok(true) => {
-                                            info!("WifiPreferred: Successfully connected to box Wi-Fi!");
-                                            net.state = NetState::WifiOk;
-                                            box_retry_count = 0;
-                                            ap_only_mode = false;
-                                            net.backoff_delay = Duration::from_secs(2);
-                                            let mut ms = mesh_state.lock().unwrap();
-                                            ms.is_root = true;
-                                            ms.distance = 0;
-                                            let _ = net.setup_persistent_ap(open_ap, 0);
-                                        }
-                                        _ => {
-                                            box_retry_count += 1;
-                                            last_box_retry = now;
-                                            warn!("WifiPreferred: Connection failed. Retry count: {}.", box_retry_count);
-                                            if box_retry_count >= 5 {
-                                                info!("WifiPreferred: Max retries reached. Demoting to WifiFallback.");
-                                                net.state = NetState::WifiFallback;
-                                                box_retry_count = 0;
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    box_retry_count += 1;
-                                    last_box_retry = now;
-                                    warn!("WifiPreferred: Box SSID '{}' not detected. Retry #{}.", ssid, box_retry_count);
-                                    if box_retry_count >= 5 {
-                                        info!("WifiPreferred: Max retries reached. Demoting to WifiFallback.");
-                                        let mut net = this.lock().unwrap();
-                                        net.state = NetState::WifiFallback;
-                                        box_retry_count = 0;
-                                    }
-                                }
-                            }
-                            Some(NetState::WifiFallback) => {
-                                let (mesh_ssid, mesh_pmk) = {
-                                    let net = this.lock().unwrap();
-                                    (net.mesh_ssid.clone(), net.mesh_pmk.clone())
-                                };
-                                if result {
-                                    info!("WifiFallback: Mesh parent '{}' detected by async scan. Connecting...", mesh_ssid);
-                                    let mut net = this.lock().unwrap();
-                                    mesh_retry_count = 0;
-                                    ap_only_mode = false;
-                                    match net.try_sta_connect(&mesh_ssid, &mesh_pmk, mesh_pmk.is_empty(), distance) {
-                                        Ok(true) => {
-                                            let gateway_ip = net.wifi.wifi().sta_netif().get_ip_info().map(|info| info.subnet.gateway).unwrap_or(std::net::Ipv4Addr::new(192, 168, 71, 1));
-                                            match crate::perform_mesh_sync(&nvs, gateway_ip) {
-                                                Ok(parent_distance) => {
-                                                    info!("WifiFallback: Mesh sync successful! Parent distance: {}", parent_distance);
-                                                    net.state = NetState::MeshOk;
-                                                    let mut ms = mesh_state.lock().unwrap();
-                                                    ms.is_root = false;
-                                                    ms.distance = parent_distance + 1;
-                                                    let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), ms.distance);
-                                                }
-                                                Err(e) => {
-                                                    warn!("WifiFallback: Mesh sync failed: {:?}", e);
-                                                    let _ = net.wifi.disconnect();
-                                                }
-                                            }
-                                        }
-                                        _ => {
-                                            warn!("WifiFallback: Failed to connect to parent Mesh.");
-                                        }
-                                    }
-                                } else {
-                                    mesh_retry_count += 1;
-                                    info!("WifiFallback: No Mesh parent detected. Retry #{}.", mesh_retry_count);
-                                    if !ap_only_mode && mesh_retry_count >= 2 {
-                                        info!("WifiFallback: No network found. Starting AP-only mode.");
-                                        let mut net = this.lock().unwrap();
-                                        let _ = net.wifi.stop();
-                                        let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), -1);
-                                        ap_only_mode = true;
-                                    }
-                                }
-                                last_mesh_retry = now;
-                            }
-                            Some(NetState::MeshOk) => {
-                                // Scan périodique du Wi-Fi box depuis MeshOk
-                                let ssid = {
-                                    let net = this.lock().unwrap();
-                                    net.scan_target_ssid.clone()
-                                };
-                                if result {
-                                    info!("MeshOk: Box Wi-Fi '{}' detected! Disconnecting from mesh to try box.", ssid);
-                                    let mut net = this.lock().unwrap();
-                                    let _ = net.wifi.disconnect();
-                                    net.state = NetState::WifiPreferred;
-                                    box_retry_count = 0;
-                                    last_box_retry = now;
-                                    net.backoff_delay = Duration::from_secs(2);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    // --- Machine d'état (lancement des scans asynchrones) ---
                     match state {
                         NetState::ApPairing => {} // déjà filtré plus haut
 
                         NetState::WifiPreferred => {
-                            // Si un scan est déjà en cours, on attend son résultat
-                            if awaiting_scan_for.is_some() {
-                                continue;
-                            }
-
                             let backoff_secs = std::cmp::min(2u64.pow(box_retry_count), 32);
                             if now.duration_since(last_box_retry) < Duration::from_secs(backoff_secs) {
                                 continue;
                             }
 
-                            let default_net = {
+                            let (ssid, psk) = {
                                 let storage = nvs.lock().unwrap();
                                 let known = storage.get_known_networks().unwrap_or_default();
                                 known.iter()
                                     .find(|(_, e)| e.default.unwrap_or(false))
-                                    .map(|(ssid, e)| (ssid.clone(), e.psk.clone()))
+                                    .map(|(s, e)| (s.clone(), e.psk.clone()))
+                                    .unwrap_or_default()
                             };
 
-                            if let Some((ssid, _)) = default_net {
-                                info!("WifiPreferred: Starting async scan for SSID '{}' (retry #{})", ssid, box_retry_count);
-                                let mut net = this.lock().unwrap();
-                                if net.start_async_scan(&ssid, true) {
-                                    awaiting_scan_for = Some(NetState::WifiPreferred);
-                                }
-                            } else {
+                            if ssid.is_empty() {
                                 info!("WifiPreferred: No default Wi-Fi configured. Demoting to WifiFallback.");
                                 let mut net = this.lock().unwrap();
                                 net.state = NetState::WifiFallback;
+                                continue;
+                            }
+
+                            info!("WifiPreferred: Direct connect to SSID '{}' (retry #{})", ssid, box_retry_count);
+                            let mut net = this.lock().unwrap();
+                            let open_ap = psk.is_empty();
+                            match net.try_sta_connect(&ssid, &psk, open_ap, 0) {
+                                Ok(true) => {
+                                    info!("WifiPreferred: Successfully connected to box Wi-Fi!");
+                                    net.state = NetState::WifiOk;
+                                    box_retry_count = 0;
+                                    ap_only_mode = false;
+                                    net.backoff_delay = Duration::from_secs(2);
+                                    let mut ms = mesh_state.lock().unwrap();
+                                    ms.is_root = true;
+                                    ms.distance = 0;
+                                    let _ = net.setup_persistent_ap(open_ap, 0);
+                                }
+                                _ => {
+                                    box_retry_count += 1;
+                                    last_box_retry = now;
+                                    warn!("WifiPreferred: Connection failed. Retry #{}.", box_retry_count);
+                                    if box_retry_count >= 5 {
+                                        info!("WifiPreferred: Max retries reached. Demoting to WifiFallback.");
+                                        net.state = NetState::WifiFallback;
+                                        box_retry_count = 0;
+                                    }
+                                }
                             }
                         }
 
@@ -643,24 +539,49 @@ impl NetManager {
                         }
 
                         NetState::WifiFallback => {
-                            if awaiting_scan_for.is_some() {
-                                continue;
-                            }
-
                             let mesh_backoff = if mesh_retry_count >= 3 { 30u64 } else { 10u64 };
                             if now.duration_since(last_mesh_retry) < Duration::from_secs(mesh_backoff) {
                                 continue;
                             }
+                            last_mesh_retry = now;
 
-                            let mesh_ssid = {
+                            let (mesh_ssid, mesh_pmk) = {
                                 let net = this.lock().unwrap();
-                                net.mesh_ssid.clone()
+                                (net.mesh_ssid.clone(), net.mesh_pmk.clone())
                             };
 
-                            info!("WifiFallback: Starting async scan for mesh SSID '{}' (retry #{})", mesh_ssid, mesh_retry_count);
+                            info!("WifiFallback: Direct connect to mesh SSID '{}' (retry #{})", mesh_ssid, mesh_retry_count);
                             let mut net = this.lock().unwrap();
-                            if net.start_async_scan(&mesh_ssid, false) {
-                                awaiting_scan_for = Some(NetState::WifiFallback);
+                            match net.try_sta_connect(&mesh_ssid, &mesh_pmk, mesh_pmk.is_empty(), distance) {
+                                Ok(true) => {
+                                    mesh_retry_count = 0;
+                                    ap_only_mode = false;
+                                    let gateway_ip = net.wifi.wifi().sta_netif().get_ip_info().map(|info| info.subnet.gateway).unwrap_or(std::net::Ipv4Addr::new(192, 168, 71, 1));
+                                    match crate::perform_mesh_sync(&nvs, gateway_ip) {
+                                        Ok(parent_distance) => {
+                                            info!("WifiFallback: Mesh sync successful! Parent distance: {}", parent_distance);
+                                            net.state = NetState::MeshOk;
+                                            let mut ms = mesh_state.lock().unwrap();
+                                            ms.is_root = false;
+                                            ms.distance = parent_distance + 1;
+                                            let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), ms.distance);
+                                        }
+                                        Err(e) => {
+                                            warn!("WifiFallback: Mesh sync failed: {:?}", e);
+                                            let _ = net.wifi.disconnect();
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    mesh_retry_count += 1;
+                                    warn!("WifiFallback: Failed to connect to parent Mesh. Retry #{}.", mesh_retry_count);
+                                    if !ap_only_mode && mesh_retry_count >= 2 {
+                                        info!("WifiFallback: No network found. Starting AP-only mode.");
+                                        let _ = net.wifi.stop();
+                                        let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), -1);
+                                        ap_only_mode = true;
+                                    }
+                                }
                             }
                         }
 
@@ -675,22 +596,31 @@ impl NetManager {
                                 net.state = NetState::WifiFallback;
                                 mesh_retry_count = 0;
                                 last_mesh_retry = now;
-                            } else {
-                                if awaiting_scan_for.is_none() && last_scan_box.elapsed() >= Duration::from_secs(60) {
-                                    last_scan_box = std::time::Instant::now();
-                                    let default_net = {
-                                        let storage = nvs.lock().unwrap();
-                                        let known = storage.get_known_networks().unwrap_or_default();
-                                        known.iter()
-                                            .find(|(_, e)| e.default.unwrap_or(false))
-                                            .map(|(ssid, e)| (ssid.clone(), e.psk.clone()))
-                                    };
-                                    if let Some((ssid, _)) = default_net {
-                                        info!("MeshOk: Starting async scan for box Wi-Fi '{}'...", ssid);
-                                        let mut net = this.lock().unwrap();
-                                        if net.start_async_scan(&ssid, true) {
-                                            awaiting_scan_for = Some(NetState::MeshOk);
-                                        }
+                            } else if last_scan_box.elapsed() >= Duration::from_secs(60) {
+                                last_scan_box = std::time::Instant::now();
+                                let (ssid, psk) = {
+                                    let storage = nvs.lock().unwrap();
+                                    let known = storage.get_known_networks().unwrap_or_default();
+                                    known.iter()
+                                        .find(|(_, e)| e.default.unwrap_or(false))
+                                        .map(|(s, e)| (s.clone(), e.psk.clone()))
+                                        .unwrap_or_default()
+                                };
+                                if !ssid.is_empty() {
+                                    info!("MeshOk: Trying direct connect to box Wi-Fi '{}'...", ssid);
+                                    let mut net = this.lock().unwrap();
+                                    let _ = net.wifi.disconnect();
+                                    let open_ap = psk.is_empty();
+                                    if net.try_sta_connect(&ssid, &psk, open_ap, 0).unwrap_or(false) {
+                                        info!("MeshOk: Reconnected to box Wi-Fi!");
+                                        net.state = NetState::WifiOk;
+                                        box_retry_count = 0;
+                                        last_box_retry = now;
+                                        net.backoff_delay = Duration::from_secs(2);
+                                        let mut ms = mesh_state.lock().unwrap();
+                                        ms.is_root = true;
+                                        ms.distance = 0;
+                                        let _ = net.setup_persistent_ap(open_ap, 0);
                                     }
                                 }
                             }

@@ -9,7 +9,7 @@ use esp_idf_svc::http::server::{EspHttpServer, Configuration as ServerConfig};
 use esp_idf_svc::sntp::EspSntp;
 // use esp_idf_svc::systime::EspSystemTime;
 use anyhow::{Result, Context};
-use log::{info, warn, error};
+use log::{info, warn};
 use std::time::SystemTime;
 use std::thread;
 use std::sync::{Arc, Mutex};
@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.26";
+const FW_VERSION: &str = "1.0.30";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -1047,32 +1047,24 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // GET /api/ssids (Active hardware Wi-Fi scan)
+    // GET /api/ssids (Active hardware Wi-Fi scan via active_scan_ssid)
     let wifi_scan_clone = Arc::clone(&wifi_manager);
     let nvs_ssids_clone = Arc::clone(&nvs_storage);
     let ssids_mesh = Arc::clone(&mesh_state);
     server.fn_handler("/api/ssids", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(ssids_mesh);
         let mut wifi = wifi_scan_clone.lock().unwrap();
-        let ssids = match wifi.wifi.scan() {
-            Ok(ap_list) => {
-                let mut list: Vec<String> = ap_list.into_iter()
-                    .map(|ap| ap.ssid.to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                list.sort();
-                list.dedup();
-                wifi.scan_cache = list.clone();
-                list
+        // active_scan_ssid fait un scan général (ssid=None) et remplit scan_cache
+        let scan_ok = wifi.active_scan_ssid(""); // SSID bidon, le scan est général
+        let ssids = if scan_ok {
+            wifi.scan_cache.clone()
+        } else {
+            // Fallback au cache précédent
+            let mut fallback = wifi.scan_cache.clone();
+            if fallback.is_empty() {
+                fallback = vec!["IoT".to_string(), "Maison_WiFi".to_string(), "WhisperEye-Mesh".to_string(), "Freebox-Private".to_string()];
             }
-            Err(_) => {
-                // In AP mode, active scan fails (ESP_FAIL). Return the boot-time cache quietly.
-                let mut fallback = wifi.scan_cache.clone();
-                if fallback.is_empty() {
-                    fallback = vec!["IoT".to_string(), "Maison_WiFi".to_string(), "WhisperEye-Mesh".to_string(), "Freebox-Private".to_string()];
-                }
-                fallback
-            }
+            fallback
         };
         let wifi_ssid = {
             let storage = nvs_ssids_clone.lock().unwrap();
@@ -1498,13 +1490,9 @@ fn main() -> Result<()> {
                     }
                 }
 
-                if wifi.active_scan_ssid(ssid) {
-                    info!("SSID '{}' détecté via scan actif. Tentative de connexion STA...", ssid);
-                    if wifi.try_sta_connect(ssid, &final_psk, open_ap, distance).unwrap_or(false) {
-                        wifi_success = true;
-                    }
-                } else {
-                    info!("SSID '{}' non détecté lors du scan actif. Annulation de la tentative de connexion.", ssid);
+                info!("\x1b[35;1mConnexion directe au SSID '{}' (sans scan préalable)...\x1b[0m", ssid);
+                if wifi.try_sta_connect(ssid, &final_psk, open_ap, distance).unwrap_or(false) {
+                    wifi_success = true;
                 }
                 
                 if wifi_success {
@@ -1796,6 +1784,8 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
 
 
 

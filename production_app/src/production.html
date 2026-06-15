@@ -1046,31 +1046,31 @@
         const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
 
         function truncateCenter(str, maxLen = 64) {
-            // Speak la chaîne en fonction des slash, supprime les éléments en partant de l'avant-dernier vers le 4ieme. 
-            // regroupe le début, met des ' ... ' et regroupe la fin (avec le /)
-            // Si c'est toujours supérieur à Maxlen, enlève 1 élément de plus 
-            // Attention, on gardera obligatoirement les 4 1ers éléments et le dernier.
-            if (!str) return '';
-            if (str.length <= maxLen) return str;
+            if (!str || str.length <= maxLen) return str;
+
             const parts = str.split('/');
+            // 4 segments ou moins : troncation simple gauche/droite
             if (parts.length <= 4) {
                 const keep = Math.floor((maxLen - 3) / 2);
                 return str.substring(0, keep) + '...' + str.substring(str.length - keep);
             }
-            let startIdx = 3;
-            let endIdx = parts.length - 2;
-            while (true) {
-                const prefix = parts.slice(0, 3).join('/');
-                const suffix = parts.slice(endIdx + 1).join('/');
-                const middle = parts.slice(3, endIdx + 1).join('/');
-                const reconstructed = middle.length > 0
-                    ? `${prefix}/${middle}/.../${suffix}`
-                    : `${prefix}/.../${suffix}`;
-                if (reconstructed.length <= maxLen || endIdx < startIdx) {
-                    return reconstructed;
+
+            // On garde obligatoirement les 3 premiers segments et le dernier
+            const head = parts.slice(0, 3).join('/');         // début
+            const tail = '/' + parts[parts.length - 1];        // fin (avec le /)
+            const middle = parts.slice(3, parts.length - 1);   // segments à élaguer
+
+            // Supprime du milieu en partant de l'avant-dernier vers le 3ème (par la droite)
+            for (let keepCount = middle.length; keepCount >= 1; keepCount--) {
+                const kept = middle.slice(0, keepCount);
+                const result = head + '/' + kept.join('/') + ' ... ' + tail;
+                if (result.length <= maxLen) {
+                    return result;
                 }
-                endIdx--;
             }
+
+            // Même sans milieu c'est trop long → fallback
+            return head + ' ... ' + tail;
         }
 
         function formatShortUrl(url) {

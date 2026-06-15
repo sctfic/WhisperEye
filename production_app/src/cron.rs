@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
 use std::time::{SystemTime, Duration};
-use log::{info, warn, error};
+use log::{info, warn};
 use anyhow::{Result, Context};
 use common::nvs_storage::NvsStorage;
 use crate::sensors::{read_sensors, SensorReadings};
@@ -244,7 +244,6 @@ impl CronWorker {
                     return;
                 }
                 
-                use std::io::Write;
                 if let Err(e) = connection.write_all(payload_bytes) {
                     warn!("Failed to write telemetry payload: {:?}", e);
                     return;

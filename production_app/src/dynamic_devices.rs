@@ -237,6 +237,7 @@ impl DeviceRegistry {
     }
 
     /// Retrieve all registered devices from NVS
+    #[allow(dead_code)]
     pub fn get_devices(&self) -> HashMap<String, DeviceEntry> {
         self.load_registry()
     }

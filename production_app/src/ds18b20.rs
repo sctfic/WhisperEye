@@ -54,6 +54,7 @@ impl<'d> OneWire<'d> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn read_byte(&mut self) -> u8 {
         let mut byte = 0u8;
         for i in 0..8 {
