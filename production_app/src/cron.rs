@@ -6,7 +6,7 @@ use log::{info, warn, error};
 use anyhow::{Result, Context};
 use common::nvs_storage::NvsStorage;
 use crate::sensors::{read_sensors, SensorReadings};
-use crate::wifi::WifiManager;
+use crate::wifi::{NetManager, NetState};
 use crate::MeshState;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -26,7 +26,8 @@ pub struct CronWorker {
     rx: Receiver<CronMessage>,
     history: Vec<MetricEntry>,
     nvs: Arc<Mutex<NvsStorage>>,
-    wifi: Arc<Mutex<WifiManager>>,
+    wifi: Arc<Mutex<NetManager>>,
+    #[allow(dead_code)]
     mesh_state: Arc<Mutex<MeshState>>,
     last_metrics_run: Option<std::time::Instant>,
     last_telemetry_run: Option<std::time::Instant>,
@@ -37,7 +38,7 @@ impl CronWorker {
     pub fn new(
         rx: Receiver<CronMessage>,
         nvs: Arc<Mutex<NvsStorage>>,
-        wifi: Arc<Mutex<WifiManager>>,
+        wifi: Arc<Mutex<NetManager>>,
         mesh_state: Arc<Mutex<MeshState>>,
     ) -> Self {
         Self {
@@ -60,31 +61,22 @@ impl CronWorker {
                 CronMessage::Tick => {
                     let now_instant = std::time::Instant::now();
 
-                    // Check if pairing mode has expired
-                    let mut pairing_expired = false;
-                    let mut pairing_active = false;
-                    {
-                        let mut state = self.mesh_state.lock().unwrap();
-                        if let Some(until) = state.pairing_until {
-                            if now_instant >= until {
-                                info!("Pairing mode expired, reverting to secure Mesh AP mode...");
-                                state.pairing_until = None;
-                                pairing_expired = true;
-                            } else {
-                                pairing_active = true;
-                            }
-                        }
-                    }
-                    if pairing_expired {
-                        if let Err(e) = crate::perform_wifi_connection(&self.wifi, &self.nvs, &self.mesh_state, false) {
-                            error!("Error reverting pairing mode to secure: {:?}", e);
-                        }
-                    }
+                    // Mettre à jour la LED en fonction de l'état du réseau
+                    let current_state = {
+                        let wifi = self.wifi.lock().unwrap();
+                        wifi.state
+                    };
                     
-                    if pairing_active {
-                        common::led::set_wifi_status(common::led::WifiStatus::Connecting);
-                    } else {
-                        common::led::set_wifi_status(common::led::WifiStatus::Off);
+                    match current_state {
+                        NetState::ApPairing => {
+                            common::led::set_wifi_status(common::led::WifiStatus::Pairing);
+                        }
+                        NetState::WifiPreferred | NetState::WifiFallback => {
+                            common::led::set_wifi_status(common::led::WifiStatus::Connecting);
+                        }
+                        NetState::WifiOk | NetState::MeshOk => {
+                            common::led::set_wifi_status(common::led::WifiStatus::Connected);
+                        }
                     }
                     
                     // Task 1: Collect sensor metrics every 30 seconds
@@ -161,17 +153,10 @@ impl CronWorker {
             readings.temperature_sht45, readings.co2_scd41, readings.ds18b20_temperatures.len(), self.history.len()
         );
 
-        // Reconnection logic
-        if !self.check_connection() {
-            warn!("Network is unreachable. Triggering Wi-Fi reconnection...");
-            match crate::perform_wifi_connection(&self.wifi, &self.nvs, &self.mesh_state, false) {
-                Ok(true) => info!("Wi-Fi reconnection successful!"),
-                Ok(false) => warn!("Wi-Fi reconnection failed."),
-                Err(e) => error!("Error during Wi-Fi reconnection: {:?}", e),
-            }
-        }
+        // Reconnection handled asynchronously by the net_controller thread
     }
 
+    #[allow(dead_code)]
     fn check_connection(&self) -> bool {
         // 1. Get metricsUrl from NVS
         let metrics_url = {
@@ -434,6 +419,7 @@ fn version_entries(val: &serde_json::Value) -> Vec<&serde_json::Value> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_url_host_port(url: &str) -> Option<(String, u16)> {
     let without_scheme = if let Some(stripped) = url.strip_prefix("http://") {
         (stripped, 80)
@@ -457,6 +443,7 @@ fn parse_url_host_port(url: &str) -> Option<(String, u16)> {
     }
 }
 
+#[allow(dead_code)]
 fn check_tcp_reachable(host: &str, port: u16) -> bool {
     use std::net::{TcpStream, ToSocketAddrs};
     let addr_str = format!("{}:{}", host, port);
@@ -470,6 +457,7 @@ fn check_tcp_reachable(host: &str, port: u16) -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn check_dns_resolvable(host: &str) -> bool {
     use std::net::ToSocketAddrs;
     let addr_str = format!("{}:123", host);
@@ -502,7 +490,7 @@ impl CronHandle {
 
 pub fn spawn_cron_scheduler(
     nvs: Arc<Mutex<NvsStorage>>,
-    wifi: Arc<Mutex<WifiManager>>,
+    wifi: Arc<Mutex<NetManager>>,
     mesh_state: Arc<Mutex<MeshState>>,
 ) -> Result<CronHandle> {
     let (tx, rx) = channel();

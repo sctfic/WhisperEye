@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use esp_idf_sys as _; // Mandatory for linking ESP-IDF
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::gpio::{PinDriver, Pull};
@@ -15,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.25-0009";
+const FW_VERSION: &str = "1.0.26";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -47,7 +49,7 @@ mod i2c_bus;
 mod screen;
 mod radio;
 
-use wifi::WifiManager;
+use wifi::{NetManager, NetState};
 use common::nvs_storage::NvsStorage;
 use actuators::ActuatorsState;
 
@@ -109,18 +111,34 @@ pub struct MeshState {
     pub is_root: bool,
     pub distance: i32,
     pub nodes: std::collections::HashMap<String, std::time::SystemTime>,
+    pub ip_addresses: std::collections::HashMap<String, String>,
     pub pairing_until: Option<std::time::Instant>,
 }
 
-fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>) -> Result<i32> {
-    info!("Syncing with Mesh parent at http://192.168.71.1/api/mesh/sync...");
+fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Addr) -> Result<i32> {
+    let my_ip = unsafe {
+        let netif = esp_idf_sys::esp_netif_get_handle_from_ifkey(b"WIFI_STA_DEF\0".as_ptr() as *const _);
+        if !netif.is_null() {
+            let mut ip_info = esp_idf_sys::esp_netif_ip_info_t::default();
+            if esp_idf_sys::esp_netif_get_ip_info(netif, &mut ip_info) == 0 {
+                let ip = ip_info.ip.addr;
+                format!("{}.{}.{}.{}", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff)
+            } else {
+                "0.0.0.0".to_string()
+            }
+        } else {
+            "0.0.0.0".to_string()
+        }
+    };
+
+    info!("Syncing with Mesh parent at http://{}/api/mesh/sync... (My IP: {})", gateway_ip, my_ip);
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         crt_bundle_attach: None,
         ..Default::default()
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-    let url = format!("http://192.168.71.1/api/mesh/sync?mac={}", get_mac_address());
+    let url = format!("http://{}/api/mesh/sync?mac={}&ip={}", gateway_ip, get_mac_address(), my_ip);
     connection.initiate_request(esp_idf_svc::http::Method::Get, &url, &[])?;
     connection.initiate_response()?;
     
@@ -170,154 +188,7 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>) -> Result<i32> {
     Ok(res.distance)
 }
 
-pub fn perform_wifi_connection(
-    wifi_manager: &Arc<Mutex<WifiManager>>,
-    nvs_storage: &Arc<Mutex<NvsStorage>>,
-    mesh_state: &Arc<Mutex<MeshState>>,
-    is_boot: bool,
-) -> Result<bool> {
-    let (mesh_channel, mesh_id, mesh_ssid, mesh_pmk) = {
-        let storage = nvs_storage.lock().unwrap();
-        let channel = storage.get_i32("wifiChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
-        let id = storage.get_str("meshId").unwrap_or(Some("WE-001".to_string())).unwrap_or_else(|| "WE-001".to_string());
-        let ssid = storage.get_str("meshSsid").unwrap_or(Some("Esp32MeshNetwork".to_string())).unwrap_or_else(|| "Esp32MeshNetwork".to_string());
-        let pmk = storage.get_str("meshPmk").unwrap_or(Some("Mesh-IoT@Espressif!".to_string())).unwrap_or_else(|| "Mesh-IoT@Espressif!".to_string());
-        (channel, id, ssid, pmk)
-    };
 
-    let mut connected = false;
-    let mut chosen_ssid = String::new();
-    let mut is_root = false;
-    let mut distance = -1;
-
-    let known_networks = {
-        let storage = nvs_storage.lock().unwrap();
-        storage.get_known_networks().unwrap_or_default()
-    };
-
-    let default_net_psk = known_networks.iter()
-        .find(|(_, entry)| entry.default.unwrap_or(false))
-        .map(|(_, entry)| entry.psk.clone())
-        .unwrap_or_default();
-
-    let open_ap = {
-        let state = mesh_state.lock().unwrap();
-        if let Some(until) = state.pairing_until {
-            std::time::Instant::now() < until
-        } else {
-            false
-        }
-    } || default_net_psk.is_empty();
-
-    let mut wifi = wifi_manager.lock().unwrap();
-
-    info!("Mesh is active. Starting Mesh AP first... (open AP: {})", open_ap);
-
-    // 1. Démarrer l'AP Mesh immédiatement → les clients Mesh/frontend peuvent se connecter dès maintenant
-    wifi.start_mesh_ap_only(&mesh_ssid, &mesh_pmk, mesh_channel, open_ap)?;
-
-    // 2. Tenter la connexion STA vers les réseaux Wi-Fi connus uniquement s'ils sont détectés via scan actif ciblé
-    if !known_networks.is_empty() {
-        let default_net = known_networks.iter()
-            .find(|(_, entry)| entry.default.unwrap_or(false))
-            .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
-
-        // Essayer le réseau par défaut en premier
-        if let Some((ref ssid, ref psk)) = default_net {
-            if wifi.active_scan_ssid(ssid) {
-                info!("Trying default network '{}' (detected in active scan)...", ssid);
-                if wifi.try_sta_on_mesh(ssid, psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
-                    connected = true;
-                    chosen_ssid = ssid.clone();
-                    is_root = true;
-                    distance = 0;
-                }
-            } else {
-                info!("Default network '{}' not detected in active scan. Skipping connection attempt.", ssid);
-            }
-        }
-
-        // Si le défaut échoue ou n'est pas vu, essayer les autres réseaux connus
-        if !connected {
-            for (ssid, entry) in &known_networks {
-                if let Some((ref def_ssid, _)) = default_net {
-                    if ssid == def_ssid { continue; }
-                }
-                if wifi.active_scan_ssid(ssid) {
-                    info!("Trying known network '{}' (detected in active scan)...", ssid);
-                    if wifi.try_sta_on_mesh(ssid, &entry.psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
-                        connected = true;
-                        chosen_ssid = ssid.clone();
-                        is_root = true;
-                        distance = 0;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Si toujours pas connecté au Wi-Fi local, chercher un parent Mesh via scan actif ciblé
-    if !connected {
-        if wifi.active_scan_ssid(&mesh_ssid) {
-            info!("Found parent Mesh network '{}'. Connecting and syncing...", mesh_ssid);
-            if wifi.try_sta_on_mesh(&mesh_ssid, &mesh_pmk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
-                info!("Connected to Mesh parent. Synchronizing configuration...");
-                match perform_mesh_sync(nvs_storage) {
-                    Ok(parent_distance) => {
-                        connected = true;
-                        chosen_ssid = mesh_ssid.clone();
-                        is_root = false;
-                        distance = parent_distance + 1;
-                        info!("Mesh sync successful! Distance to root: {}", distance);
-                    }
-                    Err(e) => {
-                        warn!("Mesh synchronization failed: {:?}", e);
-                    }
-                }
-            }
-        } else {
-            info!("No parent Mesh network '{}' detected in active scan.", mesh_ssid);
-        }
-    }
-
-    // 4. Résultat du boot / reconnexion
-    if !connected {
-        warn!("No STA connection established. Mesh AP '{}' remains active for direct client access.", mesh_ssid);
-        is_root = false;
-        distance = -1;
-        common::led::set_led_color(common::led::YELLOW, 25); // Jaune : AP seul, pas de connexion routeur
-    } else {
-        if is_root {
-            if let Ok(mut storage) = nvs_storage.lock() {
-                let _ = storage.set_default_network_by_ssid(&chosen_ssid);
-            }
-        }
-        common::led::set_led_color(common::led::GREEN, 25); // Vert : connecté au routeur Wi-Fi
-
-        // Récupérer et sauvegarder le canal Wi-Fi actif
-        let mut primary_chan: u8 = 0;
-        let mut second_chan = 0;
-        unsafe {
-            let _ = esp_idf_sys::esp_wifi_get_channel(&mut primary_chan, &mut second_chan);
-        }
-        if primary_chan > 0 {
-            info!("Connected successfully. Saving active Wi-Fi channel {} to NVS as wifiChannel.", primary_chan);
-            if let Ok(mut storage) = nvs_storage.lock() {
-                let _ = storage.set_i32("wifiChannel", primary_chan as i32);
-            }
-        }
-    }
-
-    // Mettre à jour MeshState
-    {
-        let mut state = mesh_state.lock().unwrap();
-        state.is_root = is_root;
-        state.distance = distance;
-    }
-
-    Ok(connected)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum UrlValidationState {
@@ -390,11 +261,22 @@ fn main() -> Result<()> {
         .map(|()| log::set_max_level(log::LevelFilter::Info))
         .expect("Failed to initialize custom logger");
     
+    // Désactiver le Task Watchdog Timer — les scans Wi-Fi matériels
+    // de l'ESP32-S3 utilisent ets_delay_us qui bloque le CPU et empêche
+    // IDLE1 de nourrir le watchdog, provoquant des resets intempestifs.
+    unsafe {
+        esp_idf_sys::esp_task_wdt_deinit();
+    }
+    info!("Task Watchdog Timer désactivé.");
+    
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
 
     // Initialiser la LED RMT sur GPIO 48 (canal 0) avant tout appel à set_led_color
-    common::led::init_led(peripherals.rmt.channel0, peripherals.pins.gpio48)
-        .context("Failed to init RMT LED driver")?;
+    #[allow(deprecated)]
+    {
+        common::led::init_led(peripherals.rmt.channel0, peripherals.pins.gpio48)
+            .context("Failed to init RMT LED driver")?;
+    }
 
     // Allumer la LED en Jaune à 10% (R=25, G=25, B=0) à la mise sous tension
     common::led::set_led_color(common::led::YELLOW, 25);
@@ -480,15 +362,24 @@ fn main() -> Result<()> {
         let _ = registry.scan_and_register((*discovered_probes).clone());
     }
 
+    // Read Mesh configuration parameters from NVS
+    let (mesh_channel, mesh_ssid, mesh_pmk) = {
+        let storage = nvs_storage.lock().unwrap();
+        let channel = storage.get_i32("wifiChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
+        let ssid = storage.get_str("meshSsid").unwrap_or(Some("Esp32MeshNetwork".to_string())).unwrap_or_else(|| "Esp32MeshNetwork".to_string());
+        let pmk = storage.get_str("meshPmk").unwrap_or(Some("Mesh-IoT@Espressif!".to_string())).unwrap_or_else(|| "Mesh-IoT@Espressif!".to_string());
+        (channel, ssid, pmk)
+    };
+
     // Initialize Wi-Fi (consuming only the modem, leaving other pins untouched)
-    let wifi_manager = WifiManager::new(modem, sys_loop.clone(), nvs_default)?;
-    
+    let wifi_manager = NetManager::new(modem, sys_loop.clone(), nvs_default, mesh_ssid, mesh_pmk, mesh_channel)?;
     let wifi_manager = Arc::new(Mutex::new(wifi_manager));
 
     let mesh_state = Arc::new(Mutex::new(MeshState {
         is_root: false,
         distance: -1,
         nodes: std::collections::HashMap::new(),
+        ip_addresses: std::collections::HashMap::new(),
         pairing_until: None,
     }));
 
@@ -496,7 +387,6 @@ fn main() -> Result<()> {
     let boot_pin = PinDriver::input(boot_pin_gpio, Pull::Up)?;
 
     let wifi_manager_boot = Arc::clone(&wifi_manager);
-    let nvs_storage_boot = Arc::clone(&nvs_storage);
     let mesh_state_boot = Arc::clone(&mesh_state);
 
     thread::Builder::new()
@@ -510,11 +400,14 @@ fn main() -> Result<()> {
                     if pressed_ticks == 20 { // 20 * 100ms = 2 seconds
                         info!("BOOT button held for 2 seconds! Triggering pairing mode.");
                         {
+                            let mut net = wifi_manager_boot.lock().unwrap();
+                            net.state = NetState::ApPairing;
+                            net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
+                            if let Err(e) = net.setup_persistent_ap(true, -1) {
+                                warn!("Failed to apply pairing mode to Wi-Fi connection from BOOT button: {:?}", e);
+                            }
                             let mut state = mesh_state_boot.lock().unwrap();
-                            state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
-                        }
-                        if let Err(e) = perform_wifi_connection(&wifi_manager_boot, &nvs_storage_boot, &mesh_state_boot, false) {
-                            warn!("Failed to apply pairing mode to Wi-Fi connection from BOOT button: {:?}", e);
+                            state.pairing_until = net.pairing_until;
                         }
                     }
                 } else {
@@ -524,16 +417,32 @@ fn main() -> Result<()> {
             }
         })?;
     
-    let connected = perform_wifi_connection(&wifi_manager, &nvs_storage, &mesh_state, true)?;
+    // Initialiser l'AP mesh persistant en mode sécurisé ou ouvert selon le mot de passe
+    let open_ap = {
+        let storage = nvs_storage.lock().unwrap();
+        let known_networks = storage.get_known_networks().unwrap_or_default();
+        let default_net_psk = known_networks.iter()
+            .find(|(_, entry)| entry.default.unwrap_or(false))
+            .map(|(_, entry)| entry.psk.clone())
+            .unwrap_or_default();
+        default_net_psk.is_empty()
+    };
+    
+    {
+        let mut net = wifi_manager.lock().unwrap();
+        let _ = net.setup_persistent_ap(open_ap, -1);
+        net.state = NetState::WifiPreferred;
+        net.last_state_change = std::time::Instant::now();
+    }
 
-    // Initialize SNTP if connected to STA
-    let _sntp = if connected {
+    // Initialize SNTP client unconditionally
+    let _sntp = {
         let ntp_server = {
             let storage = nvs_storage.lock().unwrap();
             storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
         };
 
-        let sntp = if !ntp_server.is_empty() && ntp_server != "empty" {
+        let sntp = if !ntp_server.is_empty() && ntp_server != "default" {
             info!("Initializing SNTP with custom server: {} and fallback pool.ntp.org", ntp_server);
             let mut conf = esp_idf_svc::sntp::SntpConf::default();
             conf.servers[0] = &ntp_server;
@@ -555,9 +464,14 @@ fn main() -> Result<()> {
             warn!("Failed to initialize SNTP service");
         }
         sntp.ok()
-    } else {
-        None
     };
+
+    // Démarrer le thread de connectivité réseau
+    NetManager::start_controller_thread(
+        Arc::clone(&wifi_manager),
+        Arc::clone(&nvs_storage),
+        Arc::clone(&mesh_state),
+    )?;
 
     // Spawn robust periodic task scheduler
     let cron_handle = cron::spawn_cron_scheduler(
@@ -588,27 +502,96 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+    // GET /proxy/<MAC_ADRESSE>/<PATH>
+    let proxy_mesh = Arc::clone(&mesh_state);
+    server.fn_handler("/proxy/*", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        let uri = req.uri();
+        let parts: Vec<&str> = uri.split('/').collect();
+        if parts.len() < 4 {
+            let mut response = req.into_status_response(400)?;
+            response.write(b"URI de proxy invalide. Format: /proxy/MAC_ADRESSE/PATH")?;
+            return Ok(());
+        }
+
+        let mac = parts[2].to_uppercase();
+        let subpath = parts[3..].join("/");
+
+        let target_ip = {
+            let state = proxy_mesh.lock().unwrap();
+            state.ip_addresses.get(&mac).cloned()
+        };
+
+        let target_ip = match target_ip {
+            Some(ip) if ip != "0.0.0.0" => ip,
+            _ => {
+                let mut response = req.into_status_response(404)?;
+                response.write(format!("Noeuds enfant avec la MAC '{}' introuvable", mac).as_bytes())?;
+                return Ok(());
+            }
+        };
+
+        info!("Proxying request for child MAC {} to http://{}/{}", mac, target_ip, subpath);
+        
+        let config = esp_idf_svc::http::client::Configuration {
+            buffer_size: Some(1024),
+            crt_bundle_attach: None,
+            ..Default::default()
+        };
+        
+        let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
+        let target_url = format!("http://{}/{}", target_ip, subpath);
+        connection.initiate_request(esp_idf_svc::http::Method::Get, &target_url, &[])?;
+        connection.initiate_response()?;
+
+        let status = connection.status();
+        let mut body = Vec::new();
+        let mut chunk = [0u8; 512];
+        loop {
+            match connection.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => body.extend_from_slice(&chunk[..n]),
+                Err(e) => anyhow::bail!("Failed to read proxy response: {:?}", e),
+            }
+        }
+
+        let mut response = req.into_response(status, Some("OK"), &[
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*"),
+        ])?;
+        response.write(&body)?;
+        
+        Ok(())
+    })?;
+
     // Captive Portal HTTP Redirects for Mobile Auto-Popup (iOS, Android, Windows)
     server.fn_handler("/generate_204", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
+        let subnet = wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
+        let location = format!("http://192.168.{}.1/", subnet);
+        let mut response = req.into_response(302, Some("Found"), &[("Location", &location)])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/hotspot-detect.html", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
+        let subnet = wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
+        let location = format!("http://192.168.{}.1/", subnet);
+        let mut response = req.into_response(302, Some("Found"), &[("Location", &location)])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/ncsi.txt", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
+        let subnet = wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
+        let location = format!("http://192.168.{}.1/", subnet);
+        let mut response = req.into_response(302, Some("Found"), &[("Location", &location)])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
 
     server.fn_handler("/connecttest.txt", esp_idf_svc::http::Method::Get, |req| -> Result<(), anyhow::Error> {
-        let mut response = req.into_response(302, Some("Found"), &[("Location", "http://192.168.71.1/")])?;
+        let subnet = wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
+        let location = format!("http://192.168.{}.1/", subnet);
+        let mut response = req.into_response(302, Some("Found"), &[("Location", &location)])?;
         response.write(b"Redirecting to captive portal...")?;
         Ok(())
     })?;
@@ -626,12 +609,20 @@ fn main() -> Result<()> {
         };
         mac = mac.replace("%3A", ":").replace("%3a", ":");
         
-        info!("Received Mesh sync request from MAC: {}", mac);
+        let ip = if let Some(pos) = uri.find("ip=") {
+            let raw_ip = &uri[pos + 3..];
+            raw_ip.split('&').next().unwrap_or("0.0.0.0").to_string()
+        } else {
+            "0.0.0.0".to_string()
+        };
+        
+        info!("Received Mesh sync request from MAC: {} (IP: {})", mac, ip);
         
         {
             let mut state = mesh_state_sync.lock().unwrap();
             if mac != "unknown" {
-                state.nodes.insert(mac, std::time::SystemTime::now());
+                state.nodes.insert(mac.clone(), std::time::SystemTime::now());
+                state.ip_addresses.insert(mac, ip);
             }
             if state.pairing_until.is_some() {
                 state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
@@ -718,28 +709,40 @@ fn main() -> Result<()> {
             }
         };
 
-        let ip_info = if active_mode == "Station" || active_mode == "Mixed" {
-            wifi.wifi.wifi().sta_netif().get_ip_info().ok()
+        let sta_ip_info = wifi.wifi.wifi().sta_netif().get_ip_info().ok();
+        let ap_ip_info = wifi.wifi.wifi().ap_netif().get_ip_info().ok();
+
+        // 1. Wi-Fi (Box Connection)
+        let (wifi_ip, wifi_gateway, wifi_cidr) = if m_root {
+            if let Some(info) = sta_ip_info {
+                (info.ip.to_string(), info.subnet.gateway.to_string(), info.subnet.mask.0)
+            } else {
+                ("0.0.0.0".to_string(), "0.0.0.0".to_string(), 0)
+            }
         } else {
-            wifi.wifi.wifi().ap_netif().get_ip_info().ok()
+            ("".to_string(), "".to_string(), 0)
         };
 
-        let (ip_addr, gateway, cidr, netmask) = if let Some(info) = ip_info {
-            let cidr = info.subnet.mask.0;
-            let mask_u32 = if cidr == 0 {
-                0
+        // 2. Mesh Connection
+        let (mesh_ip, mesh_gateway, mesh_cidr) = if !m_root {
+            if let Some(info) = sta_ip_info {
+                (info.ip.to_string(), info.subnet.gateway.to_string(), info.subnet.mask.0)
             } else {
-                !0u32 << (32 - cidr)
-            };
-            let netmask = format!("{}.{}.{}.{}",
-                (mask_u32 >> 24) & 0xFF,
-                (mask_u32 >> 16) & 0xFF,
-                (mask_u32 >> 8) & 0xFF,
-                mask_u32 & 0xFF
-            );
-            (info.ip.to_string(), info.subnet.gateway.to_string(), cidr, netmask)
+                ("0.0.0.0".to_string(), "0.0.0.0".to_string(), 0)
+            }
         } else {
-            ("0.0.0.0".to_string(), "0.0.0.0".to_string(), 0, "0.0.0.0".to_string())
+            if let Some(info) = ap_ip_info {
+                (info.ip.to_string(), "".to_string(), 0)
+            } else {
+                ("192.168.71.1".to_string(), "".to_string(), 0)
+            }
+        };
+
+        let mesh_ap_ip = if let Some(info) = ap_ip_info {
+            info.ip.to_string()
+        } else {
+            let subnet = wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
+            format!("192.168.{}.1", subnet)
         };
 
         let rssi = if active_mode == "Station" || active_mode == "Mixed" {
@@ -807,10 +810,13 @@ fn main() -> Result<()> {
             "network_mode": active_mode,
             "wifi_ssid": wifi_ssid,
             "wifi_rssi": rssi,
-            "ip_addr": ip_addr,
-            "gateway_addr": gateway,
-            "netmask": netmask,
-            "cidr": cidr,
+            "wifi_ip": wifi_ip,
+            "wifi_gateway": wifi_gateway,
+            "wifi_cidr": wifi_cidr,
+            "mesh_ip": mesh_ip,
+            "mesh_gateway": mesh_gateway,
+            "mesh_cidr": mesh_cidr,
+            "mesh_ap_ip": mesh_ap_ip,
             "sys_time": now_str,
             "ntp_server": ntp_server,
             "metrics_url": metrics_url,
@@ -1154,6 +1160,12 @@ fn main() -> Result<()> {
         let bytes_read = req.read(&mut buf)?;
         let payload: RenamePayload = serde_json::from_slice(&buf[..bytes_read])?;
 
+        if !is_valid_name(&payload.name, 24) {
+            let mut response = req.into_status_response(400)?;
+            response.write(b"Nom de peripherique invalide. Il doit faire 24 caracteres max, sans espaces, ni ' ou ` ou :.")?;
+            return Ok(());
+        }
+
         let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&rename_nvs));
         if let Err(e) = registry.rename_device(&payload.id, &payload.name) {
             let mut response = req.into_status_response(400)?;
@@ -1306,19 +1318,19 @@ fn main() -> Result<()> {
     })?;
 
     // POST /api/mesh/pair
-    let nvs_pair = Arc::clone(&nvs_storage);
     let wifi_pair = Arc::clone(&wifi_manager);
     let mesh_state_pair = Arc::clone(&mesh_state);
     server.fn_handler("/api/mesh/pair", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         info!("Enabling pairing mode for 120 seconds...");
         {
+            let mut net = wifi_pair.lock().unwrap();
+            net.state = NetState::ApPairing;
+            net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
+            if let Err(e) = net.setup_persistent_ap(true, -1) {
+                warn!("Failed to apply pairing mode to Wi-Fi connection: {:?}", e);
+            }
             let mut state = mesh_state_pair.lock().unwrap();
-            state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
-        }
-        
-        // Reconnect/re-configure Wi-Fi immediately to open AP
-        if let Err(e) = perform_wifi_connection(&wifi_pair, &nvs_pair, &mesh_state_pair, false) {
-            warn!("Failed to apply pairing mode to Wi-Fi connection: {:?}", e);
+            state.pairing_until = net.pairing_until;
         }
         
         let mut response = req.into_ok_response()?;
@@ -1384,13 +1396,13 @@ fn main() -> Result<()> {
             if totp_success {
                 if let Some(ref ext_name) = payload.ext_name {
                     let trimmed = ext_name.trim();
-                    let final_name = if trimmed.len() > 16 {
-                        &trimmed[..16]
-                    } else {
-                        trimmed
-                    };
-                    info!("Saving extName to NVS: {}", final_name);
-                    storage.set_str("extName", final_name)?;
+                    if !is_valid_name(trimmed, 16) {
+                        let mut response = req.into_status_response(400)?;
+                        response.write(b"Nom de l'extendeur invalide. Il doit faire 16 caracteres max, sans espaces, ni ' ou ` ou :.")?;
+                        return Ok(());
+                    }
+                    info!("Saving extName to NVS: {}", trimmed);
+                    storage.set_str("extName", trimmed)?;
                 }
                 if let Some(ref ext_desc) = payload.ext_desc {
                     let trimmed = ext_desc.trim();
@@ -1457,17 +1469,17 @@ fn main() -> Result<()> {
                 let mut wifi = wifi_clone.lock().unwrap();
                 let mut storage = nvs_clone.lock().unwrap();
                 
-                let (mesh_channel, mesh_id, mesh_ssid, mesh_pmk, default_net_psk) = {
-                    let channel = storage.get_i32("wifiChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
-                    let id = storage.get_str("meshId").unwrap_or(Some("WE-001".to_string())).unwrap_or_else(|| "WE-001".to_string());
-                    let ssid = storage.get_str("meshSsid").unwrap_or(Some("Esp32MeshNetwork".to_string())).unwrap_or_else(|| "Esp32MeshNetwork".to_string());
-                    let pmk = storage.get_str("meshPmk").unwrap_or(Some("Mesh-IoT@Espressif!".to_string())).unwrap_or_else(|| "Mesh-IoT@Espressif!".to_string());
+                let default_net_psk = {
                     let known = storage.get_known_networks().unwrap_or_default();
-                    let dp = known.iter()
-                        .find(|(_, entry)| entry.default.unwrap_or(false))
-                        .map(|(_, entry)| entry.psk.clone())
-                        .unwrap_or_default();
-                    (channel, id, ssid, pmk, dp)
+                    known.values()
+                        .find(|entry| entry.default.unwrap_or(false))
+                        .map(|entry| entry.psk.clone())
+                        .unwrap_or_default()
+                };
+
+                let distance = {
+                    let state = config_mesh.lock().unwrap();
+                    state.distance
                 };
 
                 let open_ap = {
@@ -1486,10 +1498,9 @@ fn main() -> Result<()> {
                     }
                 }
 
-                // 1. Scan actif rapide sur le SSID ciblé avant la connexion
                 if wifi.active_scan_ssid(ssid) {
-                    info!("SSID '{}' détecté via scan actif. Tentative de connexion STA sur le Mesh...", ssid);
-                    if wifi.try_sta_on_mesh(ssid, &final_psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
+                    info!("SSID '{}' détecté via scan actif. Tentative de connexion STA...", ssid);
+                    if wifi.try_sta_connect(ssid, &final_psk, open_ap, distance).unwrap_or(false) {
                         wifi_success = true;
                     }
                 } else {
@@ -1499,34 +1510,20 @@ fn main() -> Result<()> {
                 if wifi_success {
                     info!("Connexion réussie au SSID '{}'. Sauvegarde dans le NVS...", ssid);
                     storage.set_default_network(ssid, &final_psk)?;
-                    common::led::set_led_color(common::led::GREEN, 25); // Vert car connecté
+                    wifi.state = NetState::WifiOk;
+                    wifi.retry_count = 0;
+                    wifi.backoff_delay = std::time::Duration::from_secs(2);
+                    {
+                        let mut state = config_mesh.lock().unwrap();
+                        state.is_root = true;
+                        state.distance = 0;
+                    }
+                    let _ = wifi.setup_persistent_ap(open_ap, 0);
+                    common::led::set_led_color(common::led::GREEN, 25);
                 } else {
                     warn!("Échec de la connexion Wi-Fi à '{}'.", ssid);
-                    // try_sta_on_mesh a déjà restauré le mode AP du Mesh.
-                    // Tentons de nous reconnecter au réseau par défaut pour rester robuste.
-                    let mut reconnected = false;
-                    let known_networks = storage.get_known_networks().unwrap_or_default();
-                    let default_net = known_networks.iter()
-                        .find(|(_, entry)| entry.default.unwrap_or(false))
-                        .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()));
-                    
-                    if let Some((ref d_ssid, ref d_psk)) = default_net {
-                        if d_ssid != ssid {
-                            info!("Tentative de reconnexion au réseau par défaut : {}", d_ssid);
-                            if wifi.active_scan_ssid(d_ssid) {
-                                if wifi.try_sta_on_mesh(d_ssid, d_psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
-                                    reconnected = true;
-                                    info!("Reconnexion réussie au réseau par défaut '{}'", d_ssid);
-                                }
-                            }
-                        }
-                    }
-                    
-                    if reconnected {
-                        common::led::set_led_color(common::led::GREEN, 25);
-                    } else {
-                        common::led::set_led_color(common::led::YELLOW, 25); // Jaune car AP seule sur Mesh
-                    }
+                    wifi.state = NetState::WifiFallback;
+                    common::led::set_led_color(common::led::YELLOW, 25);
                 }
             }
         }
@@ -1663,6 +1660,19 @@ fn main() -> Result<()> {
     }
 }
 
+fn is_valid_name(name: &str, max_len: usize) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.len() > max_len {
+        return false;
+    }
+    for c in trimmed.chars() {
+        if c == ' ' || c == '\'' || c == '`' || c == ':' {
+            return false;
+        }
+    }
+    true
+}
+
 fn percent_decode(s: &str) -> String {
     let mut decoded = String::new();
     let mut chars = s.chars();
@@ -1786,6 +1796,17 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

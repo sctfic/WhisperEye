@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
@@ -63,9 +64,10 @@ static START_HEARTBEAT: Once = Once::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WifiStatus {
-    Connecting,
-    Connected,
-    Off,
+    Connecting,  // Fast blink (600ms)
+    Connected,   // Slow pulse (2.5s)
+    Off,         // LED off
+    Pairing,     // Heartbeat double-pulse
 }
 
 pub fn set_wifi_status(status: WifiStatus) {
@@ -73,6 +75,7 @@ pub fn set_wifi_status(status: WifiStatus) {
         WifiStatus::Connecting => 0,
         WifiStatus::Connected => 1,
         WifiStatus::Off => 2,
+        WifiStatus::Pairing => 3,
     };
     WIFI_STATUS.store(val, Ordering::SeqCst);
     
@@ -100,6 +103,40 @@ pub fn set_wifi_status(status: WifiStatus) {
                         core::ptr::write_volatile(0x6000_401c as *mut u32, 1 << (44 - 32));
                     }
                     thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+
+                if status == 3 {
+                    // Heartbeat double-pulse (Pairing) — cycle de 1.5s
+                    let cycle_duration: f64 = 1.5;
+                    let intensity: u8 = if t < 0.08 {
+                        // Premier flash court (montée)
+                        ((t / 0.08 * std::f64::consts::PI).sin() * 255.0) as u8
+                    } else if t < 0.12 {
+                        0 // pause courte
+                    } else if t < 0.22 {
+                        // Second flash plus long
+                        (((t - 0.12) / 0.10 * std::f64::consts::PI).sin() * 255.0) as u8
+                    } else {
+                        0 // pause longue jusqu'à la fin du cycle
+                    };
+
+                    let threshold = (intensity as f64 / 255.0 * 10.0).round() as i32;
+                    for step in 0..10 {
+                        unsafe {
+                            if step < threshold {
+                                core::ptr::write_volatile(0x6000_4010 as *mut u32, 1 << (44 - 32));
+                            } else {
+                                core::ptr::write_volatile(0x6000_401c as *mut u32, 1 << (44 - 32));
+                            }
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                    }
+
+                    t += 0.010 / cycle_duration;
+                    if t >= 1.0 {
+                        t -= 1.0;
+                    }
                     continue;
                 }
 

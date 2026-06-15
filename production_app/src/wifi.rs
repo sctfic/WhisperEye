@@ -2,49 +2,241 @@ use esp_idf_svc::wifi::{BlockingWifi, EspWifi, Configuration, ClientConfiguratio
 use esp_idf_svc::wifi::config::{ScanConfig, ScanType};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::handle::RawHandle;
 use anyhow::{Result, Context};
 use log::{info, error, warn};
 use std::time::Duration;
 use std::net::UdpSocket;
 use std::thread;
+use std::sync::{Arc, Mutex};
+use common::nvs_storage::NvsStorage;
+use crate::MeshState;
 
-pub struct WifiManager {
+extern "C" {
+    pub fn ip_napt_enable(addr: u32, enable: i32) -> i32;
+}
+
+static DNS_SERVER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static AP_IP_R: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(192);
+pub static AP_IP_G: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(168);
+pub static AP_IP_B: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(71);
+pub static AP_IP_A: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
+fn make_ip4_addr(a: u8, b: u8, c: u8, d: u8) -> esp_idf_sys::esp_ip4_addr_t {
+    esp_idf_sys::esp_ip4_addr_t {
+        addr: ((d as u32) << 24) | ((c as u32) << 16) | ((b as u32) << 8) | (a as u32),
+    }
+}
+
+fn parse_ip_to_u32(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    ((d as u32) << 24) | ((c as u32) << 16) | ((b as u32) << 8) | (a as u32)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum NetState {
+    WifiPreferred,
+    WifiOk,
+    WifiFallback,
+    MeshOk,
+    ApPairing,
+}
+
+pub struct NetManager {
     pub wifi: BlockingWifi<EspWifi<'static>>,
+    pub state: NetState,
+    pub pairing_until: Option<std::time::Instant>,
+    pub last_state_change: std::time::Instant,
+    pub retry_count: u32,
     pub scan_cache: Vec<String>,
+    pub mesh_ssid: String,
+    pub mesh_pmk: String,
+    pub mesh_channel: u8,
+    pub current_sta_ssid: Option<String>,
     pub current_ap_ssid: Option<String>,
     pub current_ap_channel: Option<u8>,
     pub current_ap_open: Option<bool>,
-    pub current_sta_ssid: Option<String>,
+    pub backoff_delay: Duration,
+    // Async scan state (non-bloquant)
+    pub scan_pending: bool,
+    pub scan_start: Option<std::time::Instant>,
+    pub scan_target_ssid: String,
+    pub scan_is_box: bool, // true = box Wi-Fi, false = mesh
 }
 
-impl WifiManager {
-    pub fn new(modem: esp_idf_hal::modem::Modem<'static>, sys_loop: EspSystemEventLoop, nvs: EspDefaultNvsPartition) -> Result<Self> {
+impl NetManager {
+    pub fn new(
+        modem: esp_idf_hal::modem::Modem<'static>,
+        sys_loop: EspSystemEventLoop,
+        nvs: EspDefaultNvsPartition,
+        mesh_ssid: String,
+        mesh_pmk: String,
+        mesh_channel: u8,
+    ) -> Result<Self> {
         let esp_wifi = EspWifi::new(modem, sys_loop.clone(), Some(nvs))
             .context("Failed to create EspWifi")?;
         let wifi = BlockingWifi::wrap(esp_wifi, sys_loop)?;
+        
         Ok(Self {
             wifi,
+            state: NetState::WifiPreferred,
+            pairing_until: None,
+            last_state_change: std::time::Instant::now(),
+            retry_count: 0,
             scan_cache: Vec::new(),
+            mesh_ssid,
+            mesh_pmk,
+            mesh_channel,
+            current_sta_ssid: None,
             current_ap_ssid: None,
             current_ap_channel: None,
             current_ap_open: None,
-            current_sta_ssid: None,
+            backoff_delay: Duration::from_secs(2),
+            scan_pending: false,
+            scan_start: None,
+            scan_target_ssid: String::new(),
+            scan_is_box: true,
         })
     }
 
+    pub fn setup_persistent_ap(&mut self, open_ap: bool, distance: i32) -> Result<()> {
+        let subnet = match self.state {
+            NetState::ApPairing => 70,
+            _ => {
+                if distance == 0 {
+                    71
+                } else if distance > 0 {
+                    (71 + distance).min(79) as u8
+                } else {
+                    71
+                }
+            }
+        };
 
-    pub fn start_sta(&mut self, ssid: &str, psk: &str) -> Result<bool> {
-        info!("Attempting STA connection to SSID: '{}'", ssid);
-        
-        let config = Configuration::Client(ClientConfiguration {
-            ssid: ssid.try_into().unwrap(),
-            password: psk.try_into().unwrap(),
+        AP_IP_B.store(subnet, std::sync::atomic::Ordering::SeqCst);
+
+        let (ssid, auth_method, password) = match self.state {
+            NetState::ApPairing => (
+                "ESP32-Configuration".to_string(),
+                AuthMethod::None,
+                "".to_string(),
+            ),
+            _ => {
+                let auth = if open_ap || self.mesh_pmk.is_empty() {
+                    AuthMethod::None
+                } else {
+                    AuthMethod::WPA2Personal
+                };
+                (self.mesh_ssid.clone(), auth, self.mesh_pmk.clone())
+            }
+        };
+
+        info!("Configuring SoftAP: SSID='{}', subnet=192.168.{}.1", ssid, subnet);
+
+        let current_client_cfg = match self.wifi.get_configuration() {
+            Ok(Configuration::Mixed(client_cfg, _)) => client_cfg,
+            Ok(Configuration::Client(client_cfg)) => client_cfg,
+            _ => ClientConfiguration::default(),
+        };
+
+        let ap_config = AccessPointConfiguration {
+            ssid: ssid.as_str().try_into().unwrap(),
+            ssid_hidden: false,
+            channel: self.mesh_channel,
+            auth_method,
+            password: password.as_str().try_into().unwrap(),
             ..Default::default()
-        });
+        };
+
+        let config = Configuration::Mixed(current_client_cfg, ap_config);
+        self.wifi.set_configuration(&config)?;
+        self.wifi.start()?;
+
+        let ap_netif = self.wifi.wifi().ap_netif();
+        let handle = ap_netif.handle();
+
+        unsafe {
+            let _ = esp_idf_sys::esp_netif_dhcps_stop(handle);
+
+            let ip_info = esp_idf_sys::esp_netif_ip_info_t {
+                ip: make_ip4_addr(192, 168, subnet, 1),
+                gw: make_ip4_addr(192, 168, subnet, 1),
+                netmask: make_ip4_addr(255, 255, 255, 0),
+            };
+
+            let ret = esp_idf_sys::esp_netif_set_ip_info(handle, &ip_info);
+            if ret != 0 {
+                warn!("Failed to set SoftAP IP: {}", ret);
+            } else {
+                info!("SoftAP IP set to 192.168.{}.1", subnet);
+            }
+
+            let _ = esp_idf_sys::esp_netif_dhcps_start(handle);
+
+            let ap_ip = parse_ip_to_u32(192, 168, subnet, 1);
+            let napt_ret = ip_napt_enable(ap_ip, 1);
+            if napt_ret != 0 {
+                warn!("ip_napt_enable failed: {}", napt_ret);
+            } else {
+                info!("NAPT enabled on 192.168.{}.1", subnet);
+            }
+        }
+
+        if !DNS_SERVER_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            thread::spawn(|| {
+                if let Err(e) = run_captive_dns_server() {
+                    error!("Captive DNS Server error: {:?}", e);
+                    DNS_SERVER_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+        }
+
+        self.current_ap_ssid = Some(ssid);
+        self.current_ap_channel = Some(self.mesh_channel);
+        self.current_ap_open = Some(password.is_empty());
+
+        Ok(())
+    }
+
+    pub fn try_sta_connect(&mut self, ssid: &str, psk: &str, open_ap: bool, distance: i32) -> Result<bool> {
+        let masked_psk = if psk.len() > 4 {
+            format!("{}...{}", &psk[..2], &psk[psk.len()-2..])
+        } else if psk.is_empty() {
+            "(vide/open)".to_string()
+        } else {
+            "***".to_string()
+        };
+        info!("Attempting STA connection to SSID: '{}', PSK: {}, Channel: {}, OpenAP: {}",
+            ssid, masked_psk, self.mesh_channel, open_ap);
+
+        let current_ap_cfg = match self.wifi.get_configuration() {
+            Ok(Configuration::Mixed(_, ap_cfg)) => ap_cfg,
+            Ok(Configuration::AccessPoint(ap_cfg)) => ap_cfg,
+            _ => {
+                let _subnet = if distance == 0 { 71 } else if distance > 0 { (71 + distance).min(79) as u8 } else { 71 };
+                let auth_method = if open_ap || self.mesh_pmk.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal };
+                AccessPointConfiguration {
+                    ssid: self.mesh_ssid.as_str().try_into().unwrap(),
+                    ssid_hidden: false,
+                    channel: self.mesh_channel,
+                    auth_method,
+                    password: self.mesh_pmk.as_str().try_into().unwrap(),
+                    ..Default::default()
+                }
+            }
+        };
+
+        let config = Configuration::Mixed(
+            ClientConfiguration {
+                ssid: ssid.try_into().unwrap(),
+                password: psk.try_into().unwrap(),
+                ..Default::default()
+            },
+            current_ap_cfg,
+        );
 
         self.wifi.set_configuration(&config)?;
         self.wifi.start()?;
-        
+
         info!("Connecting to Wi-Fi...");
         match self.wifi.connect() {
             Ok(_) => {
@@ -54,7 +246,6 @@ impl WifiManager {
                         let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
                         info!("STA Connection successful! IP: {:?}", ip_info.ip);
                         self.current_sta_ssid = Some(ssid.to_string());
-                        self.current_ap_ssid = None;
                         return Ok(true);
                     }
                     Err(e) => {
@@ -66,305 +257,452 @@ impl WifiManager {
                 warn!("Wi-Fi connection failed: {:?}", e);
             }
         }
-        
-        let _ = self.wifi.stop();
-        self.current_sta_ssid = None;
-        self.current_ap_ssid = None;
-        Ok(false)
-    }
 
-    pub fn start_ap(&mut self) -> Result<()> {
-        info!("Starting AP mode: 'ESP32-Configuration'...");
-        
-        let config = Configuration::AccessPoint(AccessPointConfiguration {
-            ssid: "ESP32-Configuration".try_into().unwrap(),
-            ssid_hidden: false,
-            channel: 6,
-            auth_method: AuthMethod::None,
-            ..Default::default()
-        });
-
-        self.wifi.set_configuration(&config)?;
-        self.wifi.start()?;
-        
-        info!("AP mode started successfully!");
-        
-        if !DNS_SERVER_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            thread::spawn(|| {
-                if let Err(e) = run_captive_dns_server() {
-                    error!("Captive DNS Server error: {:?}", e);
-                    DNS_SERVER_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-                }
-            });
-        }
-
-        self.current_ap_ssid = Some("ESP32-Configuration".to_string());
-        self.current_ap_channel = Some(6);
-        self.current_ap_open = Some(true);
-        self.current_sta_ssid = None;
-
-        Ok(())
-    }
-
-    pub fn start_ap_sta(&mut self, ssid_sta: &str, psk_sta: &str, ssid_ap: &str, psk_ap: &str, channel_ap: u8) -> Result<bool> {
-        info!("Attempting Mixed mode: STA connect to '{}', AP start '{}' on channel {}", ssid_sta, ssid_ap, channel_ap);
-        
-        let config = Configuration::Mixed(
-            ClientConfiguration {
-                ssid: ssid_sta.try_into().unwrap(),
-                password: psk_sta.try_into().unwrap(),
-                ..Default::default()
-            },
-            AccessPointConfiguration {
-                ssid: ssid_ap.try_into().unwrap(),
-                ssid_hidden: false,
-                channel: channel_ap,
-                auth_method: if psk_ap.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
-                password: psk_ap.try_into().unwrap(),
-                ..Default::default()
-            }
-        );
-
-        self.wifi.set_configuration(&config)?;
-        self.wifi.start()?;
-        
-        info!("Connecting to Wi-Fi STA in Mixed mode...");
-        match self.wifi.connect() {
-            Ok(_) => {
-                info!("Waiting for DHCP lease in Mixed mode...");
-                match self.wifi.wait_netif_up() {
-                    Ok(_) => {
-                        let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
-                        info!("STA Connection successful in Mixed mode! IP: {:?}", ip_info.ip);
-                        self.current_ap_ssid = Some(ssid_ap.to_string());
-                        self.current_ap_channel = Some(channel_ap);
-                        self.current_ap_open = Some(psk_ap.is_empty());
-                        self.current_sta_ssid = Some(ssid_sta.to_string());
-                        return Ok(true);
-                    }
-                    Err(e) => {
-                        warn!("DHCP lease failed in Mixed mode: {:?}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Wi-Fi connection failed in Mixed mode: {:?}", e);
-            }
-        }
-        
-        // AP remains active even if STA connection fails
-        self.current_ap_ssid = Some(ssid_ap.to_string());
-        self.current_ap_channel = Some(channel_ap);
-        self.current_ap_open = Some(psk_ap.is_empty());
-        self.current_sta_ssid = None;
-        Ok(false)
-    }
-
-    /// Démarre l'AP Mesh seule (sans connexion STA).
-    /// Appelé une seule fois au boot quand le Mesh est activé.
-    /// L'AP reste active en permanence pour les clients Mesh et le frontend.
-    pub fn start_mesh_ap_only(&mut self, ssid_ap: &str, psk_ap: &str, channel_ap: u8, open_ap: bool) -> Result<()> {
-        if self.wifi.is_started().unwrap_or(false)
-            && self.current_ap_ssid.as_deref() == Some(ssid_ap)
-            && self.current_ap_channel == Some(channel_ap)
-            && self.current_ap_open == Some(open_ap)
-            && self.current_sta_ssid.is_none()
-        {
-            info!("Mesh AP '{}' already running with correct config, skipping restart.", ssid_ap);
-            return Ok(());
-        }
-
-        info!("Starting Mesh AP '{}' on channel {} (open: {})...", ssid_ap, channel_ap, open_ap);
-
-        let (auth_method, password) = if open_ap || psk_ap.is_empty() {
-            (AuthMethod::None, "".to_string())
-        } else {
-            (AuthMethod::WPA2Personal, psk_ap.to_string())
-        };
-
-        // Configurer en Mixed avec un client vide : l'AP démarre, le STA n'est pas connecté
-        let config = Configuration::Mixed(
-            ClientConfiguration::default(),
-            AccessPointConfiguration {
-                ssid: ssid_ap.try_into().unwrap(),
-                ssid_hidden: false,
-                channel: channel_ap,
-                auth_method,
-                password: password.as_str().try_into().unwrap(),
-                ..Default::default()
-            }
-        );
-
-        self.wifi.set_configuration(&config)?;
-        self.wifi.start()?;
-        
-        self.current_ap_ssid = Some(ssid_ap.to_string());
-        self.current_ap_channel = Some(channel_ap);
-        self.current_ap_open = Some(open_ap);
-        self.current_sta_ssid = None;
-
-        info!("Mesh AP '{}' started successfully.", ssid_ap);
-
-        // Démarrer le serveur DNS captive portal pour les clients AP
-        if !DNS_SERVER_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            thread::spawn(|| {
-                if let Err(e) = run_captive_dns_server() {
-                    error!("Captive DNS Server error: {:?}", e);
-                    DNS_SERVER_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-                }
-            });
-        }
-
-        Ok(())
-    }
-
-    /// Tente une connexion STA vers un SSID sans reconfigurer l'AP.
-    /// L'AP Mesh reste active tout au long de la tentative.
-    /// Retourne true si la connexion STA a réussi.
-    pub fn try_sta_on_mesh(
-        &mut self,
-        ssid_sta: &str,
-        psk_sta: &str,
-        ssid_ap: &str,
-        psk_ap: &str,
-        channel_ap: u8,
-        open_ap: bool,
-    ) -> Result<bool> {
-        // Si on est déjà connecté à cette STA en particulier, on évite de tout couper
-        if self.wifi.is_started().unwrap_or(false)
-            && self.current_sta_ssid.as_deref() == Some(ssid_sta)
-            && self.current_ap_ssid.as_deref() == Some(ssid_ap)
-            && self.current_ap_channel == Some(channel_ap)
-            && self.current_ap_open == Some(open_ap)
-        {
-            info!("Already connected to STA '{}' with Mesh AP active. Skipping try_sta_on_mesh.", ssid_sta);
-            return Ok(true);
-        }
-
-        info!("Trying STA '{}' while Mesh AP '{}' stays active (open: {})...", ssid_sta, ssid_ap, open_ap);
-
-        // Déconnecter le STA précédent sans couper l'AP
         let _ = self.wifi.disconnect();
-
-        let (auth_method, password) = if open_ap || psk_ap.is_empty() {
-            (AuthMethod::None, "".to_string())
-        } else {
-            (AuthMethod::WPA2Personal, psk_ap.to_string())
-        };
-
-        let config = Configuration::Mixed(
-            ClientConfiguration {
-                ssid: ssid_sta.try_into().unwrap(),
-                password: psk_sta.try_into().unwrap(),
-                ..Default::default()
-            },
-            AccessPointConfiguration {
-                ssid: ssid_ap.try_into().unwrap(),
-                ssid_hidden: false,
-                channel: channel_ap,
-                auth_method,
-                password: password.as_str().try_into().unwrap(),
-                ..Default::default()
-            }
-        );
-
-        self.wifi.set_configuration(&config)?;
-
-        match self.wifi.connect() {
-            Ok(_) => {
-                info!("Waiting for DHCP lease (STA on Mesh)...");
-                match self.wifi.wait_netif_up() {
-                    Ok(_) => {
-                        let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
-                        info!("STA connected on Mesh! IP: {:?}", ip_info.ip);
-                        self.current_ap_ssid = Some(ssid_ap.to_string());
-                        self.current_ap_channel = Some(channel_ap);
-                        self.current_ap_open = Some(open_ap);
-                        self.current_sta_ssid = Some(ssid_sta.to_string());
-                        return Ok(true);
-                    }
-                    Err(e) => {
-                        warn!("DHCP failed on Mesh STA: {:?}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("STA connect failed on Mesh: {:?}", e);
-            }
-        }
-
-        // En cas d'échec STA, remettre un Mixed propre sans STA (AP seule) sans couper l'AP
-        let _ = self.wifi.disconnect();
-
-        let fallback = Configuration::Mixed(
-            ClientConfiguration::default(),
-            AccessPointConfiguration {
-                ssid: ssid_ap.try_into().unwrap(),
-                ssid_hidden: false,
-                channel: channel_ap,
-                auth_method,
-                password: password.as_str().try_into().unwrap(),
-                ..Default::default()
-            }
-        );
-        self.wifi.set_configuration(&fallback)?;
-        
-        self.current_ap_ssid = Some(ssid_ap.to_string());
-        self.current_ap_channel = Some(channel_ap);
-        self.current_ap_open = Some(open_ap);
         self.current_sta_ssid = None;
-
-        info!("STA failed. Mesh AP '{}' restored (AP-only mode).", ssid_ap);
-
         Ok(false)
     }
 
     pub fn active_scan_ssid(&mut self, ssid: &str) -> bool {
-        info!("Performing targeted active scan for SSID: '{}'", ssid);
-        let mut hs_ssid = heapless::String::<32>::new();
-        if hs_ssid.push_str(&ssid[..std::cmp::min(ssid.len(), 32)]).is_ok() {
-            let config = ScanConfig {
-                ssid: Some(hs_ssid),
-                scan_type: ScanType::Active {
-                    min: Duration::from_millis(100),
-                    max: Duration::from_millis(250),
-                },
-                ..Default::default()
-            };
-            
-            if let Err(e) = self.wifi.wifi_mut().start_scan(&config, false) {
-                warn!("Failed to start active scan for '{}': {:?}", ssid, e);
-                return false;
-            }
-            
-            let wait_res = self.wifi.wifi_wait_while(
-                || self.wifi.wifi().is_scan_done().map(|done| !done),
-                None
-            );
-            
-            if let Err(e) = wait_res {
-                warn!("Active scan wait failed for '{}': {:?}", ssid, e);
-                return false;
-            }
-            
-            match self.wifi.wifi_mut().get_scan_result() {
-                Ok(ap_list) => {
-                    let found = ap_list.iter().any(|ap| ap.ssid.as_str() == ssid);
-                    info!("Targeted active scan for '{}' result: {}", ssid, found);
-                    found
+        info!("Performing general active scan to find SSID: '{}'", ssid);
+        // Scan général (sans filtre SSID) — plus fiable que le scan ciblé
+        let config = ScanConfig {
+            ssid: None, // pas de filtre, on voit tout
+            scan_type: ScanType::Active {
+                min: Duration::from_millis(120),
+                max: Duration::from_millis(300),
+            },
+            ..Default::default()
+        };
+
+        if let Err(e) = self.wifi.wifi_mut().start_scan(&config, false) {
+            warn!("Failed to start active scan: {:?}", e);
+            return false;
+        }
+
+        let start = std::time::Instant::now();
+        let mut done = false;
+        while start.elapsed() < Duration::from_secs(4) {
+            match self.wifi.wifi().is_scan_done() {
+                Ok(scan_done) => {
+                    if scan_done {
+                        done = true;
+                        break;
+                    }
                 }
                 Err(e) => {
-                    warn!("Targeted active scan for '{}' failed to get results: {:?}", ssid, e);
-                    false
+                    warn!("is_scan_done failed: {:?}", e);
+                    break;
                 }
             }
-        } else {
-            false
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        if !done {
+            warn!("Active scan timed out after 4s");
+            return false;
+        }
+
+        match self.wifi.wifi_mut().get_scan_result() {
+            Ok(ap_list) => {
+                info!("Scan found {} APs. Looking for '{}'...", ap_list.len(), ssid);
+                for ap in &ap_list {
+                    info!("  AP: SSID='{}', RSSI={}, Channel={}", ap.ssid, ap.signal_strength, ap.channel);
+                }
+                let found = ap_list.iter().any(|ap| ap.ssid.as_str() == ssid);
+                info!("SSID '{}' → {}", ssid, if found { "TROUVÉ" } else { "INTROUVABLE" });
+                self.scan_cache = ap_list.into_iter()
+                    .map(|ap| ap.ssid.to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                found
+            }
+            Err(e) => {
+                warn!("Failed to get scan results: {:?}", e);
+                false
+            }
         }
     }
-}
 
-static DNS_SERVER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    /// Démarre un scan Wi-Fi asynchrone (non-bloquant). Le résultat sera lu via check_async_scan_result().
+    pub fn start_async_scan(&mut self, ssid: &str, is_box: bool) -> bool {
+        let config = ScanConfig {
+            ssid: None, // Scan général, pas de filtre — plus fiable
+            scan_type: ScanType::Passive(Duration::from_millis(120)),
+            ..Default::default()
+        };
+
+        match self.wifi.wifi_mut().start_scan(&config, false) {
+            Ok(_) => {
+                self.scan_pending = true;
+                self.scan_start = Some(std::time::Instant::now());
+                self.scan_target_ssid = ssid.to_string();
+                self.scan_is_box = is_box;
+                info!("Async scan started for SSID '{}' (box={})", ssid, is_box);
+                true
+            }
+            Err(e) => {
+                warn!("Failed to start async scan for '{}': {:?}", ssid, e);
+                false
+            }
+        }
+    }
+
+    /// Vérifie si le scan asynchrone est terminé.
+    /// Retourne Some(true) si détecté, Some(false) si pas détecté, None si toujours en cours.
+    pub fn check_async_scan_result(&mut self) -> Option<bool> {
+        if !self.scan_pending {
+            return None;
+        }
+
+        let elapsed = self.scan_start.map(|s| s.elapsed()).unwrap_or(Duration::from_secs(0));
+        let timed_out = elapsed >= Duration::from_secs(2);
+
+        match self.wifi.wifi().is_scan_done() {
+            Ok(true) => {
+                self.scan_pending = false;
+                self.scan_start = None;
+                let ssid = self.scan_target_ssid.clone();
+                match self.wifi.wifi_mut().get_scan_result() {
+                    Ok(ap_list) => {
+                        info!("Async scan found {} APs. Looking for '{}'...", ap_list.len(), ssid);
+                        for ap in &ap_list {
+                            info!("  AP: SSID='{}', RSSI={}, Channel={}",
+                                ap.ssid, ap.signal_strength, ap.channel);
+                        }
+                        let found = ap_list.iter().any(|ap| ap.ssid.as_str() == ssid);
+                        info!("Async scan for '{}' → {}", ssid, if found { "TROUVÉ" } else { "INTROUVABLE" });
+                        {
+                            let cache = &mut self.scan_cache;
+                            *cache = ap_list.into_iter()
+                                .map(|ap| ap.ssid.to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        }
+                        Some(found)
+                    }
+                    Err(e) => {
+                        warn!("Async scan for '{}' failed to get results: {:?}", ssid, e);
+                        Some(false)
+                    }
+                }
+            }
+            Ok(false) => {
+                if timed_out {
+                    warn!("Async scan for '{}' timed out after 2s", self.scan_target_ssid);
+                    self.scan_pending = false;
+                    self.scan_start = None;
+                    // Tenter d'annuler le scan en cours
+                    let _ = self.wifi.wifi_mut().stop_scan();
+                    Some(false)
+                } else {
+                    None // Toujours en cours
+                }
+            }
+            Err(e) => {
+                warn!("is_scan_done failed during async scan: {:?}", e);
+                self.scan_pending = false;
+                self.scan_start = None;
+                Some(false)
+            }
+        }
+    }
+
+    pub fn start_controller_thread(
+        this: Arc<Mutex<Self>>,
+        nvs: Arc<Mutex<NvsStorage>>,
+        mesh_state: Arc<Mutex<MeshState>>,
+    ) -> Result<()> {
+        thread::Builder::new()
+            .name("net_controller".to_string())
+            .stack_size(8192)
+            .spawn(move || {
+                info!("Network Controller Thread started (async scan mode).");
+                let mut last_scan_box = std::time::Instant::now() - Duration::from_secs(60);
+                let mut box_retry_count: u32 = 0;
+                let mut last_box_retry = std::time::Instant::now();
+                let mut mesh_retry_count: u32 = 0;
+                let mut last_mesh_retry = std::time::Instant::now();
+                let mut ap_only_mode = false;
+                let mut awaiting_scan_for: Option<NetState> = None; // Quel état attend le résultat du scan ?
+
+                loop {
+                    thread::sleep(Duration::from_millis(120));
+                    let now = std::time::Instant::now();
+
+                    // Vérifier si un scan asynchrone est en cours
+                    let scan_result = {
+                        let mut net = this.lock().unwrap();
+                        net.check_async_scan_result()
+                    };
+
+                    let (state, pairing_until, distance) = {
+                        let net = this.lock().unwrap();
+                        (net.state, net.pairing_until, {
+                            let ms = mesh_state.lock().unwrap();
+                            ms.distance
+                        })
+                    };
+
+                    // --- Gestion du timeout du mode ApPairing ---
+                    if state == NetState::ApPairing {
+                        if let Some(until) = pairing_until {
+                            if now >= until {
+                                info!("Pairing mode expired. Reverting to WifiPreferred.");
+                                {
+                                    let mut net = this.lock().unwrap();
+                                    net.state = NetState::WifiPreferred;
+                                    net.pairing_until = None;
+                                    net.retry_count = 0;
+                                    net.backoff_delay = Duration::from_secs(2);
+                                    let mut ms = mesh_state.lock().unwrap();
+                                    ms.pairing_until = None;
+                                    let open_ap = {
+                                        let storage = nvs.lock().unwrap();
+                                        let known = storage.get_known_networks().unwrap_or_default();
+                                        let default_net_psk = known.values().find(|e| e.default.unwrap_or(false)).map(|e| e.psk.clone()).unwrap_or_default();
+                                        default_net_psk.is_empty()
+                                    };
+                                    let _ = net.setup_persistent_ap(open_ap, ms.distance);
+                                }
+                                box_retry_count = 0;
+                                last_box_retry = now;
+                                awaiting_scan_for = None;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // --- Traiter le résultat d'un scan asynchrone ---
+                    if let Some(result) = scan_result {
+                        let awaited = awaiting_scan_for.take();
+                        match awaited {
+                            Some(NetState::WifiPreferred) => {
+                                let ssid = {
+                                    let net = this.lock().unwrap();
+                                    net.scan_target_ssid.clone()
+                                };
+                                if result {
+                                    info!("WifiPreferred: SSID '{}' detected by async scan. Connecting...", ssid);
+                                    let (psk, open_ap) = {
+                                        let storage = nvs.lock().unwrap();
+                                        let known = storage.get_known_networks().unwrap_or_default();
+                                        let entry = known.get(&ssid);
+                                        (entry.map(|e| e.psk.clone()).unwrap_or_default(), entry.map(|e| e.psk.is_empty()).unwrap_or(true))
+                                    };
+                                    let mut net = this.lock().unwrap();
+                                    match net.try_sta_connect(&ssid, &psk, open_ap, 0) {
+                                        Ok(true) => {
+                                            info!("WifiPreferred: Successfully connected to box Wi-Fi!");
+                                            net.state = NetState::WifiOk;
+                                            box_retry_count = 0;
+                                            ap_only_mode = false;
+                                            net.backoff_delay = Duration::from_secs(2);
+                                            let mut ms = mesh_state.lock().unwrap();
+                                            ms.is_root = true;
+                                            ms.distance = 0;
+                                            let _ = net.setup_persistent_ap(open_ap, 0);
+                                        }
+                                        _ => {
+                                            box_retry_count += 1;
+                                            last_box_retry = now;
+                                            warn!("WifiPreferred: Connection failed. Retry count: {}.", box_retry_count);
+                                            if box_retry_count >= 5 {
+                                                info!("WifiPreferred: Max retries reached. Demoting to WifiFallback.");
+                                                net.state = NetState::WifiFallback;
+                                                box_retry_count = 0;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    box_retry_count += 1;
+                                    last_box_retry = now;
+                                    warn!("WifiPreferred: Box SSID '{}' not detected. Retry #{}.", ssid, box_retry_count);
+                                    if box_retry_count >= 5 {
+                                        info!("WifiPreferred: Max retries reached. Demoting to WifiFallback.");
+                                        let mut net = this.lock().unwrap();
+                                        net.state = NetState::WifiFallback;
+                                        box_retry_count = 0;
+                                    }
+                                }
+                            }
+                            Some(NetState::WifiFallback) => {
+                                let (mesh_ssid, mesh_pmk) = {
+                                    let net = this.lock().unwrap();
+                                    (net.mesh_ssid.clone(), net.mesh_pmk.clone())
+                                };
+                                if result {
+                                    info!("WifiFallback: Mesh parent '{}' detected by async scan. Connecting...", mesh_ssid);
+                                    let mut net = this.lock().unwrap();
+                                    mesh_retry_count = 0;
+                                    ap_only_mode = false;
+                                    match net.try_sta_connect(&mesh_ssid, &mesh_pmk, mesh_pmk.is_empty(), distance) {
+                                        Ok(true) => {
+                                            let gateway_ip = net.wifi.wifi().sta_netif().get_ip_info().map(|info| info.subnet.gateway).unwrap_or(std::net::Ipv4Addr::new(192, 168, 71, 1));
+                                            match crate::perform_mesh_sync(&nvs, gateway_ip) {
+                                                Ok(parent_distance) => {
+                                                    info!("WifiFallback: Mesh sync successful! Parent distance: {}", parent_distance);
+                                                    net.state = NetState::MeshOk;
+                                                    let mut ms = mesh_state.lock().unwrap();
+                                                    ms.is_root = false;
+                                                    ms.distance = parent_distance + 1;
+                                                    let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), ms.distance);
+                                                }
+                                                Err(e) => {
+                                                    warn!("WifiFallback: Mesh sync failed: {:?}", e);
+                                                    let _ = net.wifi.disconnect();
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            warn!("WifiFallback: Failed to connect to parent Mesh.");
+                                        }
+                                    }
+                                } else {
+                                    mesh_retry_count += 1;
+                                    info!("WifiFallback: No Mesh parent detected. Retry #{}.", mesh_retry_count);
+                                    if !ap_only_mode && mesh_retry_count >= 2 {
+                                        info!("WifiFallback: No network found. Starting AP-only mode.");
+                                        let mut net = this.lock().unwrap();
+                                        let _ = net.wifi.stop();
+                                        let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), -1);
+                                        ap_only_mode = true;
+                                    }
+                                }
+                                last_mesh_retry = now;
+                            }
+                            Some(NetState::MeshOk) => {
+                                // Scan périodique du Wi-Fi box depuis MeshOk
+                                let ssid = {
+                                    let net = this.lock().unwrap();
+                                    net.scan_target_ssid.clone()
+                                };
+                                if result {
+                                    info!("MeshOk: Box Wi-Fi '{}' detected! Disconnecting from mesh to try box.", ssid);
+                                    let mut net = this.lock().unwrap();
+                                    let _ = net.wifi.disconnect();
+                                    net.state = NetState::WifiPreferred;
+                                    box_retry_count = 0;
+                                    last_box_retry = now;
+                                    net.backoff_delay = Duration::from_secs(2);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // --- Machine d'état (lancement des scans asynchrones) ---
+                    match state {
+                        NetState::ApPairing => {} // déjà filtré plus haut
+
+                        NetState::WifiPreferred => {
+                            // Si un scan est déjà en cours, on attend son résultat
+                            if awaiting_scan_for.is_some() {
+                                continue;
+                            }
+
+                            let backoff_secs = std::cmp::min(2u64.pow(box_retry_count), 32);
+                            if now.duration_since(last_box_retry) < Duration::from_secs(backoff_secs) {
+                                continue;
+                            }
+
+                            let default_net = {
+                                let storage = nvs.lock().unwrap();
+                                let known = storage.get_known_networks().unwrap_or_default();
+                                known.iter()
+                                    .find(|(_, e)| e.default.unwrap_or(false))
+                                    .map(|(ssid, e)| (ssid.clone(), e.psk.clone()))
+                            };
+
+                            if let Some((ssid, _)) = default_net {
+                                info!("WifiPreferred: Starting async scan for SSID '{}' (retry #{})", ssid, box_retry_count);
+                                let mut net = this.lock().unwrap();
+                                if net.start_async_scan(&ssid, true) {
+                                    awaiting_scan_for = Some(NetState::WifiPreferred);
+                                }
+                            } else {
+                                info!("WifiPreferred: No default Wi-Fi configured. Demoting to WifiFallback.");
+                                let mut net = this.lock().unwrap();
+                                net.state = NetState::WifiFallback;
+                            }
+                        }
+
+                        NetState::WifiOk => {
+                            let connected = {
+                                let net = this.lock().unwrap();
+                                net.wifi.is_connected().unwrap_or(false)
+                            };
+                            if !connected {
+                                warn!("WifiOk: Connection to box Wi-Fi lost!");
+                                let mut net = this.lock().unwrap();
+                                net.state = NetState::WifiPreferred;
+                                box_retry_count = 0;
+                                last_box_retry = now;
+                                net.backoff_delay = Duration::from_secs(2);
+                            }
+                        }
+
+                        NetState::WifiFallback => {
+                            if awaiting_scan_for.is_some() {
+                                continue;
+                            }
+
+                            let mesh_backoff = if mesh_retry_count >= 3 { 30u64 } else { 10u64 };
+                            if now.duration_since(last_mesh_retry) < Duration::from_secs(mesh_backoff) {
+                                continue;
+                            }
+
+                            let mesh_ssid = {
+                                let net = this.lock().unwrap();
+                                net.mesh_ssid.clone()
+                            };
+
+                            info!("WifiFallback: Starting async scan for mesh SSID '{}' (retry #{})", mesh_ssid, mesh_retry_count);
+                            let mut net = this.lock().unwrap();
+                            if net.start_async_scan(&mesh_ssid, false) {
+                                awaiting_scan_for = Some(NetState::WifiFallback);
+                            }
+                        }
+
+                        NetState::MeshOk => {
+                            let connected = {
+                                let net = this.lock().unwrap();
+                                net.wifi.is_connected().unwrap_or(false)
+                            };
+                            if !connected {
+                                warn!("MeshOk: Connection to Mesh parent lost. Transitioning to WifiFallback.");
+                                let mut net = this.lock().unwrap();
+                                net.state = NetState::WifiFallback;
+                                mesh_retry_count = 0;
+                                last_mesh_retry = now;
+                            } else {
+                                if awaiting_scan_for.is_none() && last_scan_box.elapsed() >= Duration::from_secs(60) {
+                                    last_scan_box = std::time::Instant::now();
+                                    let default_net = {
+                                        let storage = nvs.lock().unwrap();
+                                        let known = storage.get_known_networks().unwrap_or_default();
+                                        known.iter()
+                                            .find(|(_, e)| e.default.unwrap_or(false))
+                                            .map(|(ssid, e)| (ssid.clone(), e.psk.clone()))
+                                    };
+                                    if let Some((ssid, _)) = default_net {
+                                        info!("MeshOk: Starting async scan for box Wi-Fi '{}'...", ssid);
+                                        let mut net = this.lock().unwrap();
+                                        if net.start_async_scan(&ssid, true) {
+                                            awaiting_scan_for = Some(NetState::MeshOk);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .context("Failed to spawn net_controller thread")?;
+
+        Ok(())
+    }
+}
 
 fn run_captive_dns_server() -> Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:53").context("Could not bind DNS port 53")?;
@@ -414,7 +752,13 @@ fn run_captive_dns_server() -> Result<()> {
                     response.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
                     response.extend_from_slice(&[0x00, 0x00, 0x00, 0x3c]);
                     response.extend_from_slice(&[0x00, 0x04]);
-                    response.extend_from_slice(&[192, 168, 71, 1]);
+                    
+                    response.extend_from_slice(&[
+                        AP_IP_R.load(std::sync::atomic::Ordering::Relaxed),
+                        AP_IP_G.load(std::sync::atomic::Ordering::Relaxed),
+                        AP_IP_B.load(std::sync::atomic::Ordering::Relaxed),
+                        AP_IP_A.load(std::sync::atomic::Ordering::Relaxed),
+                    ]);
                     
                     while current_offset < size && buf[current_offset] != 0 {
                         let len = buf[current_offset] as usize;

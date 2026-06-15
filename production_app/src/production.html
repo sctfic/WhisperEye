@@ -689,7 +689,7 @@
             </div>
             <div class="info-group">
                 <span class="info-label">NTP Serveur</span>
-                <span class="info-value" id="ntp_server">wrt.lan</span>
+                <span class="info-value" id="ntp_server">-</span>
             </div>
             <div class="info-group">
                 <span class="info-label">Heure Système</span>
@@ -699,12 +699,8 @@
             <!-- Section 2: Réseau Wi-Fi -->
             <h3
                 style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
-                Wi-Fi / Mesh
+                Réseau Wi-Fi
             </h3>
-            <div class="info-group">
-                <span class="info-label">Mode Réseau</span>
-                <span class="info-value"><span id="network_mode" class="badge badge-green">Station</span></span>
-            </div>
             <div class="info-group">
                 <span class="info-label">SSID Wi-Fi</span>
                 <span class="info-value" id="wifi_ssid">Chargement...</span>
@@ -713,10 +709,23 @@
                 <span class="info-label">Force Signal (RSSI)</span>
                 <span class="info-value" id="wifi_rssi_container"><span id="wifi_rssi">- dBm</span></span>
             </div>
-
             <div class="info-group">
-                <span class="info-label">AccessPoint side</span>
-                <span class="info-value" id="mesh_ap_ip">--</span>
+                <span class="info-label">Adresse IP Wi-Fi</span>
+                <span class="info-value" id="wifi_ip">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Passerelle Wi-Fi (CIDR)</span>
+                <span class="info-value" id="wifi_gateway_cidr">--</span>
+            </div>
+
+            <!-- Section 3: Réseau Mesh -->
+            <h3
+                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Réseau Mesh
+            </h3>
+            <div class="info-group">
+                <span class="info-label">Mode Réseau</span>
+                <span class="info-value"><span id="network_mode" class="badge badge-green">Station</span></span>
             </div>
             <div class="info-group">
                 <span class="info-label">Rôle dans le maillage</span>
@@ -731,12 +740,16 @@
                 <span class="info-value" id="mesh_nodes_count">--</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Client side</span>
-                <span class="info-value" id="mesh_sta_ip">--</span>
+                <span class="info-label">Adresse IP du nœud Mesh</span>
+                <span class="info-value" id="mesh_ip">--</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Passerelle & CIDR STA</span>
-                <span class="info-value" id="mesh_sta_gateway">--</span>
+                <span class="info-label">Passerelle Mesh (CIDR)</span>
+                <span class="info-value" id="mesh_gateway_cidr">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">AP locale Mesh</span>
+                <span class="info-value" id="mesh_ap_ip">--</span>
             </div>
             <div class="info-group">
                 <span class="info-label">Mode Appairage</span>
@@ -1463,28 +1476,52 @@
                         }
                     }
 
-                    // Alimentation IP Mesh (AP et STA)
-                    const mApIpEl = document.getElementById('mesh_ap_ip');
-                    if (mApIpEl) {
-                        mApIpEl.innerHTML = '192.168.71.1' + getStatusSvg('green');
-                    }
-
-                    const mStaIpEl = document.getElementById('mesh_sta_ip');
-                    if (mStaIpEl) {
-                        if (data.ip_addr && data.ip_addr !== '0.0.0.0') {
-                            mStaIpEl.innerHTML = data.ip_addr + getStatusSvg('green');
+                    // Alimentation IP Wi-Fi
+                    const wifiIpEl = document.getElementById('wifi_ip');
+                    if (wifiIpEl) {
+                        if (data.wifi_ip && data.wifi_ip !== '0.0.0.0' && data.wifi_ip !== '') {
+                            wifiIpEl.innerHTML = data.wifi_ip + getStatusSvg('green');
                         } else {
-                            mStaIpEl.innerHTML = '--';
+                            wifiIpEl.innerHTML = '--';
                         }
                     }
 
-                    const mStaGatewayEl = document.getElementById('mesh_sta_gateway');
-                    if (mStaGatewayEl) {
-                        if (data.gateway_addr && data.gateway_addr !== '0.0.0.0') {
-                            const cidr_suffix = data.cidr ? `/${data.cidr}` : '';
-                            mStaGatewayEl.innerHTML = `${data.gateway_addr}${cidr_suffix}` + getStatusSvg('green');
+                    const wifiGatewayCidrEl = document.getElementById('wifi_gateway_cidr');
+                    if (wifiGatewayCidrEl) {
+                        if (data.wifi_gateway && data.wifi_gateway !== '0.0.0.0' && data.wifi_gateway !== '') {
+                            const cidr_suffix = data.wifi_cidr ? `/${data.wifi_cidr}` : '/24';
+                            wifiGatewayCidrEl.innerHTML = `${data.wifi_gateway}${cidr_suffix}` + getStatusSvg('green');
                         } else {
-                            mStaGatewayEl.innerHTML = '--';
+                            wifiGatewayCidrEl.innerHTML = '--';
+                        }
+                    }
+
+                    // Alimentation IP Mesh (AP et STA)
+                    const mApIpEl = document.getElementById('mesh_ap_ip');
+                    if (mApIpEl) {
+                        if (data.mesh_ap_ip) {
+                            mApIpEl.innerHTML = data.mesh_ap_ip + getStatusSvg('green');
+                        } else {
+                            mApIpEl.innerHTML = '--';
+                        }
+                    }
+
+                    const mIpEl = document.getElementById('mesh_ip');
+                    if (mIpEl) {
+                        if (data.mesh_ip && data.mesh_ip !== '0.0.0.0' && data.mesh_ip !== '') {
+                            mIpEl.innerHTML = data.mesh_ip + getStatusSvg('green');
+                        } else {
+                            mIpEl.innerHTML = '--';
+                        }
+                    }
+
+                    const mGatewayCidrEl = document.getElementById('mesh_gateway_cidr');
+                    if (mGatewayCidrEl) {
+                        if (data.mesh_gateway && data.mesh_gateway !== '0.0.0.0' && data.mesh_gateway !== '') {
+                            const cidr_suffix = data.mesh_cidr ? `/${data.mesh_cidr}` : '/24';
+                            mGatewayCidrEl.innerHTML = `${data.mesh_gateway}${cidr_suffix}` + getStatusSvg('green');
+                        } else {
+                            mGatewayCidrEl.innerHTML = '--';
                         }
                     }
 
@@ -1786,9 +1823,17 @@
             const oldName = nameEl ? nameEl.innerText : '';
             if (newName === oldName || !newName) {
                 cancelEditingExtName();
-            } else {
-                saveExtNameAndDesc(newName, null);
+                return;
             }
+
+            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>,;%\$€*^]{1,16}$/;
+            if (!nameRegex.test(newName)) {
+                alert("Nom de l'extendeur invalide. Le nom doit faire 16 caractères maximum, ne pas contenir d'espaces, et n'utiliser que des caractères alphanumériques ou -_()[]<>,;%$€*^");
+                cancelEditingExtName();
+                return;
+            }
+
+            saveExtNameAndDesc(newName, null);
         }
 
         function handleKeyDownExtName(event) {

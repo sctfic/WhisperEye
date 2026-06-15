@@ -160,7 +160,7 @@ fn main() -> Result<()> {
             storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
         };
 
-        let sntp = if !ntp_server.is_empty() && ntp_server != "empty" {
+        let sntp = if !ntp_server.is_empty() && ntp_server != "default" {
             info!("Initializing SNTP with custom server: {} and fallback pool.ntp.org", ntp_server);
             let mut conf = esp_idf_svc::sntp::SntpConf::default();
             conf.servers[0] = &ntp_server;
