@@ -2,6 +2,4 @@ target/
 otadata_*.bin
 Cargo.lock
 a faire.txt
-minimalist_led/build.rs
-minimalist_led/Cargo.toml
-minimalist_led/src/main.rs
+minimalist_led/

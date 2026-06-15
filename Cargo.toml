@@ -2,7 +2,8 @@
 members = [
     "common",
     "recovery_boot",
-    "production_app"
+    "production_app",
+    "minimalist_led"
 ]
 resolver = "2"
 

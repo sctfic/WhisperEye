@@ -34,7 +34,7 @@ struct ConfigPayload {
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-recovery-0049";
+const FW_VERSION: &str = "1.0.0-recovery-0085";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -72,13 +72,17 @@ fn main() -> Result<()> {
         .map(|()| log::set_max_level(log::LevelFilter::Info))
         .expect("Failed to initialize custom logger");
     
+    let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
+
+    // Initialiser la LED RMT sur GPIO 48 (canal 0) avant tout appel à set_led_color
+    common::led::init_led(peripherals.rmt.channel0, peripherals.pins.gpio48)
+        .context("Failed to init RMT LED driver")?;
+
     // Allumer la LED en Jaune à 10% (R=25, G=25, B=0)
-    common::led::set_led_color(25, 25, 0);
+    common::led::set_led_color(common::led::YELLOW, 25);
 
     info!("\x1b[38;5;208mWhisperEye Recovery Boot Firmware Starting Up...\x1b[0m");
 
-
-    let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
     let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
     let nvs_default = EspDefaultNvsPartition::take().context("Failed to take NVS Partition")?;
 
@@ -91,12 +95,8 @@ fn main() -> Result<()> {
         let _ = storage.dump_to_log();
     }
     
-    // Initialize Wi-Fi
-    let mut wifi_manager = WifiManager::new(peripherals, sys_loop.clone(), nvs_default)?;
-    
-    // Perform initial scan before any connection attempts
-    let _ = wifi_manager.perform_initial_scan();
-    
+    // Initialize Wi-Fi (on ne passe que le modem, le RMT ayant déjà consommé ses canaux)
+    let mut wifi_manager = WifiManager::new(peripherals.modem, sys_loop.clone(), nvs_default)?;
     let mut connected = false;
     let mut chosen_ssid = String::new();
 
@@ -139,7 +139,7 @@ fn main() -> Result<()> {
                 let _ = storage.set_default_network_by_ssid(&chosen_ssid);
             }
             // Allumer la LED en Vert à 10% (R=0, G=25, B=0)
-            common::led::set_led_color(0, 25, 0);
+            common::led::set_led_color(common::led::GREEN, 25);
         }
 
     } else {
@@ -304,8 +304,24 @@ fn main() -> Result<()> {
             wifi.wifi.wifi().ap_netif().get_ip_info().ok()
         };
 
-        let ip_addr = ip_info.map(|i| i.ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
-        let gateway = ip_info.map(|i| i.subnet.gateway.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
+        let (ip_addr, gateway, cidr, netmask) = if let Some(info) = ip_info {
+            let cidr = info.subnet.mask.0;
+            let mask_u32 = if cidr == 0 {
+                0
+            } else {
+                !0u32 << (32 - cidr)
+            };
+            let netmask = format!("{}.{}.{}.{}",
+                (mask_u32 >> 24) & 0xFF,
+                (mask_u32 >> 16) & 0xFF,
+                (mask_u32 >> 8) & 0xFF,
+                mask_u32 & 0xFF
+            );
+            (info.ip.to_string(), info.subnet.gateway.to_string(), cidr, netmask)
+        } else {
+            ("0.0.0.0".to_string(), "0.0.0.0".to_string(), 0, "0.0.0.0".to_string())
+        };
+
         let rssi = if active_mode == "Station" {
             wifi.wifi.wifi().get_ap_info().ok().map(|i| i.signal_strength)
         } else {
@@ -332,6 +348,8 @@ fn main() -> Result<()> {
             "wifi_rssi": rssi,
             "ip_addr": ip_addr,
             "gateway_addr": gateway,
+            "cidr": cidr,
+            "netmask": netmask,
             "sys_time": now_str,
             "ntp_server": ntp_server,
             "metrics_url": metrics_url,
@@ -453,9 +471,8 @@ fn main() -> Result<()> {
         };
 
         for entry in entries {
-            let b_type = entry.get("boardType").and_then(|v| v.as_str()).unwrap_or("");
             let c_type = entry.get("ChipType").and_then(|v| v.as_str()).unwrap_or("");
-            if b_type == "v2.0" && c_type == "ESP32-S3" {
+            if c_type == "ESP32-S3" {
                 matched_entry = entry.clone();
                 break;
             }
@@ -586,7 +603,7 @@ fn main() -> Result<()> {
                 if wifi_success {
                     info!("Connection successful to SSID '{}'. Saving to NVS...", ssid);
                     storage.set_default_network(ssid, &final_psk)?;
-                    common::led::set_led_color(0, 25, 0); // Vert car connecté
+                    common::led::set_led_color(common::led::GREEN, 25); // Vert car connecté
                 } else {
                     warn!("Wi-Fi connection to '{}' failed. Reverting to previous configuration...", ssid);
                     let mut reconnected = false;
@@ -641,11 +658,11 @@ fn main() -> Result<()> {
                     if !reconnected {
                         warn!("All connection attempts failed. Restarting Access Point...");
                         let _ = wifi.start_ap();
-                        common::led::set_led_color(25, 25, 0); // Jaune car mode AP
+                        common::led::set_led_color(common::led::YELLOW, 25); // Jaune car mode AP
                     } else {
                         info!("Reconnected to network '{}'.", chosen_ssid);
                         let _ = storage.set_default_network_by_ssid(&chosen_ssid);
-                        common::led::set_led_color(0, 25, 0); // Vert car connecté
+                        common::led::set_led_color(common::led::GREEN, 25); // Vert car connecté
                     }
                 }
             }
@@ -767,7 +784,7 @@ fn main() -> Result<()> {
         info!("\x1b[36;1m  -> Réception et flashage direct du binaire uploadé par morceaux...\x1b[0m");
         
         // Allumer la LED en Bleu à 10% (R=0, G=0, B=25) pendant la mise à jour
-        common::led::set_led_color(0, 0, 25);
+        common::led::set_led_color(common::led::BLUE, 25);
         
         {
 
@@ -895,6 +912,42 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

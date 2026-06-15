@@ -110,7 +110,7 @@
         .info-group {
             display: flex;
             justify-content: space-between;
-            /* padding: 0.8rem 0; */
+            padding: 0.3rem 0;
             border-bottom: 1px solid rgba(30, 41, 59, 0.6);
         }
 
@@ -600,7 +600,7 @@
         }
 
         .advanced-content.open {
-            max-height: 500px;
+            max-height: 1000px;
             padding: 1rem 0;
         }
     </style>
@@ -608,7 +608,7 @@
 
 <body>
     <header
-        style="display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box; padding: 1rem 2rem;">
+        style="display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box; padding: .5rem .5rem .5rem 2rem;">
         <div style="display: flex; flex-direction: column; gap: 0.25rem; max-width: 80%;">
             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                 <h1 id="header_ext_name_display" style="margin: 0; font-size: 1.8rem; cursor: pointer;"
@@ -658,27 +658,25 @@
     <div class="container">
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('devices-tab')">Devices</button>
-            <button class="tab-btn" onclick="switchTab('status-tab')">Statut ESP32</button>
+            <button class="tab-btn" onclick="switchTab('status-tab')">Statut</button>
             <button class="tab-btn" onclick="switchTab('config-tab')">Configuration</button>
             <button class="tab-btn" onclick="switchTab('update-tab')">Mise à jour</button>
         </div>
 
         <!-- TAB 1: DEVICES & ACTUATORS -->
         <div id="devices-tab" class="tab-content active">
-            <h3
-                style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
-                Registre & Valeurs Périphériques
-            </h3>
-
             <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 2rem;">
                 <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des périphériques...</p>
             </div>
-
-
         </div>
 
         <!-- TAB 2: STATUS -->
         <div id="status-tab" class="tab-content">
+            <!-- Section 1: Infosystèmes -->
+            <h3
+                style="margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Infosystèmes
+            </h3>
             <div class="info-group">
                 <span class="info-label">État Système</span>
                 <span class="info-value"><span id="system_status_badge" class="badge badge-green"><svg
@@ -690,13 +688,19 @@
                         </svg>Opérationnel</span></span>
             </div>
             <div class="info-group">
-                <span class="info-label">Nom de l'extendeur</span>
-                <span class="info-value" id="status_ext_name">--</span>
+                <span class="info-label">NTP Serveur</span>
+                <span class="info-value" id="ntp_server">wrt.lan</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Description</span>
-                <span class="info-value" id="status_ext_desc">--</span>
+                <span class="info-label">Heure Système</span>
+                <span class="info-value" id="sys_time">1970-01-01 00:00:00</span>
             </div>
+
+            <!-- Section 2: Réseau Wi-Fi -->
+            <h3
+                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Wi-Fi / Mesh
+            </h3>
             <div class="info-group">
                 <span class="info-label">Mode Réseau</span>
                 <span class="info-value"><span id="network_mode" class="badge badge-green">Station</span></span>
@@ -718,16 +722,55 @@
                 <span class="info-value" id="gateway_addr">0.0.0.0</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Heure Système</span>
-                <span class="info-value" id="sys_time">1970-01-01 00:00:00</span>
+                <span class="info-label">État Mesh</span>
+                <span class="info-value" id="mesh_status">--</span>
             </div>
             <div class="info-group">
-                <span class="info-label">NTP Serveur</span>
-                <span class="info-value" id="ntp_server">wrt.lan</span>
+                <span class="info-label">AccessPoint side</span>
+                <span class="info-value" id="mesh_ap_ip">--</span>
             </div>
+            <div class="info-group">
+                <span class="info-label">Rôle dans le maillage</span>
+                <span class="info-value" id="mesh_role">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Distance Racine</span>
+                <span class="info-value" id="mesh_distance">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Nœuds connectés</span>
+                <span class="info-value" id="mesh_nodes_count">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Client side</span>
+                <span class="info-value" id="mesh_sta_ip">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Passerelle & CIDR STA</span>
+                <span class="info-value" id="mesh_sta_gateway">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Mode Appairage</span>
+                <span class="info-value" id="mesh_pairing">
+                    <span id="mesh_pairing_badge" class="badge badge-error">Inactif</span>
+                    <button id="btn_pair_mesh" class="btn"
+                        style="width: auto; padding: 0.25rem 0.6rem; font-size: 0.8rem; margin-left: 0.5rem;"
+                        onclick="triggerMeshPairing()">Activer</button>
+                </span>
+            </div>
+
+            <!-- Section 4: Variables de Configuration (NVS) -->
+            <h3
+                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Variables de Configuration (NVS)
+            </h3>
             <div class="info-group">
                 <span class="info-label">URL PUT Métriques</span>
                 <span class="info-value" id="status_metrics_url">--</span>
+            </div>
+            <div class="info-group">
+                <span class="info-label">Dépôt de Mise à Jour</span>
+                <span class="info-value" id="status_update_url">--</span>
             </div>
             <div class="info-group">
                 <span class="info-label">Clé TOTP</span>
@@ -762,6 +805,7 @@
                 <span class="info-value" id="status_rename_enabled">--</span>
             </div>
         </div>
+
 
         <!-- TAB 3: CONFIGURATION -->
         <div id="config-tab" class="tab-content">
@@ -848,18 +892,27 @@
                         <span class="slider"></span>
                     </label>
                 </div>
-                <!-- Repository URL (updateAvailable) -->
-                <div class="form-group"
-                    style="padding-top: 1rem; border-top: 1px solid rgba(30, 41, 59, 0.6); margin-bottom: 1rem;">
-                    <label for="repo_url">URL du dépôt (Mise à jour)</label>
-                    <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem; flex-wrap: wrap;">
-                        <input type="text" id="repo_url" placeholder="https://example.com/firmware-s3.json"
-                            style="flex: 1; min-width: 200px; margin-bottom: 0;">
-                        <button type="button" class="btn" id="btn_save_repo_url"
-                            style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem;"
-                            onclick="saveRepoUrl()">Enregistrer l'URL</button>
+
+
+                <!-- Section Configuration Mesh -->
+                <div style="padding-top: 1rem; border-top: 1px solid rgba(30, 41, 59, 0.6); margin-bottom: 1rem;">
+                    <label style="font-weight: 600; font-size: 0.95rem; color: var(--text-primary);">Configuration du
+                        Réseau Mesh</label>
+
+                    <div class="form-group" style="margin-bottom: 0.75rem;">
+                        <label for="mesh_id_input">Mesh ID</label>
+                        <input type="text" id="mesh_id_input" placeholder="WhisperEye" maxlength="32">
                     </div>
-                    <div id="repo_url_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;"></div>
+
+                    <div class="form-group" style="margin-bottom: 0.75rem; display: none;">
+                        <label for="mesh_channel_input">Canal Wi-Fi Mesh</label>
+                        <input type="number" id="mesh_channel_input" placeholder="11" min="1" max="13">
+                    </div>
+                    <button type="button" class="btn" id="btn_save_mesh"
+                        style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem; margin-top: 0.5rem;"
+                        onclick="saveMeshConfig()">Enregistrer le maillage</button>
+                    <div id="mesh_config_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;">
+                    </div>
                 </div>
 
                 <!-- Factory Reset -->
@@ -883,11 +936,6 @@
 
         <!-- TAB 4: UPDATE -->
         <div id="update-tab" class="tab-content">
-            <h3
-                style="margin-bottom: 1.25rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
-                Mise à Jour du Firmware
-            </h3>
-
             <div class="form-group">
                 <div class="switch-container" style="margin-bottom: 1.5rem;">
                     <span style="font-size: 0.95rem; color: var(--text-primary);">Mise à jour automatique (Nécessite
@@ -896,6 +944,34 @@
                         <input type="checkbox" id="auto_update_toggle" checked>
                         <span class="slider"></span>
                     </label>
+                </div>
+                <!-- URL du Update repository (Rename format) -->
+                <div
+                    style="margin-bottom: 1.5rem; border-bottom: 1px dashed var(--border-color); padding-bottom: 1rem;">
+                    <label
+                        style="color: var(--text-secondary); font-size: 0.9rem; font-weight: 500; margin-bottom: 0.5rem; display: block;">Update
+                        repository JSON</label>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.25rem;">
+                        <span id="repo_url_display"
+                            style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); cursor: pointer;"
+                            onclick="startEditingRepoUrl()">Non configuré</span>
+                        <span id="repo_url_input_container"
+                            style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                            <input type="text" id="repo_url_input" placeholder="https://example.com/firmware-s3.json"
+                                style="padding: 0.25rem 0.5rem; font-size: 0.95rem; flex: 1; margin-bottom: 0;"
+                                onblur="handleBlurRepoUrl()" onkeydown="handleKeyDownRepoUrl(event)">
+                        </span>
+                        <button id="repo_url_edit_btn" onclick="startEditingRepoUrl()"
+                            style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;"
+                            title="Modifier l'URL du dépôt">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="repo_url_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;"></div>
                 </div>
                 <button type="button" class="btn"
                     style="background-color: var(--secondary-accent); color: #fff; margin-bottom: 1.5rem;"
@@ -982,7 +1058,30 @@
     </footer>
 
     <script>
+        window.renameEnabled = true;
         const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
+
+        function truncateCenter(str, maxLen = 64) {
+            if (!str) return '';
+            if (str.length <= maxLen) return str;
+            const keep = Math.floor((maxLen - 3) / 2);
+            return str.substring(0, keep) + '...' + str.substring(str.length - keep);
+        }
+
+        function formatShortUrl(url) {
+            if (!url || url === 'empty' || url === '') return 'Non configuré';
+            try {
+                const u = new URL(url);
+                const domain = u.hostname;
+                const filename = u.pathname.split('/').pop();
+                return `${u.protocol}//${domain}/.../${filename}`;
+            } catch (e) {
+                if (url.length > 30) {
+                    return url.substring(0, 15) + '...' + url.substring(url.length - 15);
+                }
+                return url;
+            }
+        }
 
         function getStatusSvg(type, titleText = "") {
             const titleAttr = titleText ? ` title="${titleText}"` : "";
@@ -1097,8 +1196,26 @@
             }
         }
 
+        let pairingCountdownInterval = null;
+        let pairingSecondsRemaining = 0;
+
+        function triggerMeshPairing() {
+            if (!confirm("Voulez-vous vraiment activer le mode d'appairage mesh pendant 120 secondes ?")) {
+                return;
+            }
+            fetch('/api/mesh/pair', { method: 'POST' })
+                .then(res => {
+                    if (res.ok) {
+                        fetchStatus();
+                    } else {
+                        alert("Erreur lors de l'activation du mode d'appairage.");
+                    }
+                })
+                .catch(err => console.error("Erreur appairage:", err));
+        }
+
         function fetchStatus() {
-            fetch('/api/status')
+            return fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
                     window.latestStatusData = data;
@@ -1108,13 +1225,22 @@
                         document.getElementById('auto_update_toggle').checked = data.auto_update;
                     }
 
-                    const repoUrlInput = document.getElementById('repo_url');
+                    const repoUrlInput = document.getElementById('repo_url_input');
                     if (repoUrlInput && data.update_url !== undefined && !repoUrlInput.matches(':focus')) {
                         repoUrlInput.value = data.update_url;
                     }
+                    const repoUrlDisp = document.getElementById('repo_url_display');
+                    if (repoUrlDisp && data.update_url !== undefined) {
+                        const rawUrl = data.update_url || 'Non configuré';
+                        repoUrlDisp.innerText = rawUrl === 'Non configuré' ? rawUrl : truncateCenter(rawUrl, 64);
+                    }
 
                     // Update renameEnabled state
+                    const oldRenameEnabled = window.renameEnabled;
                     window.renameEnabled = data.rename_enabled !== undefined ? data.rename_enabled : true;
+                    if (oldRenameEnabled !== window.renameEnabled) {
+                        fetchDevices();
+                    }
                     const renameToggle = document.getElementById('rename_enabled_toggle');
                     if (renameToggle) {
                         renameToggle.checked = window.renameEnabled;
@@ -1187,36 +1313,56 @@
 
                     document.getElementById('wifi_rssi_container').innerHTML = (data.wifi_rssi ? `${data.wifi_rssi} dBm` : '- dBm') + getRssiSvg(data.wifi_rssi);
 
-                    if (data.ip_addr && data.ip_addr !== data.gateway_addr) {
+                    if (data.ip_addr && data.ip_addr !== '0.0.0.0') {
                         document.getElementById('ip_addr').innerHTML = data.ip_addr + getStatusSvg('green', 'Internet disponible');
                     } else {
                         document.getElementById('ip_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
                     }
 
-                    // 2. Passerelle (avec ou sans internet)
+                    // 2. Passerelle (avec ou sans internet) au format CIDR
                     if (data.gateway_addr && data.gateway_addr !== '0.0.0.0' && data.gateway_addr !== '') {
-                        document.getElementById('gateway_addr').innerHTML = data.gateway_addr + getStatusSvg('green', 'Internet disponible');
+                        const cidr_suffix = data.cidr ? `/${data.cidr}` : '';
+                        document.getElementById('gateway_addr').innerHTML = `${data.gateway_addr}${cidr_suffix}` + getStatusSvg('green', 'Internet disponible');
                     } else {
                         document.getElementById('gateway_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
                     }
 
                     // 3. Heure système (synchro ou invalide)
                     let timeSynced = false;
+                    let ntpStatusSvg = getStatusSvg('red', 'Non synchronisé');
+                    let deviceTimeDisplay = data.sys_time || '1970-01-01 00:00:00';
+
                     if (data.sys_time && !data.sys_time.startsWith('1970')) {
-                        document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
                         timeSynced = true;
+
+                        // Comparaison de l'heure UTC avec le navigateur
+                        const browserDate = new Date();
+                        const deviceDate = new Date(data.sys_time);
+
+                        const browserSecs = (browserDate.getUTCHours() * 3600) + (browserDate.getUTCMinutes() * 60) + browserDate.getUTCSeconds();
+                        const deviceSecs = (deviceDate.getUTCHours() * 3600) + (deviceDate.getUTCMinutes() * 60) + deviceDate.getUTCSeconds();
+
+                        let diffSec = Math.abs(browserSecs - deviceSecs);
+                        if (diffSec > 43200) {
+                            diffSec = 86400 - diffSec;
+                        }
+
+                        if (diffSec <= 3) {
+                            ntpStatusSvg = getStatusSvg('green', `Synchronisé (décalage : ${diffSec.toFixed(1)}s)`);
+                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
+                        } else if (diffSec <= 10) {
+                            ntpStatusSvg = getStatusSvg('yellow', `Désynchronisé (décalage : ${diffSec.toFixed(1)}s)`);
+                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('yellow', `Décalage de ${diffSec.toFixed(1)}s`);
+                        } else {
+                            ntpStatusSvg = getStatusSvg('red', `Décalage important (décalage : ${diffSec.toFixed(1)}s)`);
+                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('red', `Décalage de ${diffSec.toFixed(1)}s`);
+                        }
                     } else {
-                        document.getElementById('sys_time').innerHTML = (data.sys_time || '1970-01-01 00:00:00') + getStatusSvg('red', 'Invalide / Non synchronisée');
+                        document.getElementById('sys_time').innerHTML = deviceTimeDisplay + getStatusSvg('red', 'Invalide / Non synchronisée');
                     }
 
                     // 4. NTP (accessible, en echec ou injoignable)
-                    if (data.network_mode === 'Station' && timeSynced) {
-                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('green', 'Accessible');
-                    } else if (data.network_mode === 'Station' && !timeSynced) {
-                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('yellow', 'En attente / Échec');
-                    } else {
-                        document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + getStatusSvg('red', 'Hors ligne / AP');
-                    }
+                    document.getElementById('ntp_server').innerHTML = (data.ntp_server || 'wrt.lan') + ntpStatusSvg;
 
                     const statusMetricsUrlEl = document.getElementById('status_metrics_url');
                     if (statusMetricsUrlEl) {
@@ -1226,6 +1372,25 @@
                             statusMetricsUrlEl.innerHTML = 'Non définie' + getStatusSvg('red');
                         }
                     }
+
+                    const statusUpdateUrlEl = document.getElementById('status_update_url');
+                    if (statusUpdateUrlEl) {
+                        if (data.update_url && data.update_url !== 'empty' && data.update_url !== '') {
+                            const shortUrl = formatShortUrl(data.update_url);
+                            let statusIcon = '';
+                            if (data.update_url_valid === true) {
+                                statusIcon = getStatusSvg('green', 'Dépôt joignable');
+                            } else if (data.update_url_valid === false) {
+                                statusIcon = getStatusSvg('red', 'Dépôt injoignable ou invalide');
+                            } else {
+                                statusIcon = getStatusSvg('yellow', 'Vérification en cours...');
+                            }
+                            statusUpdateUrlEl.innerHTML = `${shortUrl} ${statusIcon}`;
+                        } else {
+                            statusUpdateUrlEl.innerHTML = 'Non configuré' + getStatusSvg('red');
+                        }
+                    }
+
 
                     // 5. firmware (pas de firmware de prod, version deja demare, derniere version en place)
                     if (!data.fw_version || data.fw_version === 'empty' || data.fw_version === 'Aucun') {
@@ -1291,6 +1456,128 @@
                             knownHelp.innerText = "Aucun réseau enregistré.";
                         }
                     }
+
+                    // Récupération des informations Mesh
+                    const mStatusEl = document.getElementById('mesh_status');
+                    if (mStatusEl) {
+                        mStatusEl.innerHTML = 'Activé' + getStatusSvg('green');
+                    }
+
+                    if (data.mesh_root !== undefined) {
+                        const mRoleEl = document.getElementById('mesh_role');
+                        if (mRoleEl) {
+                            if (data.mesh_enabled) {
+                                mRoleEl.innerHTML = data.mesh_root ? '<span class="badge badge-green">Nœud Racine (Root)</span>' : '<span class="badge badge-blue">Nœud Enfant (Node)</span>';
+                            } else {
+                                mRoleEl.innerText = '--';
+                            }
+                        }
+                    }
+
+                    if (data.mesh_distance !== undefined) {
+                        const mDistanceEl = document.getElementById('mesh_distance');
+                        if (mDistanceEl) {
+                            if (data.mesh_enabled) {
+                                if (data.mesh_distance === -1) {
+                                    mDistanceEl.innerHTML = 'Déconnecté / En attente' + getStatusSvg('yellow');
+                                } else {
+                                    mDistanceEl.innerText = `${data.mesh_distance} bond(s)`;
+                                }
+                            } else {
+                                mDistanceEl.innerText = '--';
+                            }
+                        }
+                    }
+
+                    if (data.mesh_nodes_count !== undefined) {
+                        const mNodesEl = document.getElementById('mesh_nodes_count');
+                        if (mNodesEl) {
+                            mNodesEl.innerText = data.mesh_enabled ? data.mesh_nodes_count : '--';
+                        }
+                    }
+
+                    // Alimentation IP Mesh (AP et STA)
+                    const mApIpEl = document.getElementById('mesh_ap_ip');
+                    if (mApIpEl) {
+                        mApIpEl.innerHTML = data.mesh_enabled ? '192.168.71.1' + getStatusSvg('green') : '--';
+                    }
+
+                    const mStaIpEl = document.getElementById('mesh_sta_ip');
+                    if (mStaIpEl) {
+                        if (data.mesh_enabled && data.ip_addr && data.ip_addr !== '0.0.0.0') {
+                            mStaIpEl.innerHTML = data.ip_addr + getStatusSvg('green');
+                        } else {
+                            mStaIpEl.innerHTML = '--';
+                        }
+                    }
+
+                    const mStaGatewayEl = document.getElementById('mesh_sta_gateway');
+                    if (mStaGatewayEl) {
+                        if (data.mesh_enabled && data.gateway_addr && data.gateway_addr !== '0.0.0.0') {
+                            const cidr_suffix = data.cidr ? `/${data.cidr}` : '';
+                            mStaGatewayEl.innerHTML = `${data.gateway_addr}${cidr_suffix}` + getStatusSvg('green');
+                        } else {
+                            mStaGatewayEl.innerHTML = '--';
+                        }
+                    }
+
+                    if (data.mesh_channel !== undefined) {
+                        const mChanEl = document.getElementById('mesh_channel');
+                        if (mChanEl) mChanEl.innerText = data.mesh_channel;
+                        const mChanInput = document.getElementById('mesh_channel_input');
+                        if (mChanInput && !mChanInput.matches(':focus')) {
+                            mChanInput.value = data.mesh_channel;
+                        }
+                    }
+
+                    if (data.mesh_id !== undefined) {
+                        const mIdEl = document.getElementById('mesh_id');
+                        if (mIdEl) mIdEl.innerText = data.mesh_id;
+                        const mIdInput = document.getElementById('mesh_id_input');
+                        if (mIdInput && !mIdInput.matches(':focus')) {
+                            mIdInput.value = data.mesh_id;
+                        }
+                    }
+
+                    // Pairing mode countdown
+                    pairingSecondsRemaining = data.pairing_seconds_remaining || 0;
+                    const pairingBadge = document.getElementById('mesh_pairing_badge');
+                    const pairBtn = document.getElementById('btn_pair_mesh');
+
+                    if (pairingCountdownInterval) {
+                        clearInterval(pairingCountdownInterval);
+                        pairingCountdownInterval = null;
+                    }
+
+                    function updatePairingUI() {
+                        if (pairingSecondsRemaining > 0) {
+                            if (pairingBadge) {
+                                pairingBadge.className = "badge badge-green";
+                                pairingBadge.innerHTML = `${getStatusSvg('green')}Actif (${pairingSecondsRemaining}s)`;
+                            }
+                            if (pairBtn) pairBtn.style.display = 'none';
+                        } else {
+                            if (pairingBadge) {
+                                pairingBadge.className = "badge badge-error";
+                                pairingBadge.innerHTML = `${getStatusSvg('red')}Inactif`;
+                            }
+                            if (pairBtn) pairBtn.style.display = 'inline-block';
+                        }
+                    }
+
+                    updatePairingUI();
+
+                    if (pairingSecondsRemaining > 0) {
+                        pairingCountdownInterval = setInterval(() => {
+                            pairingSecondsRemaining--;
+                            if (pairingSecondsRemaining <= 0) {
+                                clearInterval(pairingCountdownInterval);
+                                pairingCountdownInterval = null;
+                            }
+                            updatePairingUI();
+                        }, 1000);
+                    }
+
                     if (data.author) {
                         const aName = document.getElementById('author_name');
                         const aEmail = document.getElementById('author_email');
@@ -1330,9 +1617,9 @@
         };
 
         function fetchDevices() {
-            if (!document.getElementById('devices-tab').classList.contains('active')) return;
+            if (!document.getElementById('devices-tab').classList.contains('active')) return Promise.resolve();
 
-            fetch('/api/peripherals')
+            return fetch('/api/peripherals')
                 .then(res => res.json())
                 .then(data => {
                     window.currentDevices = data;
@@ -1421,21 +1708,31 @@
             if (!dev) return;
             editingDeviceId = id;
             editingOriginalName = dev.name;
-            document.getElementById(`name_display_${id}`).style.display = 'none';
-            document.getElementById(`edit_btn_${id}`).style.display = 'none';
-            document.getElementById(`edit_input_container_${id}`).style.display = 'flex';
+
+            const nameEl = document.getElementById(`name_display_${id}`);
+            const btnEl = document.getElementById(`edit_btn_${id}`);
+            const containerEl = document.getElementById(`edit_input_container_${id}`);
+            if (nameEl) nameEl.style.display = 'none';
+            if (btnEl) btnEl.style.display = 'none';
+            if (containerEl) containerEl.style.display = 'flex';
+
             const input = document.getElementById(`input_${id}`);
-            input.value = dev.name;
-            input.focus();
-            input.select();
+            if (input) {
+                input.value = dev.name;
+                input.focus();
+                input.select();
+            }
         }
 
         function cancelEditing(id) {
             editingDeviceId = null;
             editingOriginalName = null;
-            document.getElementById(`name_display_${id}`).style.display = 'inline';
-            document.getElementById(`edit_btn_${id}`).style.display = 'flex';
-            document.getElementById(`edit_input_container_${id}`).style.display = 'none';
+            const nameEl = document.getElementById(`name_display_${id}`);
+            const btnEl = document.getElementById(`edit_btn_${id}`);
+            const containerEl = document.getElementById(`edit_input_container_${id}`);
+            if (nameEl) nameEl.style.display = 'inline';
+            if (btnEl) btnEl.style.display = 'flex';
+            if (containerEl) containerEl.style.display = 'none';
         }
 
         function handleBlur(id) {
@@ -1445,20 +1742,31 @@
             const newName = input.value.trim();
             if (newName === editingOriginalName || !newName) {
                 cancelEditing(id);
-            } else {
-                saveRename(id, newName);
+                return;
             }
+
+            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>,;%\$€*^]{1,24}$/;
+            if (!nameRegex.test(newName)) {
+                alert("Nom de périphérique invalide. Le nom doit faire 24 caractères maximum, ne pas contenir d'espaces, et n'utiliser que des caractères alphanumériques ou -_()[]<>,;%$€*^");
+                cancelEditing(id);
+                return;
+            }
+
+            saveRename(id, newName);
         }
 
         function handleKeyDown(event, id) {
             if (event.key === 'Enter') {
-                document.getElementById(`input_${id}`).blur();
+                const input = document.getElementById(`input_${id}`);
+                if (input) input.blur();
             } else if (event.key === 'Escape') {
+                editingDeviceId = null; // Prevent save on blur
                 const input = document.getElementById(`input_${id}`);
                 if (input) {
                     input.value = editingOriginalName;
                     input.blur();
                 }
+                cancelEditing(id);
             }
         }
 
@@ -1491,28 +1799,39 @@
         function startEditingExtName() {
             if (!window.renameEnabled) return;
             editingExtName = true;
-            document.getElementById('header_ext_name_display').style.display = 'none';
-            document.getElementById('header_ext_name_edit_btn').style.display = 'none';
-            const container = document.getElementById('header_ext_name_input_container');
-            container.style.display = 'flex';
+
+            const nameEl = document.getElementById('header_ext_name_display');
+            const btnEl = document.getElementById('header_ext_name_edit_btn');
+            const containerEl = document.getElementById('header_ext_name_input_container');
+            if (nameEl) nameEl.style.display = 'none';
+            if (btnEl) btnEl.style.display = 'none';
+            if (containerEl) containerEl.style.display = 'flex';
+
             const input = document.getElementById('header_ext_name_input');
-            input.value = document.getElementById('header_ext_name_display').innerText;
-            input.focus();
-            input.select();
+            if (input && nameEl) {
+                input.value = nameEl.innerText;
+                input.focus();
+                input.select();
+            }
         }
 
         function cancelEditingExtName() {
             editingExtName = false;
-            document.getElementById('header_ext_name_display').style.display = 'inline';
-            document.getElementById('header_ext_name_edit_btn').style.display = 'flex';
-            document.getElementById('header_ext_name_input_container').style.display = 'none';
+            const nameEl = document.getElementById('header_ext_name_display');
+            const btnEl = document.getElementById('header_ext_name_edit_btn');
+            const containerEl = document.getElementById('header_ext_name_input_container');
+            if (nameEl) nameEl.style.display = 'inline';
+            if (btnEl) btnEl.style.display = 'flex';
+            if (containerEl) containerEl.style.display = 'none';
         }
 
         function handleBlurExtName() {
             if (!editingExtName) return;
             const input = document.getElementById('header_ext_name_input');
+            if (!input) return;
             const newName = input.value.trim();
-            const oldName = document.getElementById('header_ext_name_display').innerText;
+            const nameEl = document.getElementById('header_ext_name_display');
+            const oldName = nameEl ? nameEl.innerText : '';
             if (newName === oldName || !newName) {
                 cancelEditingExtName();
             } else {
@@ -1522,37 +1841,56 @@
 
         function handleKeyDownExtName(event) {
             if (event.key === 'Enter') {
-                document.getElementById('header_ext_name_input').blur();
+                const input = document.getElementById('header_ext_name_input');
+                if (input) input.blur();
             } else if (event.key === 'Escape') {
+                editingExtName = false; // Prevent save on blur
+                const input = document.getElementById('header_ext_name_input');
+                const nameEl = document.getElementById('header_ext_name_display');
+                if (input && nameEl) {
+                    input.value = nameEl.innerText;
+                    input.blur();
+                }
                 cancelEditingExtName();
             }
         }
 
         function startEditingExtDesc() {
             editingExtDesc = true;
-            document.getElementById('header_ext_desc_display').style.display = 'none';
-            document.getElementById('header_ext_desc_edit_btn').style.display = 'none';
-            const container = document.getElementById('header_ext_desc_input_container');
-            container.style.display = 'flex';
+
+            const descEl = document.getElementById('header_ext_desc_display');
+            const btnEl = document.getElementById('header_ext_desc_edit_btn');
+            const containerEl = document.getElementById('header_ext_desc_input_container');
+            if (descEl) descEl.style.display = 'none';
+            if (btnEl) btnEl.style.display = 'none';
+            if (containerEl) containerEl.style.display = 'flex';
+
             const input = document.getElementById('header_ext_desc_input');
-            const currentDesc = document.getElementById('header_ext_desc_display').innerText;
-            input.value = currentDesc === '--' ? '' : currentDesc;
-            input.focus();
-            input.select();
+            if (input && descEl) {
+                const currentDesc = descEl.innerText;
+                input.value = currentDesc === '--' ? '' : currentDesc;
+                input.focus();
+                input.select();
+            }
         }
 
         function cancelEditingExtDesc() {
             editingExtDesc = false;
-            document.getElementById('header_ext_desc_display').style.display = 'inline';
-            document.getElementById('header_ext_desc_edit_btn').style.display = 'flex';
-            document.getElementById('header_ext_desc_input_container').style.display = 'none';
+            const descEl = document.getElementById('header_ext_desc_display');
+            const btnEl = document.getElementById('header_ext_desc_edit_btn');
+            const containerEl = document.getElementById('header_ext_desc_input_container');
+            if (descEl) descEl.style.display = 'inline';
+            if (btnEl) btnEl.style.display = 'flex';
+            if (containerEl) containerEl.style.display = 'none';
         }
 
         function handleBlurExtDesc() {
             if (!editingExtDesc) return;
             const input = document.getElementById('header_ext_desc_input');
+            if (!input) return;
             const newDesc = input.value.trim();
-            const oldDesc = document.getElementById('header_ext_desc_display').innerText;
+            const descEl = document.getElementById('header_ext_desc_display');
+            const oldDesc = descEl ? descEl.innerText : '';
             if (newDesc === oldDesc || (newDesc === '' && oldDesc === '--')) {
                 cancelEditingExtDesc();
             } else {
@@ -1562,15 +1900,25 @@
 
         function handleKeyDownExtDesc(event) {
             if (event.key === 'Enter') {
-                document.getElementById('header_ext_desc_input').blur();
+                const input = document.getElementById('header_ext_desc_input');
+                if (input) input.blur();
             } else if (event.key === 'Escape') {
+                editingExtDesc = false; // Prevent save on blur
+                const input = document.getElementById('header_ext_desc_input');
+                const descEl = document.getElementById('header_ext_desc_display');
+                if (input && descEl) {
+                    const currentDesc = descEl.innerText;
+                    input.value = currentDesc === '--' ? '' : currentDesc;
+                    input.blur();
+                }
                 cancelEditingExtDesc();
             }
         }
 
         function saveExtNameAndDesc(name, desc) {
-            editingExtName = false;
-            editingExtDesc = false;
+            if (name !== null) cancelEditingExtName();
+            if (desc !== null) cancelEditingExtDesc();
+
             const payload = {};
             if (name !== null) payload.ext_name = name;
             if (desc !== null) payload.ext_desc = desc;
@@ -1935,19 +2283,81 @@
             installFirmware(url);
         }
 
-        function saveRepoUrl() {
-            const urlInput = document.getElementById('repo_url');
-            const statusEl = document.getElementById('repo_url_status');
-            const btn = document.getElementById('btn_save_repo_url');
-            const url = urlInput.value.trim();
+        let editingRepoUrl = false;
+
+        function startEditingRepoUrl() {
+            editingRepoUrl = true;
+            const displayEl = document.getElementById('repo_url_display');
+            const btnEl = document.getElementById('repo_url_edit_btn');
+            const containerEl = document.getElementById('repo_url_input_container');
+            if (displayEl) displayEl.style.display = 'none';
+            if (btnEl) btnEl.style.display = 'none';
+            if (containerEl) containerEl.style.display = 'flex';
+
+            const input = document.getElementById('repo_url_input');
+            if (input && displayEl) {
+                const currentVal = displayEl.innerText;
+                input.value = currentVal === 'Non configuré' ? '' : currentVal;
+                input.focus();
+                input.select();
+            }
+        }
+
+        function cancelEditingRepoUrl() {
+            editingRepoUrl = false;
+            const displayEl = document.getElementById('repo_url_display');
+            const btnEl = document.getElementById('repo_url_edit_btn');
+            const containerEl = document.getElementById('repo_url_input_container');
+            if (displayEl) displayEl.style.display = 'inline';
+            if (btnEl) btnEl.style.display = 'flex';
+            if (containerEl) containerEl.style.display = 'none';
+        }
+
+        function handleBlurRepoUrl() {
+            if (!editingRepoUrl) return;
+            const input = document.getElementById('repo_url_input');
+            if (!input) return;
+            const newUrl = input.value.trim();
+            const displayEl = document.getElementById('repo_url_display');
+            const oldUrl = displayEl ? displayEl.innerText : '';
+            if (newUrl === oldUrl || (newUrl === '' && oldUrl === 'Non configuré')) {
+                cancelEditingRepoUrl();
+            } else {
+                saveRepoUrl(newUrl);
+            }
+        }
+
+        function handleKeyDownRepoUrl(event) {
+            if (event.key === 'Enter') {
+                const input = document.getElementById('repo_url_input');
+                if (input) input.blur();
+            } else if (event.key === 'Escape') {
+                editingRepoUrl = false; // Prevent save on blur
+                const input = document.getElementById('repo_url_input');
+                const displayEl = document.getElementById('repo_url_display');
+                if (input && displayEl) {
+                    const currentVal = displayEl.innerText;
+                    input.value = currentVal === 'Non configuré' ? '' : currentVal;
+                    input.blur();
+                }
+                cancelEditingRepoUrl();
+            }
+        }
+
+        function saveRepoUrl(url) {
+            cancelEditingRepoUrl();
 
             if (!url) {
-                showMessage('repo_url_status', 'Veuillez saisir une URL !', 'error');
+                sendRepoUrlConfig("");
                 return;
             }
 
             if (!url.startsWith('http://') && !url.startsWith('https://')) {
                 showMessage('repo_url_status', 'L\'URL doit commencer par http:// ou https://', 'error');
+                setTimeout(() => {
+                    const statusEl = document.getElementById('repo_url_status');
+                    if (statusEl) statusEl.style.display = 'none';
+                }, 4000);
                 return;
             }
 
@@ -1955,50 +2365,50 @@
                 new URL(url);
             } catch (e) {
                 showMessage('repo_url_status', 'Format d\'URL invalide !', 'error');
+                setTimeout(() => {
+                    const statusEl = document.getElementById('repo_url_status');
+                    if (statusEl) statusEl.style.display = 'none';
+                }, 4000);
                 return;
             }
 
             if (!url.toLowerCase().endsWith('.json')) {
                 showMessage('repo_url_status', 'L\'URL doit se terminer par un fichier .json', 'error');
+                setTimeout(() => {
+                    const statusEl = document.getElementById('repo_url_status');
+                    if (statusEl) statusEl.style.display = 'none';
+                }, 4000);
                 return;
             }
 
-            showMessage('repo_url_status', SPINNER_SVG + ' Validation de l\'URL et du JSON en cours...', 'success');
-            btn.disabled = true;
+            sendRepoUrlConfig(url);
+        }
 
-            fetch(url, { cache: 'no-cache' })
+        function sendRepoUrlConfig(url) {
+            showMessage('repo_url_status', SPINNER_SVG + ' Enregistrement en cours...', 'success');
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    update_url: url,
+                    apply_only: true
+                })
+            })
                 .then(res => {
                     if (!res.ok) {
                         throw new Error(`HTTP ${res.status}`);
                     }
-                    return res.json();
-                })
-                .then(json => {
-                    if (!json || (json.ChipType === undefined && json.stable === undefined)) {
-                        throw new Error('Structure JSON de catalogue invalide (clés ChipType ou stable manquantes).');
-                    }
-
-                    return fetch('/api/config', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            update_url: url,
-                            apply_only: true
-                        })
-                    });
-                })
-                .then(res => {
-                    if (!res || !res.ok) {
-                        throw new Error('Erreur lors de la sauvegarde sur l\'appareil.');
-                    }
-                    showMessage('repo_url_status', 'URL du dépôt validée et enregistrée avec succès !', 'success');
+                    showMessage('repo_url_status', 'URL du dépôt enregistrée avec succès !', 'success');
+                    setTimeout(() => {
+                        const statusEl = document.getElementById('repo_url_status');
+                        if (statusEl) statusEl.style.display = 'none';
+                    }, 3000);
                     fetchStatus();
                 })
                 .catch(err => {
-                    showMessage('repo_url_status', `Validation échouée : ${err.message || err}`, 'error');
-                })
-                .finally(() => {
-                    btn.disabled = false;
+                    showMessage('repo_url_status', `Erreur de sauvegarde : ${err.message || err}`, 'error');
+                    fetchStatus();
                 });
         }
 
@@ -2059,6 +2469,8 @@
                 .catch(err => console.error('Erreur rename_enabled:', err));
         }
 
+
+
         function triggerFactoryReset() {
             const confirmWord = prompt("ATTENTION : Cette action va supprimer la clé de sécurité TOTP et effacer toute la configuration Wi-Fi enregistrée. L'extendeur va redémarrer en mode Point d'Accès (Access Point) avec l'adresse IP : 192.168.71.1.\n\nPour confirmer, veuillez saisir le mot 'RESET' en majuscules :");
             if (confirmWord === null) {
@@ -2087,10 +2499,53 @@
                 .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
         }
 
+        function saveMeshConfig() {
+            const channel = parseInt(document.getElementById('mesh_channel_input').value);
+            const id = document.getElementById('mesh_id_input').value.trim();
+            const btn = document.getElementById('btn_save_mesh');
+            const statusEl = document.getElementById('mesh_config_status');
+
+            if (isNaN(channel) || channel < 1 || channel > 13) {
+                showMessage('mesh_config_status', 'Le canal doit être compris entre 1 et 13.', 'error');
+                return;
+            }
+
+            if (!id) {
+                showMessage('mesh_config_status', 'Le Mesh ID est requis !', 'error');
+                return;
+            }
+
+            showMessage('mesh_config_status', SPINNER_SVG + ' Enregistrement et redémarrage de la carte...', 'success');
+            btn.disabled = true;
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mesh_channel: channel,
+                    mesh_id: id
+                })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    showMessage('mesh_config_status', 'Configuration enregistrée ! Redémarrage de l\'appareil...', 'success');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 4000);
+                })
+                .catch(err => {
+                    showMessage('mesh_config_status', `Échec de l'enregistrement : ${err.message || err}`, 'error');
+                    btn.disabled = false;
+                });
+        }
+
         // Initial setup
-        fetchDevices();
-        fetchStatus();
-        scanSsids();
+        Promise.all([fetchDevices(), fetchStatus()])
+            .finally(() => {
+                scanSsids();
+            });
     </script>
 </body>
 

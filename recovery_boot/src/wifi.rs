@@ -1,7 +1,6 @@
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi, Configuration, ClientConfiguration, AccessPointConfiguration, AuthMethod};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_hal::peripherals::Peripherals;
 use anyhow::{Result, Context};
 use log::{info, error, warn};
 use std::time::Duration;
@@ -14,35 +13,13 @@ pub struct WifiManager {
 }
 
 impl WifiManager {
-    pub fn new(peripherals: Peripherals, sys_loop: EspSystemEventLoop, nvs: EspDefaultNvsPartition) -> Result<Self> {
-        let esp_wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))
+    pub fn new(modem: esp_idf_hal::modem::Modem<'static>, sys_loop: EspSystemEventLoop, nvs: EspDefaultNvsPartition) -> Result<Self> {
+        let esp_wifi = EspWifi::new(modem, sys_loop.clone(), Some(nvs))
             .context("Failed to create EspWifi")?;
         let wifi = BlockingWifi::wrap(esp_wifi, sys_loop)?;
         Ok(Self { wifi, scan_cache: Vec::new() })
     }
 
-    pub fn perform_initial_scan(&mut self) -> Result<()> {
-        info!("Performing boot-time active Wi-Fi scan...");
-        let config = Configuration::Client(ClientConfiguration::default());
-        let _ = self.wifi.set_configuration(&config);
-        let _ = self.wifi.start();
-        match self.wifi.scan() {
-            Ok(list) => {
-                let mut ssids: Vec<String> = list.into_iter()
-                    .map(|n| n.ssid.to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                ssids.sort();
-                ssids.dedup();
-                info!("Boot-time scan successful: found {} networks.", ssids.len());
-                self.scan_cache = ssids;
-            }
-            Err(e) => {
-                warn!("Boot-time active Wi-Fi scan failed: {:?}", e);
-            }
-        }
-        Ok(())
-    }
 
     pub fn start_sta(&mut self, ssid: &str, psk: &str) -> Result<bool> {
         info!("Attempting STA connection to SSID: '{}'", ssid);

@@ -237,10 +237,9 @@ Describe "WhisperEye Production API Integration" {
                 $res.Content | Should Like "*Upstream error*"
             } else {
                 $res.StatusCode | Should Be 200
-                # Response may be null if no board matches the local boardType/ChipType
+                # Response may be null if no board matches the local ChipType
                 if ($res.Content -ne "null") {
                     $j = $res.Content | ConvertFrom-Json
-                    $j.boardType | Should Not BeNullOrEmpty
                     $j.ChipType | Should Not BeNullOrEmpty
                 }
             }
