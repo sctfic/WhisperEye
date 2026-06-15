@@ -12,7 +12,7 @@ Le système charge les paramètres depuis la NVS :
 
 meshEnabled : Activé par défaut (vaut 1 si absent).
 wifiChannel : Canal Wi-Fi actif, par défaut 11.
-meshId : SSID du point d'accès Mesh, par défaut "Whiper".
+meshId : SSID du point d'accès Mesh, par défaut "Whisper".
 known_networks : Liste des réseaux Wi-Fi configurés.
 default_net_psk : Clé de sécurité du réseau client Wi-Fi par défaut.
 B. Détermination du mode "Open AP" (Sans sécurité)

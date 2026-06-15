@@ -713,18 +713,7 @@
                 <span class="info-label">Force Signal (RSSI)</span>
                 <span class="info-value" id="wifi_rssi_container"><span id="wifi_rssi">- dBm</span></span>
             </div>
-            <div class="info-group">
-                <span class="info-label">Adresse IP</span>
-                <span class="info-value" id="ip_addr">0.0.0.0</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Passerelle (Gateway)</span>
-                <span class="info-value" id="gateway_addr">0.0.0.0</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">État Mesh</span>
-                <span class="info-value" id="mesh_status">--</span>
-            </div>
+
             <div class="info-group">
                 <span class="info-label">AccessPoint side</span>
                 <span class="info-value" id="mesh_ap_ip">--</span>
@@ -894,26 +883,8 @@
                 </div>
 
 
-                <!-- Section Configuration Mesh -->
-                <div style="padding-top: 1rem; border-top: 1px solid rgba(30, 41, 59, 0.6); margin-bottom: 1rem;">
-                    <label style="font-weight: 600; font-size: 0.95rem; color: var(--text-primary);">Configuration du
-                        Réseau Mesh</label>
 
-                    <div class="form-group" style="margin-bottom: 0.75rem;">
-                        <label for="mesh_id_input">Mesh ID</label>
-                        <input type="text" id="mesh_id_input" placeholder="WhisperEye" maxlength="32">
-                    </div>
 
-                    <div class="form-group" style="margin-bottom: 0.75rem; display: none;">
-                        <label for="mesh_channel_input">Canal Wi-Fi Mesh</label>
-                        <input type="number" id="mesh_channel_input" placeholder="11" min="1" max="13">
-                    </div>
-                    <button type="button" class="btn" id="btn_save_mesh"
-                        style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.85rem; margin-top: 0.5rem;"
-                        onclick="saveMeshConfig()">Enregistrer le maillage</button>
-                    <div id="mesh_config_status" style="font-size: 0.8rem; margin-top: 0.4rem; min-height: 1.2em;">
-                    </div>
-                </div>
 
                 <!-- Factory Reset -->
                 <div class="form-group" style="padding-top: 1rem; margin-bottom: 0;">
@@ -953,7 +924,7 @@
                         repository JSON</label>
                     <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.25rem;">
                         <span id="repo_url_display"
-                            style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); cursor: pointer;"
+                            style="font-size: 0.95rem; color: var(--text-primary); cursor: pointer;"
                             onclick="startEditingRepoUrl()">Non configuré</span>
                         <span id="repo_url_input_container"
                             style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
@@ -1062,10 +1033,31 @@
         const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
 
         function truncateCenter(str, maxLen = 64) {
+            // Speak la chaîne en fonction des slash, supprime les éléments en partant de l'avant-dernier vers le 4ieme. 
+            // regroupe le début, met des ' ... ' et regroupe la fin (avec le /)
+            // Si c'est toujours supérieur à Maxlen, enlève 1 élément de plus 
+            // Attention, on gardera obligatoirement les 4 1ers éléments et le dernier.
             if (!str) return '';
             if (str.length <= maxLen) return str;
-            const keep = Math.floor((maxLen - 3) / 2);
-            return str.substring(0, keep) + '...' + str.substring(str.length - keep);
+            const parts = str.split('/');
+            if (parts.length <= 4) {
+                const keep = Math.floor((maxLen - 3) / 2);
+                return str.substring(0, keep) + '...' + str.substring(str.length - keep);
+            }
+            let startIdx = 3;
+            let endIdx = parts.length - 2;
+            while (true) {
+                const prefix = parts.slice(0, 3).join('/');
+                const suffix = parts.slice(endIdx + 1).join('/');
+                const middle = parts.slice(3, endIdx + 1).join('/');
+                const reconstructed = middle.length > 0
+                    ? `${prefix}/${middle}/.../${suffix}`
+                    : `${prefix}/.../${suffix}`;
+                if (reconstructed.length <= maxLen || endIdx < startIdx) {
+                    return reconstructed;
+                }
+                endIdx--;
+            }
         }
 
         function formatShortUrl(url) {
@@ -1231,6 +1223,7 @@
                     }
                     const repoUrlDisp = document.getElementById('repo_url_display');
                     if (repoUrlDisp && data.update_url !== undefined) {
+                        window.currentUpdateUrl = data.update_url;
                         const rawUrl = data.update_url || 'Non configuré';
                         repoUrlDisp.innerText = rawUrl === 'Non configuré' ? rawUrl : truncateCenter(rawUrl, 64);
                     }
@@ -1313,19 +1306,7 @@
 
                     document.getElementById('wifi_rssi_container').innerHTML = (data.wifi_rssi ? `${data.wifi_rssi} dBm` : '- dBm') + getRssiSvg(data.wifi_rssi);
 
-                    if (data.ip_addr && data.ip_addr !== '0.0.0.0') {
-                        document.getElementById('ip_addr').innerHTML = data.ip_addr + getStatusSvg('green', 'Internet disponible');
-                    } else {
-                        document.getElementById('ip_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
-                    }
 
-                    // 2. Passerelle (avec ou sans internet) au format CIDR
-                    if (data.gateway_addr && data.gateway_addr !== '0.0.0.0' && data.gateway_addr !== '') {
-                        const cidr_suffix = data.cidr ? `/${data.cidr}` : '';
-                        document.getElementById('gateway_addr').innerHTML = `${data.gateway_addr}${cidr_suffix}` + getStatusSvg('green', 'Internet disponible');
-                    } else {
-                        document.getElementById('gateway_addr').innerHTML = 'Non connecté' + getStatusSvg('red', 'Hors ligne');
-                    }
 
                     // 3. Heure système (synchro ou invalide)
                     let timeSynced = false;
@@ -1457,34 +1438,20 @@
                         }
                     }
 
-                    // Récupération des informations Mesh
-                    const mStatusEl = document.getElementById('mesh_status');
-                    if (mStatusEl) {
-                        mStatusEl.innerHTML = 'Activé' + getStatusSvg('green');
-                    }
-
                     if (data.mesh_root !== undefined) {
                         const mRoleEl = document.getElementById('mesh_role');
                         if (mRoleEl) {
-                            if (data.mesh_enabled) {
-                                mRoleEl.innerHTML = data.mesh_root ? '<span class="badge badge-green">Nœud Racine (Root)</span>' : '<span class="badge badge-blue">Nœud Enfant (Node)</span>';
-                            } else {
-                                mRoleEl.innerText = '--';
-                            }
+                            mRoleEl.innerHTML = data.mesh_root ? '<span class="badge badge-green">Nœud Racine (Root)</span>' : '<span class="badge badge-blue">Nœud Enfant (Node)</span>';
                         }
                     }
 
                     if (data.mesh_distance !== undefined) {
                         const mDistanceEl = document.getElementById('mesh_distance');
                         if (mDistanceEl) {
-                            if (data.mesh_enabled) {
-                                if (data.mesh_distance === -1) {
-                                    mDistanceEl.innerHTML = 'Déconnecté / En attente' + getStatusSvg('yellow');
-                                } else {
-                                    mDistanceEl.innerText = `${data.mesh_distance} bond(s)`;
-                                }
+                            if (data.mesh_distance === -1) {
+                                mDistanceEl.innerHTML = 'Déconnecté / En attente' + getStatusSvg('yellow');
                             } else {
-                                mDistanceEl.innerText = '--';
+                                mDistanceEl.innerText = `${data.mesh_distance} bond(s)`;
                             }
                         }
                     }
@@ -1492,19 +1459,19 @@
                     if (data.mesh_nodes_count !== undefined) {
                         const mNodesEl = document.getElementById('mesh_nodes_count');
                         if (mNodesEl) {
-                            mNodesEl.innerText = data.mesh_enabled ? data.mesh_nodes_count : '--';
+                            mNodesEl.innerText = data.mesh_nodes_count;
                         }
                     }
 
                     // Alimentation IP Mesh (AP et STA)
                     const mApIpEl = document.getElementById('mesh_ap_ip');
                     if (mApIpEl) {
-                        mApIpEl.innerHTML = data.mesh_enabled ? '192.168.71.1' + getStatusSvg('green') : '--';
+                        mApIpEl.innerHTML = '192.168.71.1' + getStatusSvg('green');
                     }
 
                     const mStaIpEl = document.getElementById('mesh_sta_ip');
                     if (mStaIpEl) {
-                        if (data.mesh_enabled && data.ip_addr && data.ip_addr !== '0.0.0.0') {
+                        if (data.ip_addr && data.ip_addr !== '0.0.0.0') {
                             mStaIpEl.innerHTML = data.ip_addr + getStatusSvg('green');
                         } else {
                             mStaIpEl.innerHTML = '--';
@@ -1513,7 +1480,7 @@
 
                     const mStaGatewayEl = document.getElementById('mesh_sta_gateway');
                     if (mStaGatewayEl) {
-                        if (data.mesh_enabled && data.gateway_addr && data.gateway_addr !== '0.0.0.0') {
+                        if (data.gateway_addr && data.gateway_addr !== '0.0.0.0') {
                             const cidr_suffix = data.cidr ? `/${data.cidr}` : '';
                             mStaGatewayEl.innerHTML = `${data.gateway_addr}${cidr_suffix}` + getStatusSvg('green');
                         } else {
@@ -1521,23 +1488,8 @@
                         }
                     }
 
-                    if (data.mesh_channel !== undefined) {
-                        const mChanEl = document.getElementById('mesh_channel');
-                        if (mChanEl) mChanEl.innerText = data.mesh_channel;
-                        const mChanInput = document.getElementById('mesh_channel_input');
-                        if (mChanInput && !mChanInput.matches(':focus')) {
-                            mChanInput.value = data.mesh_channel;
-                        }
-                    }
 
-                    if (data.mesh_id !== undefined) {
-                        const mIdEl = document.getElementById('mesh_id');
-                        if (mIdEl) mIdEl.innerText = data.mesh_id;
-                        const mIdInput = document.getElementById('mesh_id_input');
-                        if (mIdInput && !mIdInput.matches(':focus')) {
-                            mIdInput.value = data.mesh_id;
-                        }
-                    }
+
 
                     // Pairing mode countdown
                     pairingSecondsRemaining = data.pairing_seconds_remaining || 0;
@@ -2295,9 +2247,9 @@
             if (containerEl) containerEl.style.display = 'flex';
 
             const input = document.getElementById('repo_url_input');
-            if (input && displayEl) {
-                const currentVal = displayEl.innerText;
-                input.value = currentVal === 'Non configuré' ? '' : currentVal;
+            if (input) {
+                const rawUrl = window.currentUpdateUrl || '';
+                input.value = rawUrl === 'Non configuré' ? '' : rawUrl;
                 input.focus();
                 input.select();
             }
@@ -2318,8 +2270,7 @@
             const input = document.getElementById('repo_url_input');
             if (!input) return;
             const newUrl = input.value.trim();
-            const displayEl = document.getElementById('repo_url_display');
-            const oldUrl = displayEl ? displayEl.innerText : '';
+            const oldUrl = window.currentUpdateUrl || '';
             if (newUrl === oldUrl || (newUrl === '' && oldUrl === 'Non configuré')) {
                 cancelEditingRepoUrl();
             } else {
@@ -2334,10 +2285,9 @@
             } else if (event.key === 'Escape') {
                 editingRepoUrl = false; // Prevent save on blur
                 const input = document.getElementById('repo_url_input');
-                const displayEl = document.getElementById('repo_url_display');
-                if (input && displayEl) {
-                    const currentVal = displayEl.innerText;
-                    input.value = currentVal === 'Non configuré' ? '' : currentVal;
+                if (input) {
+                    const rawUrl = window.currentUpdateUrl || '';
+                    input.value = rawUrl === 'Non configuré' ? '' : rawUrl;
                     input.blur();
                 }
                 cancelEditingRepoUrl();
@@ -2499,47 +2449,8 @@
                 .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
         }
 
-        function saveMeshConfig() {
-            const channel = parseInt(document.getElementById('mesh_channel_input').value);
-            const id = document.getElementById('mesh_id_input').value.trim();
-            const btn = document.getElementById('btn_save_mesh');
-            const statusEl = document.getElementById('mesh_config_status');
 
-            if (isNaN(channel) || channel < 1 || channel > 13) {
-                showMessage('mesh_config_status', 'Le canal doit être compris entre 1 et 13.', 'error');
-                return;
-            }
 
-            if (!id) {
-                showMessage('mesh_config_status', 'Le Mesh ID est requis !', 'error');
-                return;
-            }
-
-            showMessage('mesh_config_status', SPINNER_SVG + ' Enregistrement et redémarrage de la carte...', 'success');
-            btn.disabled = true;
-
-            fetch('/api/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    mesh_channel: channel,
-                    mesh_id: id
-                })
-            })
-                .then(res => {
-                    if (!res.ok) {
-                        throw new Error(`HTTP ${res.status}`);
-                    }
-                    showMessage('mesh_config_status', 'Configuration enregistrée ! Redémarrage de l\'appareil...', 'success');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 4000);
-                })
-                .catch(err => {
-                    showMessage('mesh_config_status', `Échec de l'enregistrement : ${err.message || err}`, 'error');
-                    btn.disabled = false;
-                });
-        }
 
         // Initial setup
         Promise.all([fetchDevices(), fetchStatus()])

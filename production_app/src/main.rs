@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.22";
+const FW_VERSION: &str = "1.0.25-0009";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -176,11 +176,13 @@ pub fn perform_wifi_connection(
     mesh_state: &Arc<Mutex<MeshState>>,
     is_boot: bool,
 ) -> Result<bool> {
-    let (mesh_channel, mesh_id) = {
+    let (mesh_channel, mesh_id, mesh_ssid, mesh_pmk) = {
         let storage = nvs_storage.lock().unwrap();
         let channel = storage.get_i32("wifiChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
-        let id = storage.get_str("meshId").unwrap_or(Some("Whiper".to_string())).unwrap_or_else(|| "Whiper".to_string());
-        (channel, id)
+        let id = storage.get_str("meshId").unwrap_or(Some("WE-001".to_string())).unwrap_or_else(|| "WE-001".to_string());
+        let ssid = storage.get_str("meshSsid").unwrap_or(Some("Esp32MeshNetwork".to_string())).unwrap_or_else(|| "Esp32MeshNetwork".to_string());
+        let pmk = storage.get_str("meshPmk").unwrap_or(Some("Mesh-IoT@Espressif!".to_string())).unwrap_or_else(|| "Mesh-IoT@Espressif!".to_string());
+        (channel, id, ssid, pmk)
     };
 
     let mut connected = false;
@@ -212,7 +214,7 @@ pub fn perform_wifi_connection(
     info!("Mesh is active. Starting Mesh AP first... (open AP: {})", open_ap);
 
     // 1. Démarrer l'AP Mesh immédiatement → les clients Mesh/frontend peuvent se connecter dès maintenant
-    wifi.start_mesh_ap_only(&mesh_id, &default_net_psk, mesh_channel, open_ap)?;
+    wifi.start_mesh_ap_only(&mesh_ssid, &mesh_pmk, mesh_channel, open_ap)?;
 
     // 2. Tenter la connexion STA vers les réseaux Wi-Fi connus uniquement s'ils sont détectés via scan actif ciblé
     if !known_networks.is_empty() {
@@ -224,7 +226,7 @@ pub fn perform_wifi_connection(
         if let Some((ref ssid, ref psk)) = default_net {
             if wifi.active_scan_ssid(ssid) {
                 info!("Trying default network '{}' (detected in active scan)...", ssid);
-                if wifi.try_sta_on_mesh(ssid, psk, &mesh_id, &default_net_psk, mesh_channel, open_ap).unwrap_or(false) {
+                if wifi.try_sta_on_mesh(ssid, psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
                     connected = true;
                     chosen_ssid = ssid.clone();
                     is_root = true;
@@ -243,7 +245,7 @@ pub fn perform_wifi_connection(
                 }
                 if wifi.active_scan_ssid(ssid) {
                     info!("Trying known network '{}' (detected in active scan)...", ssid);
-                    if wifi.try_sta_on_mesh(ssid, &entry.psk, &mesh_id, &default_net_psk, mesh_channel, open_ap).unwrap_or(false) {
+                    if wifi.try_sta_on_mesh(ssid, &entry.psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
                         connected = true;
                         chosen_ssid = ssid.clone();
                         is_root = true;
@@ -257,14 +259,14 @@ pub fn perform_wifi_connection(
 
     // 3. Si toujours pas connecté au Wi-Fi local, chercher un parent Mesh via scan actif ciblé
     if !connected {
-        if wifi.active_scan_ssid(&mesh_id) {
-            info!("Found parent Mesh network '{}'. Connecting and syncing...", mesh_id);
-            if wifi.try_sta_on_mesh(&mesh_id, &default_net_psk, &mesh_id, &default_net_psk, mesh_channel, open_ap).unwrap_or(false) {
+        if wifi.active_scan_ssid(&mesh_ssid) {
+            info!("Found parent Mesh network '{}'. Connecting and syncing...", mesh_ssid);
+            if wifi.try_sta_on_mesh(&mesh_ssid, &mesh_pmk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
                 info!("Connected to Mesh parent. Synchronizing configuration...");
                 match perform_mesh_sync(nvs_storage) {
                     Ok(parent_distance) => {
                         connected = true;
-                        chosen_ssid = mesh_id.clone();
+                        chosen_ssid = mesh_ssid.clone();
                         is_root = false;
                         distance = parent_distance + 1;
                         info!("Mesh sync successful! Distance to root: {}", distance);
@@ -275,13 +277,13 @@ pub fn perform_wifi_connection(
                 }
             }
         } else {
-            info!("No parent Mesh network '{}' detected in active scan.", mesh_id);
+            info!("No parent Mesh network '{}' detected in active scan.", mesh_ssid);
         }
     }
 
     // 4. Résultat du boot / reconnexion
     if !connected {
-        warn!("No STA connection established. Mesh AP '{}' remains active for direct client access.", mesh_id);
+        warn!("No STA connection established. Mesh AP '{}' remains active for direct client access.", mesh_ssid);
         is_root = false;
         distance = -1;
         common::led::set_led_color(common::led::YELLOW, 25); // Jaune : AP seul, pas de connexion routeur
@@ -1455,15 +1457,17 @@ fn main() -> Result<()> {
                 let mut wifi = wifi_clone.lock().unwrap();
                 let mut storage = nvs_clone.lock().unwrap();
                 
-                let (mesh_channel, mesh_id, default_net_psk) = {
+                let (mesh_channel, mesh_id, mesh_ssid, mesh_pmk, default_net_psk) = {
                     let channel = storage.get_i32("wifiChannel").unwrap_or(Some(11)).unwrap_or(11) as u8;
-                    let id = storage.get_str("meshId").unwrap_or(Some("Whiper".to_string())).unwrap_or_else(|| "Whiper".to_string());
+                    let id = storage.get_str("meshId").unwrap_or(Some("WE-001".to_string())).unwrap_or_else(|| "WE-001".to_string());
+                    let ssid = storage.get_str("meshSsid").unwrap_or(Some("Esp32MeshNetwork".to_string())).unwrap_or_else(|| "Esp32MeshNetwork".to_string());
+                    let pmk = storage.get_str("meshPmk").unwrap_or(Some("Mesh-IoT@Espressif!".to_string())).unwrap_or_else(|| "Mesh-IoT@Espressif!".to_string());
                     let known = storage.get_known_networks().unwrap_or_default();
                     let dp = known.iter()
                         .find(|(_, entry)| entry.default.unwrap_or(false))
                         .map(|(_, entry)| entry.psk.clone())
                         .unwrap_or_default();
-                    (channel, id, dp)
+                    (channel, id, ssid, pmk, dp)
                 };
 
                 let open_ap = {
@@ -1485,7 +1489,7 @@ fn main() -> Result<()> {
                 // 1. Scan actif rapide sur le SSID ciblé avant la connexion
                 if wifi.active_scan_ssid(ssid) {
                     info!("SSID '{}' détecté via scan actif. Tentative de connexion STA sur le Mesh...", ssid);
-                    if wifi.try_sta_on_mesh(ssid, &final_psk, &mesh_id, &default_net_psk, mesh_channel, open_ap).unwrap_or(false) {
+                    if wifi.try_sta_on_mesh(ssid, &final_psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
                         wifi_success = true;
                     }
                 } else {
@@ -1510,7 +1514,7 @@ fn main() -> Result<()> {
                         if d_ssid != ssid {
                             info!("Tentative de reconnexion au réseau par défaut : {}", d_ssid);
                             if wifi.active_scan_ssid(d_ssid) {
-                                if wifi.try_sta_on_mesh(d_ssid, d_psk, &mesh_id, &default_net_psk, mesh_channel, open_ap).unwrap_or(false) {
+                                if wifi.try_sta_on_mesh(d_ssid, d_psk, &mesh_ssid, &mesh_pmk, mesh_channel, open_ap).unwrap_or(false) {
                                     reconnected = true;
                                     info!("Reconnexion réussie au réseau par défaut '{}'", d_ssid);
                                 }
@@ -1793,95 +1797,3 @@ pub fn set_boot_to_recovery() {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<<<<<<< HEAD
-=======
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
->>>>>>> 649cece3aeb2ca7db4f8e9d74cba7af843bf496e

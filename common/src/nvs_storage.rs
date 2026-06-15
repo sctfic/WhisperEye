@@ -68,10 +68,13 @@ impl NvsStorage {
             self.set_i32("wifiChannel", 11)?;
         }
         if self.get_str("meshId")?.is_none() {
-            self.set_str("meshId", "Whiper")?;
+            self.set_str("meshId", "WE-001")?;
         }
         if self.get_str("meshPmk")?.is_none() {
-            self.set_str("meshPmk", "")?;
+            self.set_str("meshPmk", "Mesh-IoT@Espressif!")?;
+        }
+        if self.get_str("meshSsid")?.is_none() {
+            self.set_str("meshSsid", "Esp32MeshNetwork")?;
         }
         Ok(())
     }

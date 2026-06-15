@@ -65,12 +65,14 @@ static START_HEARTBEAT: Once = Once::new();
 pub enum WifiStatus {
     Connecting,
     Connected,
+    Off,
 }
 
 pub fn set_wifi_status(status: WifiStatus) {
     let val = match status {
         WifiStatus::Connecting => 0,
         WifiStatus::Connected => 1,
+        WifiStatus::Off => 2,
     };
     WIFI_STATUS.store(val, Ordering::SeqCst);
     
@@ -92,6 +94,15 @@ pub fn set_wifi_status(status: WifiStatus) {
             let mut t: f64 = 0.0;
             loop {
                 let status = WIFI_STATUS.load(Ordering::SeqCst);
+                if status == 2 {
+                    // Éteindre la LED
+                    unsafe {
+                        core::ptr::write_volatile(0x6000_401c as *mut u32, 1 << (44 - 32));
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+
                 let cycle_duration = if status == 0 {
                     0.6 // Connecting (rapide) -> 600 ms
                 } else {

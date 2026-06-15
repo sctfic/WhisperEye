@@ -58,7 +58,6 @@ impl DeviceRegistry {
 
         // 1. Static Devices (Always present)
         let static_ids = vec![
-            ("DRV8701", "Contrôleur Pont en H (DRV8701)"),
             ("touch", "Touche Tactile (TOUCH)"),
             ("vsense", "Mesure Tension (VSENSE)"),
             ("rla", "Relais A (RLA)"),
@@ -164,9 +163,6 @@ impl DeviceRegistry {
                 }
                 "rlb" => {
                     value = if relay_b_on { "ON".to_string() } else { "OFF".to_string() };
-                }
-                "DRV8701" => {
-                    value = "Actif".to_string();
                 }
                 "touch" => {
                     value = if touch_state { "TOUCHÉ".to_string() } else { "RELÂCHÉ".to_string() };

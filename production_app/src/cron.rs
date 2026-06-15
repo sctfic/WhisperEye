@@ -62,6 +62,7 @@ impl CronWorker {
 
                     // Check if pairing mode has expired
                     let mut pairing_expired = false;
+                    let mut pairing_active = false;
                     {
                         let mut state = self.mesh_state.lock().unwrap();
                         if let Some(until) = state.pairing_until {
@@ -69,6 +70,8 @@ impl CronWorker {
                                 info!("Pairing mode expired, reverting to secure Mesh AP mode...");
                                 state.pairing_until = None;
                                 pairing_expired = true;
+                            } else {
+                                pairing_active = true;
                             }
                         }
                     }
@@ -76,6 +79,12 @@ impl CronWorker {
                         if let Err(e) = crate::perform_wifi_connection(&self.wifi, &self.nvs, &self.mesh_state, false) {
                             error!("Error reverting pairing mode to secure: {:?}", e);
                         }
+                    }
+                    
+                    if pairing_active {
+                        common::led::set_wifi_status(common::led::WifiStatus::Connecting);
+                    } else {
+                        common::led::set_wifi_status(common::led::WifiStatus::Off);
                     }
                     
                     // Task 1: Collect sensor metrics every 30 seconds
