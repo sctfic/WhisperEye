@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.50";
+const FW_VERSION: &str = "1.0.52";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -121,7 +121,7 @@ pub struct MeshState {
     pub pairing_until: Option<std::time::Instant>,
 }
 
-fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Addr) -> Result<i32> {
+fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Addr) -> Result<(i32, bool)> {
     let my_ip = unsafe {
         let netif = esp_idf_sys::esp_netif_get_handle_from_ifkey(b"WIFI_STA_DEF\0".as_ptr() as *const _);
         if !netif.is_null() {
@@ -201,7 +201,7 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
                         storage.set_str("ntpServer", &res.ntp_server)?;
                     }
                 }
-                return Ok(res.distance);
+                return Ok((res.distance, should_save_wifi));
             }
             Err(e) => {
                 warn!("Mesh sync attempt {} failed: {:?}", attempt + 1, e);
@@ -583,7 +583,7 @@ fn main() -> Result<()> {
         } else {
             String::new()
         };
-        mac.replace("%3A", ":").replace("%3a", ":");
+        let mac = mac.replace("%3A", ":").replace("%3a", ":");
 
         let target_ip = {
             let state = proxy_mesh.lock().unwrap();
@@ -594,12 +594,12 @@ fn main() -> Result<()> {
             Some(ip) if ip != "0.0.0.0" => ip,
             _ => {
                 let mut response = req.into_status_response(404)?;
-                response.write(format!("Noeuds enfant avec la MAC '{}' introuvable", mac).as_bytes())?;
+                response.write(format!("Noeud enfant avec la MAC '{}' introuvable", mac).as_bytes())?;
                 return Ok(());
             }
         };
 
-        info!("Proxying request for child MAC {} to http://{}/{}", mac, target_ip, subpath);
+        info!("Proxying request for child MAC {} to http://{}/", mac, target_ip);
         
         let config = esp_idf_svc::http::client::Configuration {
             buffer_size: Some(1024),
@@ -608,7 +608,7 @@ fn main() -> Result<()> {
         };
         
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-        let target_url = format!("http://{}/{}", target_ip, subpath);
+        let target_url = format!("http://{}/", target_ip);
         connection.initiate_request(esp_idf_svc::http::Method::Get, &target_url, &[])?;
         connection.initiate_response()?;
 
@@ -1926,6 +1926,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 

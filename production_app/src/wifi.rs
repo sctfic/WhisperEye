@@ -614,15 +614,19 @@ impl NetManager {
                                                 net.wifi.wifi().sta_netif().get_ip_info().map(|info| info.subnet.gateway).unwrap_or(std::net::Ipv4Addr::new(192, 168, 71, 1))
                                             };
                                             match crate::perform_mesh_sync(&nvs_clone, gateway_ip) {
-                                                Ok(parent_distance) => {
+                                                Ok((parent_distance, had_new_wifi)) => {
                                                     info!("WifiFallback: Mesh sync successful! Parent distance: {}", parent_distance);
                                                     let mut ms = mesh_state_clone.lock().unwrap();
                                                     ms.distance = parent_distance + 1;
-                                                    // Déclencher immédiatement la connexion au Wi-Fi box
-                                                    if let Ok(mut net) = this_clone.lock() {
-                                                        info!("WifiFallback: Mesh sync OK → tentative connexion Wi-Fi box avec les credentials synchronisés");
-                                                        net.state = NetState::WifiPreferred;
-                                                        net.last_state_change = std::time::Instant::now();
+                                                    if had_new_wifi {
+                                                        info!("WifiFallback: New Wi-Fi credentials → tentative connexion box dans 5s");
+                                                        thread::sleep(Duration::from_millis(5000));
+                                                        if let Ok(mut net) = this_clone.lock() {
+                                                            net.state = NetState::WifiPreferred;
+                                                            net.last_state_change = std::time::Instant::now();
+                                                        }
+                                                    } else {
+                                                        info!("WifiFallback: Wi-Fi déjà connu → on reste sur le mesh");
                                                     }
                                                 }
                                                 Err(e) => {

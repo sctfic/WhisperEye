@@ -1495,7 +1495,7 @@
                                             <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${child.name || '(inconnu)'}</div>
                                             <div style="font-family: monospace; font-size: 0.7rem; color: var(--text-secondary); margin-top: 1px;">${child.mac}</div>
                                         </div>
-                                        <a href="/proxy/${child.mac}" target="_blank" rel="noopener" style="color: var(--accent-color); font-family: monospace; font-weight: 600; text-decoration: none; padding: 2px 6px; border-radius: 4px; background: rgba(16,185,129,0.1); transition: background 0.2s; flex-shrink: 0;" onmouseover="this.style.background='rgba(16,185,129,0.25)'" onmouseout="this.style.background='rgba(16,185,129,0.1)'" title="Ouvrir ${child.name || child.ip}">${child.ip} ↗</a>
+                                        <a href="/proxy?mac=${child.mac}" target="_blank" rel="noopener" style="color: var(--accent-color); font-family: monospace; font-weight: 600; text-decoration: none; padding: 2px 6px; border-radius: 4px; background: rgba(16,185,129,0.1); transition: background 0.2s; flex-shrink: 0;" onmouseover="this.style.background='rgba(16,185,129,0.25)'" onmouseout="this.style.background='rgba(16,185,129,0.1)'" title="Ouvrir ${child.name || child.ip}">${child.ip} ↗</a>
                                     </div>`;
                                 }
                                 childrenList.innerHTML = html;
