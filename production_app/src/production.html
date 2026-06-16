@@ -667,8 +667,19 @@
 
         <!-- TAB 1: DEVICES & ACTUATORS -->
         <div id="devices-tab" class="tab-content active">
-            <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 2rem;">
-                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des périphériques...</p>
+            <!-- Section Actuateurs -->
+            <h3 style="margin-bottom: 0.5rem; font-size: 1rem; border-left: 3px solid var(--warning); padding-left: 0.5rem;">
+                Actionneurs
+            </h3>
+            <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1.5rem;">
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des actionneurs...</p>
+            </div>
+            <!-- Section Capteurs -->
+            <h3 style="margin-bottom: 0.5rem; font-size: 1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Capteurs
+            </h3>
+            <div id="sensors_list" style="display: flex; flex-direction: column; gap: 0.25rem;">
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des capteurs...</p>
             </div>
         </div>
 
@@ -797,14 +808,6 @@
                 <span class="info-value" id="status_rename_enabled">--</span>
             </div>
 
-            <!-- Section 5: Capteurs (avec valeurs individuelles et métadonnées) -->
-            <h3
-                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
-                Capteurs
-            </h3>
-            <div id="sensors_list" style="display: flex; flex-direction: column; gap: 0.25rem;">
-                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des capteurs...</p>
-            </div>
         </div>
 
 
@@ -907,11 +910,12 @@
                             Fait clignoter la LED en blanc rapide pendant 15s. Chaque appui ajoute 15s.
                         </div>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span id="identify_countdown" style="font-size: 0.85rem; color: var(--accent-color); font-weight: 600; display: none;">--s</span>
-                        <button id="btn_identify" type="button" class="btn"
-                            style="width: auto; padding: 0.25rem 0.7rem; font-size: 0.8rem; background-color: var(--secondary-accent);"
-                            onclick="triggerIdentify()">Identifier</button>
+                    <div style="position: relative; width: 44px; height: 44px; flex-shrink: 0;">
+                        <svg id="identify_ring" width="44" height="44" viewBox="0 0 44 44" style="cursor: pointer;" onclick="triggerIdentify()">
+                            <circle cx="22" cy="22" r="18" fill="none" stroke="#334155" stroke-width="3"/>
+                            <circle id="identify_ring_progress" cx="22" cy="22" r="18" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-dasharray="113.1" stroke-dashoffset="0" transform="rotate(-90 22 22)" style="transition: stroke-dashoffset 0.3s ease;"/>
+                            <text id="identify_ring_text" x="22" y="25" text-anchor="middle" fill="#ffffff" font-size="10" font-weight="700" font-family="monospace">ID</text>
+                        </svg>
                     </div>
                 </div>
 
@@ -1104,15 +1108,6 @@
             </div>
         </div>
 
-        <!-- Identify Spinner Modal -->
-        <div id="identify_modal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(15, 23, 42, 0.9); backdrop-filter: blur(8px); z-index: 99999; display: none; justify-content: center; align-items: center; margin: 0; padding: 2rem;">
-            <div style="text-align: center;">
-                <div class="ota-spinner" style="border-top-color: #ffffff; border-right-color: #cccccc; width: 80px; height: 80px; border-width: 4px;"></div>
-                <div id="identify_countdown_center" style="font-size: 3rem; font-weight: 800; color: #ffffff; margin-top: 1rem; font-family: var(--font-mono);">15s</div>
-                <div style="color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.5rem;">LED blanche clignotante</div>
-                <div id="identify_stop_utc" style="color: var(--text-secondary); font-size: 0.75rem; margin-top: 0.25rem; font-family: monospace;"></div>
-            </div>
-        </div>
     </div>
 
     <footer
@@ -1231,11 +1226,11 @@
 
             if (tabId === 'status-tab') {
                 fetchStatus();
-                fetchSensors();
             } else if (tabId === 'config-tab') {
                 scanSsids();
             } else if (tabId === 'devices-tab') {
                 fetchDevices();
+                fetchSensors();
             } else if (tabId === 'update-tab') {
                 checkUpdates();
             }
@@ -1756,6 +1751,9 @@
 
                     let html = '';
                     data.forEach(dev => {
+                        // Ne pas afficher les capteurs ici (ils sont dans sensors_list)
+                        if (dev.sensor_meta !== null && dev.sensor_meta !== undefined) return;
+
                         const statusBadge = dev.present
                             ? `<span id="badge_${dev.id}" class="badge badge-green">Présent</span>`
                             : `<span id="badge_${dev.id}" class="badge badge-error">Absent</span>`;
@@ -2691,23 +2689,27 @@
         }
 
         function updateIdentifyUI() {
-            const countdownEl = document.getElementById('identify_countdown');
-            const modalEl = document.getElementById('identify_modal');
-            const centerEl = document.getElementById('identify_countdown_center');
-            const utcEl = document.getElementById('identify_stop_utc');
+            const ringProgress = document.getElementById('identify_ring_progress');
+            const ringText = document.getElementById('identify_ring_text');
+            if (!ringProgress || !ringText) return;
+            const circumference = 2 * Math.PI * 18; // ~113.1
             if (identifyRemainingSecs > 0) {
-                if (countdownEl) {
-                    countdownEl.style.display = 'inline';
-                    countdownEl.textContent = identifyRemainingSecs + 's';
-                }
-                if (modalEl) modalEl.style.display = 'flex';
-                if (centerEl) centerEl.textContent = identifyRemainingSecs + 's';
-                if (utcEl && identifyStopUtc) utcEl.textContent = 'Arrêt UTC: ' + identifyStopUtc;
+                // L'anneau se remplit progressivement jusqu'à 15s de base
+                const total = Math.max(identifyRemainingSecs, 15);
+                const fraction = identifyRemainingSecs / total;
+                const offset = circumference * (1 - fraction);
+                ringProgress.setAttribute('stroke-dasharray', circumference);
+                ringProgress.setAttribute('stroke-dashoffset', offset);
+                ringText.textContent = identifyRemainingSecs + 's';
+                ringText.setAttribute('font-size', '9');
             } else {
-                if (countdownEl) countdownEl.style.display = 'none';
-                if (modalEl) modalEl.style.display = 'none';
+                ringProgress.setAttribute('stroke-dashoffset', '0');
+                ringText.textContent = 'ID';
+                ringText.setAttribute('font-size', '10');
             }
-            // Mettre à jour aussi depuis fetchStatus
+            // Supprimer l'ancien compteur en ligne (plus utilisé)
+            const countdownEl = document.getElementById('identify_countdown');
+            if (countdownEl) countdownEl.style.display = 'none';
         }
 
         // ─── Redémarrer ───
@@ -2729,7 +2731,7 @@
         // ─── Capteurs (onglet Statut) ───
         function fetchSensors() {
             const container = document.getElementById('sensors_list');
-            if (!container || !document.getElementById('status-tab').classList.contains('active')) return;
+            if (!container) return;
             fetch('/api/peripherals')
                 .then(res => res.json())
                 .then(devices => {

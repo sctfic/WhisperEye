@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.53-0004";
+const FW_VERSION: &str = "1.0.54";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -1370,11 +1370,13 @@ fn main() -> Result<()> {
     })?;
 
     // POST /api/sensor-correction — enregistre la formule de correction d'un capteur dans la NVS
+    // La formule utilise les noms des capteurs avec l'extension .raw pour la valeur brute.
+    // Ex: a * i2c:0:0x44_T.raw + b  ou  a * i2c:0:0x44_T.raw + i2c:0:0x44_H.raw/100
     let corr_nvs = Arc::clone(&nvs_storage);
     let corr_mesh = Arc::clone(&mesh_state);
     server.fn_handler("/api/sensor-correction", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
         extend_pairing!(corr_mesh);
-        let mut buf = vec![0u8; 256];
+        let mut buf = vec![0u8; 512];
         let bytes_read = req.read(&mut buf)?;
         #[derive(serde::Deserialize)]
         struct CorrPayload {
@@ -1388,12 +1390,27 @@ fn main() -> Result<()> {
             response.write(b"La formule ne peut pas etre vide")?;
             return Ok(());
         }
-        // Validation basique : la formule ne doit contenir que x, chiffres, opérateurs, espaces, parenthèses, point
-        let valid_chars = |c: char| c.is_alphanumeric() || "+-*/^(). _".contains(c);
+        // Validation : la formule accepte les noms de capteurs avec .raw, chiffres, opérateurs
+        let valid_chars = |c: char| c.is_alphanumeric() || "+-*/^(). _:%xabcdefABCDEF".contains(c);
         if !formula.chars().all(valid_chars) {
             let mut response = req.into_status_response(400)?;
-            response.write(b"Formule invalide : caracteres non autorises")?;
+            response.write(b"Formule invalide : caracteres non autorises (utilisez a-z, 0-9, +-*/^().raw, :)")?;
             return Ok(());
+        }
+        // Vérifier que les identifiants référencés sont des capteurs valides (terminent par .raw)
+        for word in formula.split(|c: char| !c.is_alphanumeric() && c != '.' && c != ':' && c != '_') {
+            let trimmed = word.trim();
+            if trimmed.is_empty() { continue; }
+            if trimmed.ends_with(".raw") {
+                let sensor_id = &trimmed[..trimmed.len()-4];
+                // Vérifier que le capteur existe dans le registre
+                let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&corr_nvs));
+                let devs = registry.get_devices();
+                if !devs.contains_key(sensor_id) && sensor_id != "x" {
+                    warn!("Formule de correction référence un capteur inconnu: '{}'", sensor_id);
+                    // On accepte quand même (le capteur pourrait être ajouté plus tard)
+                }
+            }
         }
         dynamic_devices::set_correction_formula(&corr_nvs, &payload.id, formula)?;
         info!("Correction formula set for '{}': '{}'", payload.id, formula);
@@ -1453,24 +1470,19 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // POST /api/restart — redémarre l'ESP32 sur la partition production
+    // POST /api/restart — redémarre l'ESP32 sur la partition production, sans délai
     let restart_mesh = Arc::clone(&mesh_state);
     server.fn_handler("/api/restart", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(restart_mesh);
-        info!("Redémarrage demandé via API. Redémarrage dans 2 secondes...");
-        let json = serde_json::json!({"status": "ok", "message": "Redémarrage dans 2 secondes..."});
+        info!("Redémarrage demandé via API. Redémarrage immédiat...");
+        let json = serde_json::json!({"status": "ok", "message": "Redémarrage immédiat..."});
         let response_data = serde_json::to_string(&json)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
-        let _ = thread::Builder::new()
-            .name("api_restart_worker".to_string())
-            .stack_size(4096)
-            .spawn(|| {
-                thread::sleep(std::time::Duration::from_secs(2));
-                unsafe {
-                    esp_idf_sys::esp_restart();
-                }
-            });
+        unsafe {
+            esp_idf_sys::esp_restart();
+        }
+        #[allow(unreachable_code)]
         Ok(())
     })?;
 
@@ -2073,6 +2085,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 

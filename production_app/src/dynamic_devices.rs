@@ -101,11 +101,12 @@ pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
 }
 
 /// Récupère la formule de correction stockée en NVS pour un capteur.
-/// Clé NVS : `corr_<device_id>` (ex: corr_i2c:0:0x44_T). Par défaut "x" (valeur brute = valeur réelle).
+/// Clé NVS : `corr_<device_id>` (ex: corr_i2c:0:0x44_T).
+/// Par défaut: "<device_id>.raw" (la valeur réelle = la valeur brute).
 pub fn get_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str) -> String {
     let storage = nvs.lock().unwrap();
     let key = format!("corr_{}", device_id);
-    storage.get_str(&key).ok().flatten().unwrap_or_else(|| "x".to_string())
+    storage.get_str(&key).ok().flatten().unwrap_or_else(|| format!("{}.raw", device_id))
 }
 
 /// Sauvegarde la formule de correction dans la NVS.

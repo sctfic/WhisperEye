@@ -147,7 +147,7 @@ fn ensure_pattern_running() {
             .stack_size(4096)
             .spawn(move || {
                 let intensity: u8 = 2; // 2/255
-                let identify_intensity: u8 = 16; // ~6% pour le blanc rapide
+                let identify_intensity: u8 = 200; // ~78% pour le blanc rapide
                 let tick = Duration::from_millis(10);
                 let pulse_duration_ticks: u32 = 20; // 200ms
                 let off_ticks: u32 = 40; // 400ms
