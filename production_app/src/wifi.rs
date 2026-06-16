@@ -117,16 +117,12 @@ impl NetManager {
         let (ssid, auth_method, password) = match self.state {
             NetState::ApPairing => (
                 "ESP32-Configuration".to_string(),
-                AuthMethod::None,
+                AuthMethod::None, // portail captif : reste ouvert
                 "".to_string(),
             ),
             _ => {
-                let auth = if open_ap || self.mesh_pmk.is_empty() {
-                    AuthMethod::None
-                } else {
-                    AuthMethod::WPA2Personal
-                };
-                (self.mesh_ssid.clone(), auth, self.mesh_pmk.clone())
+                // Le mesh est toujours chiffré en WPA2, même si la box Wi‑Fi est ouverte
+                (self.mesh_ssid.clone(), AuthMethod::WPA2Personal, self.mesh_pmk.clone())
             }
         };
 
@@ -213,7 +209,7 @@ impl NetManager {
             Ok(Configuration::AccessPoint(ap_cfg)) => ap_cfg,
             _ => {
                 let _subnet = if distance == 0 { 71 } else if distance > 0 { (71 + distance).min(79) as u8 } else { 71 };
-                let auth_method = if open_ap || self.mesh_pmk.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal };
+                let auth_method = AuthMethod::WPA2Personal;
                 AccessPointConfiguration {
                     ssid: self.mesh_ssid.as_str().try_into().unwrap(),
                     ssid_hidden: false,
@@ -556,30 +552,57 @@ impl NetManager {
                                     mesh_retry_count = 0;
                                     box_retry_count = 0;
                                     ap_only_mode = false;
-                                    let gateway_ip = net.wifi.wifi().sta_netif().get_ip_info().map(|info| info.subnet.gateway).unwrap_or(std::net::Ipv4Addr::new(192, 168, 71, 1));
-                                    match crate::perform_mesh_sync(&nvs, gateway_ip) {
-                                        Ok(parent_distance) => {
-                                            info!("WifiFallback: Mesh sync successful! Parent distance: {}", parent_distance);
-                                            net.state = NetState::MeshOk;
-                                            let mut ms = mesh_state.lock().unwrap();
-                                            ms.is_root = false;
-                                            ms.distance = parent_distance + 1;
-                                            let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), ms.distance);
-                                        }
-                                        Err(e) => {
-                                            warn!("WifiFallback: Mesh sync failed: {:?}. Keeping connection, assuming distance=1.", e);
-                                            // Ne pas déconnecter — la connexion Wi-Fi est établie
-                                            net.state = NetState::MeshOk;
-                                            let mut ms = mesh_state.lock().unwrap();
-                                            ms.is_root = false;
-                                            ms.distance = 1;
-                                            let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), 1);
-                                        }
+                                    common::led::MESH_RETRIES_EXHAUSTED.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    // Passer immédiatement en MeshOk (distance=1), le sync se fera en arrière-plan
+                                    net.state = NetState::MeshOk;
+                                    {
+                                        let mut ms = mesh_state.lock().unwrap();
+                                        ms.is_root = false;
+                                        ms.distance = 1;
                                     }
+                                    let _ = net.setup_persistent_ap(mesh_pmk.is_empty(), 1);
+                                    // Lancer le sync HTTP dans un thread séparé (non bloquant)
+                                    let nvs_clone = Arc::clone(&nvs);
+                                    let mesh_state_clone = Arc::clone(&mesh_state);
+                                    let this_clone = Arc::clone(&this);
+                                    drop(net);
+                                    thread::Builder::new()
+                                        .name("mesh_sync".to_string())
+                                        .stack_size(8192)
+                                        .spawn(move || {
+                                            // Délai aléatoire 1-4s pour désynchroniser les ESP32
+                                            let delay_ms = 1000 + (unsafe { esp_idf_sys::esp_random() } % 3000) as u64;
+                                            thread::sleep(Duration::from_millis(delay_ms));
+                                            let gateway_ip = {
+                                                let net = this_clone.lock().unwrap();
+                                                net.wifi.wifi().sta_netif().get_ip_info().map(|info| info.subnet.gateway).unwrap_or(std::net::Ipv4Addr::new(192, 168, 71, 1))
+                                            };
+                                            match crate::perform_mesh_sync(&nvs_clone, gateway_ip) {
+                                                Ok(parent_distance) => {
+                                                    info!("WifiFallback: Mesh sync successful! Parent distance: {}", parent_distance);
+                                                    let mut ms = mesh_state_clone.lock().unwrap();
+                                                    ms.distance = parent_distance + 1;
+                                                    // Déclencher immédiatement la connexion au Wi-Fi box
+                                                    if let Ok(mut net) = this_clone.lock() {
+                                                        info!("WifiFallback: Mesh sync OK → tentative connexion Wi-Fi box avec les credentials synchronisés");
+                                                        net.state = NetState::WifiPreferred;
+                                                        net.last_state_change = std::time::Instant::now();
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    warn!("WifiFallback: Mesh sync failed (thread): {:?}. Distance=1.", e);
+                                                }
+                                            }
+                                        })
+                                        .map(|_| ())
+                                        .unwrap_or_else(|e| warn!("Failed to spawn mesh_sync thread: {:?}", e));
                                 }
                                 _ => {
                                     mesh_retry_count += 1;
                                     warn!("WifiFallback: Failed to connect to parent Mesh. Retry #{}. Alternating to box.", mesh_retry_count);
+                                    if mesh_retry_count >= 3 {
+                                        common::led::MESH_RETRIES_EXHAUSTED.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    }
                                     // Alterner : repasser en WifiPreferred
                                     net.state = NetState::WifiPreferred;
                                     // Si les deux sont épuisés → AP-only

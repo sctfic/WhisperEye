@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.31-0007";
+const FW_VERSION: &str = "1.0.31-0014";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -121,6 +121,7 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
         if !netif.is_null() {
             let mut ip_info = esp_idf_sys::esp_netif_ip_info_t::default();
             if esp_idf_sys::esp_netif_get_ip_info(netif, &mut ip_info) == 0 {
+                // esp_ip4_addr_t.addr stocke le 1er octet dans le LSB (convention ESP-IDF/lwIP)
                 let ip = ip_info.ip.addr;
                 format!("{}.{}.{}.{}", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff)
             } else {
@@ -134,6 +135,44 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
     info!("Syncing with Mesh parent at http://{}/api/mesh/sync?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
     // Court délai de stabilisation réseau après connexion Wi‑Fi
     thread::sleep(std::time::Duration::from_millis(500));
+
+    let mut last_err = anyhow::anyhow!("no attempt");
+    for attempt in 0..3 {
+        if attempt > 0 {
+            info!("Mesh sync retry {}/3...", attempt + 1);
+            thread::sleep(std::time::Duration::from_millis(1500));
+        }
+        match try_mesh_sync_request(gateway_ip, my_ip.as_str()) {
+            Ok(res) => {
+                // Save to NVS
+                {
+                    let mut storage = nvs.lock().unwrap();
+                    if !res.wifi_ssid.is_empty() {
+                        let known = storage.get_known_networks().unwrap_or_default();
+                        if !known.contains_key(&res.wifi_ssid) {
+                            info!("Sync: Saving wifi SSID '{}' to NVS (newly discovered)", res.wifi_ssid);
+                            storage.set_default_network(&res.wifi_ssid, &res.wifi_psk)?;
+                        } else {
+                            info!("Sync: Wifi SSID '{}' is already known, skipping save", res.wifi_ssid);
+                        }
+                    }
+                    if !res.ntp_server.is_empty() {
+                        info!("Sync: Saving ntpServer '{}' to NVS", res.ntp_server);
+                        storage.set_str("ntpServer", &res.ntp_server)?;
+                    }
+                }
+                return Ok(res.distance);
+            }
+            Err(e) => {
+                warn!("Mesh sync attempt {} failed: {:?}", attempt + 1, e);
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
+}
+
+fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str) -> Result<SyncResponse> {
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         crt_bundle_attach: None,
@@ -159,35 +198,16 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
         }
     }
     
-    #[derive(serde::Deserialize)]
-    struct SyncResponse {
-        wifi_ssid: String,
-        wifi_psk: String,
-        ntp_server: String,
-        distance: i32,
-    }
-    
     let res: SyncResponse = serde_json::from_slice(&body)?;
-    
-    // Save to NVS
-    {
-        let mut storage = nvs.lock().unwrap();
-        if !res.wifi_ssid.is_empty() {
-            let known = storage.get_known_networks().unwrap_or_default();
-            if !known.contains_key(&res.wifi_ssid) {
-                info!("Sync: Saving wifi SSID '{}' to NVS (newly discovered)", res.wifi_ssid);
-                storage.set_default_network(&res.wifi_ssid, &res.wifi_psk)?;
-            } else {
-                info!("Sync: Wifi SSID '{}' is already known, skipping save", res.wifi_ssid);
-            }
-        }
-        if !res.ntp_server.is_empty() {
-            info!("Sync: Saving ntpServer '{}' to NVS", res.ntp_server);
-            storage.set_str("ntpServer", &res.ntp_server)?;
-        }
-    }
-    
-    Ok(res.distance)
+    Ok(res)
+}
+
+#[derive(serde::Deserialize)]
+struct SyncResponse {
+    wifi_ssid: String,
+    wifi_psk: String,
+    ntp_server: String,
+    distance: i32,
 }
 
 
@@ -679,7 +699,7 @@ fn main() -> Result<()> {
         let storage = nvs_clone.lock().unwrap();
         let wifi = wifi_clone.lock().unwrap();
         
-        let (m_root, m_distance, m_nodes_count, pairing_seconds_remaining) = {
+        let (m_root, m_distance, m_nodes_count, pairing_seconds_remaining, m_children) = {
             let state = mesh_state_clone.lock().unwrap();
             let rem = if let Some(until) = state.pairing_until {
                 let now = std::time::Instant::now();
@@ -691,7 +711,10 @@ fn main() -> Result<()> {
             } else {
                 0
             };
-            (state.is_root, state.distance, state.nodes.len(), rem)
+            let children: Vec<serde_json::Value> = state.ip_addresses.iter().map(|(mac, ip)| {
+                serde_json::json!({"mac": mac, "ip": ip})
+            }).collect();
+            (state.is_root, state.distance, state.nodes.len(), rem, children)
         };
         let (m_channel, m_id, m_pmk, m_ssid) = {
             let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
@@ -838,6 +861,7 @@ fn main() -> Result<()> {
             "mesh_root": m_root,
             "mesh_distance": m_distance,
             "mesh_nodes_count": m_nodes_count,
+            "mesh_children": m_children,
             "mesh_channel": m_channel,
             "mesh_id": m_id,
             "mesh_pmk": m_pmk,
@@ -1810,6 +1834,14 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
+
+
+
+
+
 
 
 

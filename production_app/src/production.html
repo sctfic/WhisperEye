@@ -735,9 +735,14 @@
                 <span class="info-label">Distance Racine</span>
                 <span class="info-value" id="mesh_distance">--</span>
             </div>
-            <div class="info-group">
+            <div class="info-group" style="position: relative;">
                 <span class="info-label">Nœuds connectés</span>
-                <span class="info-value" id="mesh_nodes_count">--</span>
+                <span class="info-value" id="mesh_nodes_count" style="cursor: pointer; user-select: none;" onclick="toggleMeshChildren()" title="Cliquer pour voir les nœuds enfants">
+                    -- <svg id="mesh_burger_icon" width="14" height="14" viewBox="0 0 16 16" style="vertical-align: middle; margin-left: 4px; opacity: 0.6;"><rect y="2" width="16" height="2" rx="1" fill="currentColor"/><rect y="7" width="16" height="2" rx="1" fill="currentColor"/><rect y="12" width="16" height="2" rx="1" fill="currentColor"/></svg>
+                </span>
+                <div id="mesh_children_list" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: var(--bg-secondary); border-radius: 6px; font-size: 0.8rem; max-height: 200px; overflow-y: auto;">
+                    <div style="color: var(--text-muted);">Aucun nœud enfant</div>
+                </div>
             </div>
             <div class="info-group">
                 <span class="info-label">Adresse IP (STA side) </span>
@@ -748,7 +753,7 @@
                 <span class="info-value" id="mesh_ap_ip">--</span>
             </div>
             <div class="info-group">
-                <span class="info-label">Mode Appairage</span>
+                <span class="info-label">Mode Appairage (press BOOT 2sec)</span>
                 <span class="info-value" id="mesh_pairing">
                     <span id="mesh_pairing_badge" class="badge badge-error">Inactif</span>
                     <button id="btn_pair_mesh" class="btn"
@@ -1187,6 +1192,13 @@
             customGroup.style.display = select.value === 'custom' ? 'block' : 'none';
         }
 
+        function toggleMeshChildren() {
+            const list = document.getElementById('mesh_children_list');
+            if (list) {
+                list.style.display = (list.style.display === 'none' || list.style.display === '') ? 'block' : 'none';
+            }
+        }
+
         function showMessage(elementId, html, type) {
             const el = document.getElementById(elementId);
             if (elementId === 'update_status') {
@@ -1459,7 +1471,23 @@
                     if (data.mesh_nodes_count !== undefined) {
                         const mNodesEl = document.getElementById('mesh_nodes_count');
                         if (mNodesEl) {
-                            mNodesEl.innerText = data.mesh_nodes_count;
+                            mNodesEl.innerHTML = data.mesh_nodes_count + ' <svg id="mesh_burger_icon" width="14" height="14" viewBox="0 0 16 16" style="vertical-align: middle; margin-left: 4px; opacity: 0.6;"><rect y="2" width="16" height="2" rx="1" fill="currentColor"/><rect y="7" width="16" height="2" rx="1" fill="currentColor"/><rect y="12" width="16" height="2" rx="1" fill="currentColor"/></svg>';
+                        }
+                        // Mettre à jour la liste des enfants
+                        const childrenList = document.getElementById('mesh_children_list');
+                        if (childrenList && data.mesh_children !== undefined) {
+                            if (data.mesh_children.length === 0) {
+                                childrenList.innerHTML = '<div style="color: var(--text-muted);">Aucun nœud enfant</div>';
+                            } else {
+                                let html = '';
+                                for (const child of data.mesh_children) {
+                                    html += `<div style="padding: 3px 0; display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-color);">
+                                        <span style="font-family: monospace; font-size: 0.75rem;">${child.mac}</span>
+                                        <span style="color: var(--accent-color); font-family: monospace;">${child.ip}</span>
+                                    </div>`;
+                                }
+                                childrenList.innerHTML = html;
+                            }
                         }
                     }
 

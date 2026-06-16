@@ -68,11 +68,18 @@ impl CronWorker {
                     };
 
                     // STA status (pulse 1)
+                    let mesh_exhausted = common::led::MESH_RETRIES_EXHAUSTED.load(std::sync::atomic::Ordering::Relaxed);
                     let sta = match current_state {
                         NetState::WifiOk => common::led::LedStaStatus::WifiOk,
                         NetState::WifiPreferred => common::led::LedStaStatus::WifiAttempting,
                         NetState::MeshOk => common::led::LedStaStatus::MeshOk,
-                        NetState::WifiFallback => common::led::LedStaStatus::MeshAttempting,
+                        NetState::WifiFallback => {
+                            if mesh_exhausted {
+                                common::led::LedStaStatus::None // 3 flashs rouges
+                            } else {
+                                common::led::LedStaStatus::MeshAttempting
+                            }
+                        }
                         NetState::ApPairing => common::led::LedStaStatus::None,
                     };
                     common::led::set_sta_status(sta);

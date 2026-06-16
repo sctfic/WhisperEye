@@ -2,7 +2,7 @@
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicBool, Ordering};
 use std::sync::Once;
 
 use ws2812_esp32_rmt_driver::driver::Ws2812Esp32RmtDriver;
@@ -61,6 +61,7 @@ static LED_STA_STATUS: AtomicU8 = AtomicU8::new(0);
 // 3 = MeshAttempting (bleu clignotant), 4 = MeshOk (bleu)
 static LED_AP_STATUS: AtomicU8 = AtomicU8::new(0);
 // 0 = Off, 1 = MeshSsid (magenta), 2 = ApPairing (orange clignotant)
+pub static MESH_RETRIES_EXHAUSTED: AtomicBool = AtomicBool::new(false);
 static START_LED_PATTERN: Once = Once::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,8 +129,13 @@ fn ensure_pattern_running() {
                             4 => { // MeshOk: blue 200ms
                                 (0, 0, intensity)
                             }
-                            _ => { // None: red 200ms
-                                (intensity, 0, 0)
+                            _ => { // None: 3 flashs rouges
+                                let m = sub; // 0..19
+                                if (m < 3) || (m >= 5 && m < 8) || (m >= 10 && m < 13) {
+                                    (intensity, 0, 0)
+                                } else {
+                                    (0, 0, 0)
+                                }
                             }
                         }
                     } else if phase < pulse_duration_ticks + off_ticks {
