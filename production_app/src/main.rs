@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.52";
+const FW_VERSION: &str = "1.0.53-0001";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -602,7 +602,7 @@ fn main() -> Result<()> {
         info!("Proxying request for child MAC {} to http://{}/", mac, target_ip);
         
         let config = esp_idf_svc::http::client::Configuration {
-            buffer_size: Some(1024),
+            buffer_size: Some(512),
             crt_bundle_attach: None,
             ..Default::default()
         };
@@ -613,12 +613,23 @@ fn main() -> Result<()> {
         connection.initiate_response()?;
 
         let status = connection.status();
-        let mut body = Vec::new();
+        // Streamer la réponse par chunks de 512 octets sans tout bufferiser
+        const MAX_PROXY_BODY: usize = 32768; // 32 Ko max pour éviter OOM
+        let mut body = Vec::with_capacity(512);
         let mut chunk = [0u8; 512];
+        let mut total = 0usize;
         loop {
             match connection.read(&mut chunk) {
                 Ok(0) => break,
-                Ok(n) => body.extend_from_slice(&chunk[..n]),
+                Ok(n) => {
+                    total += n;
+                    if total > MAX_PROXY_BODY {
+                        let mut response = req.into_status_response(413)?;
+                        response.write(b"Proxy response too large (>32KB). Use a direct connection.")?;
+                        return Ok(());
+                    }
+                    body.extend_from_slice(&chunk[..n]);
+                }
                 Err(e) => anyhow::bail!("Failed to read proxy response: {:?}", e),
             }
         }
@@ -1926,6 +1937,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 

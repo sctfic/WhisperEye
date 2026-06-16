@@ -2176,12 +2176,12 @@
             statusEl.innerHTML = `
                 <div class="ota-card">
                     <div class="ota-spinner"></div>
-                    <div class="ota-percentage">0%</div>
-                    <div class="ota-status-msg">Préparation du redémarrage...</div>
+                    <div class="ota-percentage" id="ota_pct">0%</div>
+                    <div class="ota-status-msg" id="ota_msg">Préparation du redémarrage...</div>
                     <div class="ota-progress-container">
-                        <div class="ota-progress-bar" style="width: 0%"></div>
+                        <div class="ota-progress-bar" id="ota_bar" style="width: 0%"></div>
                     </div>
-                    <div class="ota-meta">0 KB</div>
+                    <div class="ota-meta" id="ota_meta">0 KB</div>
                 </div>
             `;
 
@@ -2208,17 +2208,15 @@
                             metaText = "-";
                         }
 
-                        statusEl.innerHTML = `
-                            <div class="ota-card">
-                                <div class="ota-spinner"></div>
-                                <div class="ota-percentage">${pct}%</div>
-                                <div class="ota-status-msg">${statusText}</div>
-                                <div class="ota-progress-container">
-                                    <div class="ota-progress-bar" style="width: ${pct}%"></div>
-                                </div>
-                                <div class="ota-meta">${metaText}</div>
-                            </div>
-                        `;
+                        // Mise à jour ciblée : seul le texte/width change, pas de reconstruction DOM
+                        const pctEl = document.getElementById('ota_pct');
+                        const msgEl = document.getElementById('ota_msg');
+                        const barEl = document.getElementById('ota_bar');
+                        const metaEl = document.getElementById('ota_meta');
+                        if (pctEl) pctEl.textContent = pct + '%';
+                        if (msgEl) msgEl.textContent = statusText;
+                        if (barEl) barEl.style.width = pct + '%';
+                        if (metaEl) metaEl.textContent = metaText;
 
                         if (statusText.includes("reboot") || statusText.includes("Redémarrage") || statusText.includes("terminée")) {
                             clearInterval(updatePollInterval);
@@ -2235,17 +2233,14 @@
                     })
                     .catch(err => {
                         // Network error is expected while rebooting to recovery
-                        statusEl.innerHTML = `
-                            <div class="ota-card">
-                                <div class="ota-spinner"></div>
-                                <div class="ota-percentage">-</div>
-                                <div class="ota-status-msg">Mise à jour en cours... (Reconnexion à l'extendeur...)</div>
-                                <div class="ota-progress-container">
-                                    <div class="ota-progress-bar" style="width: 0%"></div>
-                                </div>
-                                <div class="ota-meta">-</div>
-                            </div>
-                        `;
+                        const pctEl = document.getElementById('ota_pct');
+                        const msgEl = document.getElementById('ota_msg');
+                        const barEl = document.getElementById('ota_bar');
+                        const metaEl = document.getElementById('ota_meta');
+                        if (pctEl) pctEl.textContent = '-';
+                        if (msgEl) msgEl.textContent = "Mise à jour en cours... (Reconnexion à l'extendeur...)";
+                        if (barEl) barEl.style.width = '0%';
+                        if (metaEl) metaEl.textContent = '-';
                     });
             }, 500); // Poll every 500 ms
         }
