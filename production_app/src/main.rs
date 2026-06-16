@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.48";
+const FW_VERSION: &str = "1.0.50";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -81,6 +81,11 @@ fn get_mac_address() -> String {
     format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
 }
 
+fn get_ext_name(nvs: &Arc<Mutex<NvsStorage>>) -> String {
+    let storage = nvs.lock().unwrap();
+    storage.get_str("extName").ok().flatten().unwrap_or_default()
+}
+
 struct CustomLogger;
 
 impl log::Log for CustomLogger {
@@ -112,6 +117,7 @@ pub struct MeshState {
     pub distance: i32,
     pub nodes: std::collections::HashMap<String, std::time::SystemTime>,
     pub ip_addresses: std::collections::HashMap<String, String>,
+    pub node_names: std::collections::HashMap<String, String>,
     pub pairing_until: Option<std::time::Instant>,
 }
 
@@ -136,13 +142,14 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
     // Court délai de stabilisation réseau après connexion Wi‑Fi
     thread::sleep(std::time::Duration::from_millis(500));
 
+    let ext_name = get_ext_name(nvs);
     let mut last_err = anyhow::anyhow!("no attempt");
     for attempt in 0..3 {
         if attempt > 0 {
             info!("Mesh sync retry {}/3...", attempt + 1);
             thread::sleep(std::time::Duration::from_millis(1500));
         }
-        match try_mesh_sync_request(gateway_ip, my_ip.as_str()) {
+        match try_mesh_sync_request(gateway_ip, my_ip.as_str(), &ext_name) {
             Ok(res) => {
                 // Valider avant d'enregistrer : si le credential est différent, comparer les dates.
                 let should_save_wifi = if !res.wifi_ssid.is_empty() {
@@ -205,14 +212,15 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
     Err(last_err)
 }
 
-fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str) -> Result<SyncResponse> {
+fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str, my_name: &str) -> Result<SyncResponse> {
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         crt_bundle_attach: None,
         ..Default::default()
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-    let url = format!("http://{}/api/mesh/sync?mac={}&ip={}", gateway_ip, get_mac_address(), my_ip);
+    let encoded_name = percent_encode(my_name);
+    let url = format!("http://{}/api/mesh/sync?mac={}&ip={}&name={}", gateway_ip, get_mac_address(), my_ip, encoded_name);
     connection.initiate_request(esp_idf_svc::http::Method::Get, &url, &[])?;
     connection.initiate_response()?;
     
@@ -441,6 +449,7 @@ fn main() -> Result<()> {
         distance: -1,
         nodes: std::collections::HashMap::new(),
         ip_addresses: std::collections::HashMap::new(),
+        node_names: std::collections::HashMap::new(),
         pairing_until: None,
     }));
 
@@ -564,19 +573,17 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // GET /proxy/<MAC_ADRESSE>/<PATH>
+    // GET /proxy?mac=<MAC_ADRESSE>
     let proxy_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/proxy/*", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.fn_handler("/proxy", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let uri = req.uri();
-        let parts: Vec<&str> = uri.split('/').collect();
-        if parts.len() < 4 {
-            let mut response = req.into_status_response(400)?;
-            response.write(b"URI de proxy invalide. Format: /proxy/MAC_ADRESSE/PATH")?;
-            return Ok(());
-        }
-
-        let mac = parts[2].to_uppercase();
-        let subpath = parts[3..].join("/");
+        let mac = if let Some(pos) = uri.find("mac=") {
+            let raw_mac = &uri[pos + 4..];
+            raw_mac.split('&').next().unwrap_or("").to_string().to_uppercase()
+        } else {
+            String::new()
+        };
+        mac.replace("%3A", ":").replace("%3a", ":");
 
         let target_ip = {
             let state = proxy_mesh.lock().unwrap();
@@ -678,13 +685,24 @@ fn main() -> Result<()> {
             "0.0.0.0".to_string()
         };
         
-        info!("Received Mesh sync request from MAC: {} (IP: {})", mac, ip);
+        let name = if let Some(pos) = uri.find("name=") {
+            let raw_name = &uri[pos + 5..];
+            let decoded = raw_name.split('&').next().unwrap_or("").to_string();
+            percent_decode(&decoded)
+        } else {
+            String::new()
+        };
+        
+        info!("Received Mesh sync request from MAC: {} (IP: {}, Name: '{}')", mac, ip, name);
         
         {
             let mut state = mesh_state_sync.lock().unwrap();
             if mac != "unknown" {
                 state.nodes.insert(mac.clone(), std::time::SystemTime::now());
-                state.ip_addresses.insert(mac, ip);
+                state.ip_addresses.insert(mac.clone(), ip);
+                if !name.is_empty() {
+                    state.node_names.insert(mac, name);
+                }
             }
             if state.pairing_until.is_some() {
                 state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
@@ -761,8 +779,14 @@ fn main() -> Result<()> {
                 .collect();
             let active_ips: Vec<serde_json::Value> = active_nodes.iter()
                 .filter_map(|(mac, _)| {
-                    state.ip_addresses.get(mac).map(|ip| {
-                        serde_json::json!({"mac": mac, "ip": ip})
+                    let ip = state.ip_addresses.get(mac);
+                    let name = state.node_names.get(mac);
+                    ip.map(|ip| {
+                        let mut obj = serde_json::json!({"mac": mac, "ip": ip});
+                        if let Some(n) = name {
+                            obj["name"] = serde_json::json!(n);
+                        }
+                        obj
                     })
                 })
                 .collect();
@@ -1783,6 +1807,21 @@ fn percent_decode(s: &str) -> String {
     decoded
 }
 
+fn percent_encode(s: &str) -> String {
+    let mut encoded = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(b as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    encoded
+}
+
 #[allow(dead_code)]
 fn parse_version(v: &str) -> (u32, u32, u32, u32) {
     let clean = v.trim().trim_start_matches('v');
@@ -1887,6 +1926,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 
