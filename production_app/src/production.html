@@ -760,9 +760,6 @@
                 <span class="info-label">Mode Appairage (press BOOT 2sec)</span>
                 <span class="info-value" id="mesh_pairing">
                     <span id="mesh_pairing_badge" class="badge badge-error">Inactif</span>
-                    <button id="btn_pair_mesh" class="btn"
-                        style="width: auto; padding: 0.25rem 0.6rem; font-size: 0.8rem; margin-left: 0.5rem;"
-                        onclick="triggerMeshPairing()">Activer</button>
                 </span>
             </div>
 
@@ -798,6 +795,15 @@
             <div class="info-group">
                 <span class="info-label">Renommage devices</span>
                 <span class="info-value" id="status_rename_enabled">--</span>
+            </div>
+
+            <!-- Section 5: Capteurs (avec valeurs individuelles et métadonnées) -->
+            <h3
+                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+                Capteurs
+            </h3>
+            <div id="sensors_list" style="display: flex; flex-direction: column; gap: 0.25rem;">
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des capteurs...</p>
             </div>
         </div>
 
@@ -873,6 +879,57 @@
                 </svg>
             </div>
             <div id="advanced_config_content" class="advanced-content">
+                <!-- Mode Appairage (déplacé ici depuis l'onglet Statut) -->
+                <div
+                    style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
+                    <div style="flex: 1; min-width: 0;">
+                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Mode
+                            Appairage Mesh</span>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
+                            Active le mode appairage pendant 120s. Appuyer 2s sur BOOT fait la même chose.
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span id="mesh_pairing_badge_adv" class="badge badge-error">Inactif</span>
+                        <button id="btn_pair_mesh_adv" type="button" class="btn"
+                            style="width: auto; padding: 0.25rem 0.7rem; font-size: 0.8rem;"
+                            onclick="triggerMeshPairing()">Activer</button>
+                    </div>
+                </div>
+
+                <!-- Bouton Identifier l'ESP -->
+                <div
+                    style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
+                    <div style="flex: 1; min-width: 0;">
+                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Identifier
+                            l'ESP</span>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
+                            Fait clignoter la LED en blanc rapide pendant 15s. Chaque appui ajoute 15s.
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span id="identify_countdown" style="font-size: 0.85rem; color: var(--accent-color); font-weight: 600; display: none;">--s</span>
+                        <button id="btn_identify" type="button" class="btn"
+                            style="width: auto; padding: 0.25rem 0.7rem; font-size: 0.8rem; background-color: var(--secondary-accent);"
+                            onclick="triggerIdentify()">Identifier</button>
+                    </div>
+                </div>
+
+                <!-- Bouton Redémarrer -->
+                <div
+                    style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
+                    <div style="flex: 1; min-width: 0;">
+                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Redémarrer
+                            l'ESP</span>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
+                            Redémarre le microcontrôleur. La connexion Web sera perdue quelques secondes.
+                        </div>
+                    </div>
+                    <button id="btn_restart" type="button" class="btn"
+                        style="width: auto; padding: 0.25rem 0.7rem; font-size: 0.8rem; background-color: var(--warning); color: #0b0f19;"
+                        onclick="triggerRestart()">Redémarrer</button>
+                </div>
+
                 <!-- Rename Enabled Switch -->
                 <div
                     style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
@@ -1046,6 +1103,16 @@
                 </div>
             </div>
         </div>
+
+        <!-- Identify Spinner Modal -->
+        <div id="identify_modal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(15, 23, 42, 0.9); backdrop-filter: blur(8px); z-index: 99999; display: none; justify-content: center; align-items: center; margin: 0; padding: 2rem;">
+            <div style="text-align: center;">
+                <div class="ota-spinner" style="border-top-color: #ffffff; border-right-color: #cccccc; width: 80px; height: 80px; border-width: 4px;"></div>
+                <div id="identify_countdown_center" style="font-size: 3rem; font-weight: 800; color: #ffffff; margin-top: 1rem; font-family: var(--font-mono);">15s</div>
+                <div style="color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.5rem;">LED blanche clignotante</div>
+                <div id="identify_stop_utc" style="color: var(--text-secondary); font-size: 0.75rem; margin-top: 0.25rem; font-family: monospace;"></div>
+            </div>
+        </div>
     </div>
 
     <footer
@@ -1164,6 +1231,7 @@
 
             if (tabId === 'status-tab') {
                 fetchStatus();
+                fetchSensors();
             } else if (tabId === 'config-tab') {
                 scanSsids();
             } else if (tabId === 'devices-tab') {
@@ -1548,6 +1616,8 @@
                     pairingSecondsRemaining = data.pairing_seconds_remaining || 0;
                     const pairingBadge = document.getElementById('mesh_pairing_badge');
                     const pairBtn = document.getElementById('btn_pair_mesh');
+                    const pairingBadgeAdv = document.getElementById('mesh_pairing_badge_adv');
+                    const pairBtnAdv = document.getElementById('btn_pair_mesh_adv');
 
                     if (pairingCountdownInterval) {
                         clearInterval(pairingCountdownInterval);
@@ -1561,12 +1631,22 @@
                                 pairingBadge.innerHTML = `${getStatusSvg('green')}Actif (${pairingSecondsRemaining}s)`;
                             }
                             if (pairBtn) pairBtn.style.display = 'none';
+                            if (pairingBadgeAdv) {
+                                pairingBadgeAdv.className = "badge badge-green";
+                                pairingBadgeAdv.innerHTML = `Actif (${pairingSecondsRemaining}s)`;
+                            }
+                            if (pairBtnAdv) pairBtnAdv.style.display = 'none';
                         } else {
                             if (pairingBadge) {
                                 pairingBadge.className = "badge badge-error";
                                 pairingBadge.innerHTML = `${getStatusSvg('red')}Inactif`;
                             }
                             if (pairBtn) pairBtn.style.display = 'inline-block';
+                            if (pairingBadgeAdv) {
+                                pairingBadgeAdv.className = "badge badge-error";
+                                pairingBadgeAdv.innerHTML = 'Inactif';
+                            }
+                            if (pairBtnAdv) pairBtnAdv.style.display = 'inline-block';
                         }
                     }
 
@@ -1580,6 +1660,23 @@
                                 pairingCountdownInterval = null;
                             }
                             updatePairingUI();
+                        }, 1000);
+                    }
+
+                    // Identify countdown (from /api/status)
+                    if (data.identify_remaining_secs !== undefined && data.identify_remaining_secs > 0) {
+                        identifyRemainingSecs = data.identify_remaining_secs;
+                        identifyStopUtc = '';
+                        updateIdentifyUI();
+                        if (identifyCountdownInterval) clearInterval(identifyCountdownInterval);
+                        identifyCountdownInterval = setInterval(() => {
+                            identifyRemainingSecs--;
+                            if (identifyRemainingSecs <= 0) {
+                                clearInterval(identifyCountdownInterval);
+                                identifyCountdownInterval = null;
+                                identifyRemainingSecs = 0;
+                            }
+                            updateIdentifyUI();
                         }, 1000);
                     }
 
@@ -1750,7 +1847,7 @@
                 return;
             }
 
-            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>,;%\$€*^]{1,24}$/;
+            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>.,;%\$€*^]{1,24}$/;
             if (!nameRegex.test(newName)) {
                 alert("Nom de périphérique invalide. Le nom doit faire 24 caractères maximum, ne pas contenir d'espaces, et n'utiliser que des caractères alphanumériques ou -_()[]<>,;%$€*^");
                 cancelEditing(id);
@@ -2542,7 +2639,7 @@
         function triggerFactoryReset() {
             const confirmWord = prompt("ATTENTION : Cette action va supprimer la clé de sécurité TOTP et effacer toute la configuration Wi-Fi enregistrée. L'extendeur va redémarrer en mode Point d'Accès (Access Point) avec l'adresse IP : 192.168.71.1.\n\nPour confirmer, veuillez saisir le mot 'RESET' en majuscules :");
             if (confirmWord === null) {
-                return; // User cancelled prompt
+                return;
             }
             if (confirmWord !== "RESET") {
                 alert("Confirmation incorrecte. Action annulée.");
@@ -2567,6 +2664,192 @@
                 .catch(err => showMessage('config_status', 'Erreur de connexion : ' + err, 'error'));
         }
 
+        // ─── Identify (LED blanche clignotante) ───
+        let identifyCountdownInterval = null;
+        let identifyRemainingSecs = 0;
+        let identifyStopUtc = null;
+
+        function triggerIdentify() {
+            fetch('/api/identify', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    identifyRemainingSecs = data.identify_remaining_secs || 15;
+                    identifyStopUtc = data.identify_stop_utc || '';
+                    updateIdentifyUI();
+                    if (identifyCountdownInterval) clearInterval(identifyCountdownInterval);
+                    identifyCountdownInterval = setInterval(() => {
+                        identifyRemainingSecs--;
+                        if (identifyRemainingSecs <= 0) {
+                            clearInterval(identifyCountdownInterval);
+                            identifyCountdownInterval = null;
+                            identifyRemainingSecs = 0;
+                        }
+                        updateIdentifyUI();
+                    }, 1000);
+                })
+                .catch(err => console.error('Erreur identify:', err));
+        }
+
+        function updateIdentifyUI() {
+            const countdownEl = document.getElementById('identify_countdown');
+            const modalEl = document.getElementById('identify_modal');
+            const centerEl = document.getElementById('identify_countdown_center');
+            const utcEl = document.getElementById('identify_stop_utc');
+            if (identifyRemainingSecs > 0) {
+                if (countdownEl) {
+                    countdownEl.style.display = 'inline';
+                    countdownEl.textContent = identifyRemainingSecs + 's';
+                }
+                if (modalEl) modalEl.style.display = 'flex';
+                if (centerEl) centerEl.textContent = identifyRemainingSecs + 's';
+                if (utcEl && identifyStopUtc) utcEl.textContent = 'Arrêt UTC: ' + identifyStopUtc;
+            } else {
+                if (countdownEl) countdownEl.style.display = 'none';
+                if (modalEl) modalEl.style.display = 'none';
+            }
+            // Mettre à jour aussi depuis fetchStatus
+        }
+
+        // ─── Redémarrer ───
+        function triggerRestart() {
+            if (!confirm("Voulez-vous vraiment redémarrer l'ESP32 ? La connexion sera perdue quelques secondes.")) {
+                return;
+            }
+            fetch('/api/restart', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    showMessage('config_status', 'Redémarrage en cours... Reconnexion automatique dans quelques secondes.', 'success');
+                })
+                .catch(err => {
+                    // La connexion va tomber, c'est normal
+                    showMessage('config_status', 'Redémarrage lancé (connexion perdue). Rechargez la page dans 5 secondes.', 'success');
+                });
+        }
+
+        // ─── Capteurs (onglet Statut) ───
+        function fetchSensors() {
+            const container = document.getElementById('sensors_list');
+            if (!container || !document.getElementById('status-tab').classList.contains('active')) return;
+            fetch('/api/peripherals')
+                .then(res => res.json())
+                .then(devices => {
+                    let html = '';
+                    const sensorDevices = devices.filter(d => d.sensor_meta !== null && d.sensor_meta !== undefined);
+                    if (sensorDevices.length === 0) {
+                        html = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Aucun capteur détecté.</p>';
+                    } else {
+                        sensorDevices.forEach(dev => {
+                            const meta = dev.sensor_meta || {};
+                            const corr = dev.correction_formula || 'x';
+                            const sensorId = dev.id.replace(/[^a-zA-Z0-9]/g, '_');
+                            html += `
+                            <div class="sensor-row" style="border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 0.4rem; overflow: hidden;">
+                                <div class="sensor-header" onclick="toggleSensorDetail('${sensorId}')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
+                                    <div style="flex: 1; min-width: 0;">
+                                        <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">${dev.name}</div>
+                                        <div style="font-size: 0.7rem; color: var(--text-secondary); font-family: monospace;">${dev.id}</div>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                        <span style="font-weight: 700; color: var(--accent-color); font-size: 1rem;">${dev.value}</span>
+                                        <span class="badge ${dev.present ? 'badge-green' : 'badge-error'}" style="font-size: 0.7rem;">${dev.present ? 'Actif' : 'Absent'}</span>
+                                        <svg class="sensor-chevron" id="chevron_${sensorId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                    </div>
+                                </div>
+                                <div id="detail_${sensorId}" class="sensor-detail" style="display: none; padding: 0.6rem 0.8rem; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.15);">
+                                    <div class="info-group">
+                                        <span class="info-label">Unité</span>
+                                        <span class="info-value" style="font-size: 0.85rem;">${meta.unit || '-'}</span>
+                                    </div>
+                                    <div class="info-group">
+                                        <span class="info-label">Incertitude</span>
+                                        <span class="info-value" style="font-size: 0.85rem;">${meta.uncertainty || '-'}</span>
+                                    </div>
+                                    <div class="info-group">
+                                        <span class="info-label">Plage de mesure</span>
+                                        <span class="info-value" style="font-size: 0.85rem;">${meta.range_min ?? '-'} → ${meta.range_max ?? '-'} ${meta.unit || ''}</span>
+                                    </div>
+                                    <div class="info-group" style="border-bottom: none;">
+                                        <span class="info-label">Formule de correction</span>
+                                        <span class="info-value" style="font-size: 0.85rem; align-items: center; gap: 0.35rem;">
+                                            <span id="corr_display_${sensorId}" style="cursor: pointer; font-family: monospace;" onclick="startEditCorrection('${dev.id}')">${corr}</span>
+                                            <button onclick="startEditCorrection('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0;" title="Modifier la formule">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                            </button>
+                                            <span id="corr_edit_container_${sensorId}" style="display: none; align-items: center; gap: 0.25rem;">
+                                                <input type="text" id="corr_input_${sensorId}" value="${corr}" style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 120px; font-family: monospace;"
+                                                    onblur="handleBlurCorrection('${dev.id}')" onkeydown="handleKeyDownCorrection(event, '${dev.id}')">
+                                            </span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>`;
+                        });
+                    }
+                    container.innerHTML = html;
+                })
+                .catch(err => console.error('Erreur sensors:', err));
+        }
+
+        function toggleSensorDetail(sensorId) {
+            const detail = document.getElementById('detail_' + sensorId);
+            const chevron = document.getElementById('chevron_' + sensorId);
+            if (detail) {
+                const isOpen = detail.style.display === 'block';
+                detail.style.display = isOpen ? 'none' : 'block';
+                if (chevron) chevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+            }
+        }
+
+        function startEditCorrection(deviceId) {
+            const safeId = deviceId.replace(/[^a-zA-Z0-9]/g, '_');
+            const displayEl = document.getElementById('corr_display_' + safeId);
+            const containerEl = document.getElementById('corr_edit_container_' + safeId);
+            const inputEl = document.getElementById('corr_input_' + safeId);
+            if (displayEl) displayEl.style.display = 'none';
+            if (containerEl) containerEl.style.display = 'flex';
+            if (inputEl) { inputEl.focus(); inputEl.select(); }
+        }
+
+        function handleBlurCorrection(deviceId) {
+            const safeId = deviceId.replace(/[^a-zA-Z0-9]/g, '_');
+            const inputEl = document.getElementById('corr_input_' + safeId);
+            if (!inputEl) return;
+            const newFormula = inputEl.value.trim();
+            saveCorrection(deviceId, newFormula);
+        }
+
+        function handleKeyDownCorrection(event, deviceId) {
+            if (event.key === 'Enter') {
+                const safeId = deviceId.replace(/[^a-zA-Z0-9]/g, '_');
+                const inputEl = document.getElementById('corr_input_' + safeId);
+                if (inputEl) inputEl.blur();
+            } else if (event.key === 'Escape') {
+                const safeId = deviceId.replace(/[^a-zA-Z0-9]/g, '_');
+                const displayEl = document.getElementById('corr_display_' + safeId);
+                const containerEl = document.getElementById('corr_edit_container_' + safeId);
+                if (displayEl) displayEl.style.display = 'inline';
+                if (containerEl) containerEl.style.display = 'none';
+            }
+        }
+
+        function saveCorrection(deviceId, formula) {
+            if (!formula) return;
+            fetch('/api/sensor-correction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: deviceId, formula: formula })
+            })
+                .then(res => {
+                    if (res.ok) {
+                        fetchSensors();
+                    } else {
+                        alert('Erreur lors de l\'enregistrement de la formule.');
+                        fetchSensors();
+                    }
+                })
+                .catch(err => { console.error(err); fetchSensors(); });
+        }
+
 
 
 
@@ -2574,6 +2857,7 @@
         Promise.all([fetchDevices(), fetchStatus()])
             .finally(() => {
                 scanSsids();
+                fetchSensors();
             });
     </script>
 </body>

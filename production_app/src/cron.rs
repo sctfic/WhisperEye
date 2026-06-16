@@ -1,13 +1,13 @@
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{channel, Sender, Receiver};
-use std::thread;
-use std::time::{SystemTime, Duration};
-use log::{info, warn};
-use anyhow::{Result, Context};
-use common::nvs_storage::NvsStorage;
 use crate::sensors::{read_sensors, SensorReadings};
 use crate::wifi::{NetManager, NetState};
 use crate::MeshState;
+use anyhow::{Context, Result};
+use common::nvs_storage::NvsStorage;
+use log::{info, warn};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricEntry {
@@ -55,7 +55,7 @@ impl CronWorker {
 
     pub fn run(mut self) {
         info!("Starting Periodic Task Scheduler Worker Thread...");
-        
+
         while let Ok(msg) = self.rx.recv() {
             match msg {
                 CronMessage::Tick => {
@@ -68,18 +68,14 @@ impl CronWorker {
                     };
 
                     // STA status (pulse 1)
-                    let mesh_exhausted = common::led::MESH_RETRIES_EXHAUSTED.load(std::sync::atomic::Ordering::Relaxed);
                     let sta = match current_state {
                         NetState::WifiOk => common::led::LedStaStatus::WifiOk,
                         NetState::WifiPreferred => common::led::LedStaStatus::WifiAttempting,
-                        NetState::MeshOk => common::led::LedStaStatus::MeshOk,
-                        NetState::WifiFallback => {
-                            if mesh_exhausted {
-                                common::led::LedStaStatus::None // 3 flashs rouges
-                            } else {
-                                common::led::LedStaStatus::MeshAttempting
-                            }
+                        NetState::ProvisioningScan => {
+                            common::led::LedStaStatus::ProvisioningAttempting
                         }
+                        NetState::ProvisioningOk => common::led::LedStaStatus::ProvisioningOk,
+                        NetState::ProvisioningAp => common::led::LedStaStatus::None,
                         NetState::ApPairing => common::led::LedStaStatus::None,
                     };
                     common::led::set_sta_status(sta);
@@ -87,26 +83,36 @@ impl CronWorker {
                     // AP status (pulse 2)
                     let ap = match current_state {
                         NetState::ApPairing => common::led::LedApStatus::ApPairing,
-                        _ => common::led::LedApStatus::MeshSsid, // toujours broadcast mesh SSID sauf pairing
+                        NetState::ProvisioningAp => common::led::LedApStatus::ProvisioningSsid,
+                        _ => common::led::LedApStatus::Off,
                     };
                     common::led::set_ap_status(ap);
-                    
+
                     // Task 1: Collect sensor metrics every 30 seconds
-                    let elapsed_metrics = self.last_metrics_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));
+                    let elapsed_metrics = self
+                        .last_metrics_run
+                        .map(|t| now_instant.duration_since(t))
+                        .unwrap_or(Duration::from_secs(999));
                     if elapsed_metrics >= Duration::from_secs(30) {
                         self.last_metrics_run = Some(now_instant);
                         self.collect_sensor_metrics();
                     }
-                    
+
                     // Task 2: Trigger simulated HTTP API every 300 seconds (5 minutes)
-                    let elapsed_telemetry = self.last_telemetry_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));
+                    let elapsed_telemetry = self
+                        .last_telemetry_run
+                        .map(|t| now_instant.duration_since(t))
+                        .unwrap_or(Duration::from_secs(999));
                     if elapsed_telemetry >= Duration::from_secs(300) {
                         self.last_telemetry_run = Some(now_instant);
                         self.trigger_simulated_http_api();
                     }
-                    
+
                     // Task 3: Check NVS target nextCheck timestamp to prevent drifts every 60 seconds
-                    let elapsed_update = self.last_update_check_run.map(|t| now_instant.duration_since(t)).unwrap_or(Duration::from_secs(999));
+                    let elapsed_update = self
+                        .last_update_check_run
+                        .map(|t| now_instant.duration_since(t))
+                        .unwrap_or(Duration::from_secs(999));
                     if elapsed_update >= Duration::from_secs(60) {
                         self.last_update_check_run = Some(now_instant);
                         let _ = self.evaluate_need_update_check(false);
@@ -128,15 +134,21 @@ impl CronWorker {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let onewr_probes = {
             let storage = self.nvs.lock().unwrap();
             let mut list = Vec::new();
             if let Ok(Some(json_str)) = storage.get_str("dev_registry") {
-                if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&json_str) {
+                if let Ok(map) = serde_json::from_str::<
+                    std::collections::HashMap<String, serde_json::Value>,
+                >(&json_str)
+                {
                     for (id, val) in map {
                         if id.starts_with("onewr:") {
-                            let present = val.get("present").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let present = val
+                                .get("present")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
                             if present {
                                 list.push(id[6..].to_string());
                             }
@@ -153,13 +165,16 @@ impl CronWorker {
         };
 
         let readings = read_sensors(&onewr_probes);
-        let entry = MetricEntry { timestamp: now, readings: readings.clone() };
-        
+        let entry = MetricEntry {
+            timestamp: now,
+            readings: readings.clone(),
+        };
+
         if self.history.len() >= 10 {
             self.history.remove(0);
         }
         self.history.push(entry);
-        
+
         info!(
             "Task 30s: Collected sensor metrics. Temp SHT45: {:.1}°C, CO2: {} ppm, Probes count: {}. Sliding history size: {}", 
             readings.temperature_sht45, readings.co2_scd41, readings.ds18b20_temperatures.len(), self.history.len()
@@ -171,7 +186,10 @@ impl CronWorker {
     fn trigger_simulated_http_api(&self) {
         let metrics_url = {
             let storage = self.nvs.lock().unwrap();
-            storage.get_str("metricsUrl").unwrap_or(None).unwrap_or_default()
+            storage
+                .get_str("metricsUrl")
+                .unwrap_or(None)
+                .unwrap_or_default()
         };
 
         if metrics_url.is_empty() || metrics_url == "empty" {
@@ -179,7 +197,10 @@ impl CronWorker {
             return;
         }
 
-        info!("Task 300s: Sending HTTP PUT telemetry to {}...", metrics_url);
+        info!(
+            "Task 300s: Sending HTTP PUT telemetry to {}...",
+            metrics_url
+        );
 
         let payload = if let Some(last_entry) = self.history.last() {
             serde_json::to_string(last_entry).unwrap_or_default()
@@ -198,7 +219,7 @@ impl CronWorker {
             crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
             ..Default::default()
         };
-        
+
         match esp_idf_svc::http::client::EspHttpConnection::new(&config) {
             Ok(mut connection) => {
                 let payload_bytes = payload.as_bytes();
@@ -207,21 +228,32 @@ impl CronWorker {
                     ("Content-Type", "application/json"),
                     ("Content-Length", &len_str),
                 ];
-                if let Err(e) = connection.initiate_request(esp_idf_svc::http::Method::Put, &metrics_url, &headers) {
+                if let Err(e) = connection.initiate_request(
+                    esp_idf_svc::http::Method::Put,
+                    &metrics_url,
+                    &headers,
+                ) {
                     warn!("Failed to initiate PUT request to telemetry: {:?}", e);
                     return;
                 }
-                
+
                 if let Err(e) = connection.write_all(payload_bytes) {
                     warn!("Failed to write telemetry payload: {:?}", e);
                     return;
                 }
                 match connection.initiate_response() {
                     Ok(_) => {
-                        info!("Telemetry HTTP PUT successfully completed to {} (Status: {})", metrics_url, connection.status());
+                        info!(
+                            "Telemetry HTTP PUT successfully completed to {} (Status: {})",
+                            metrics_url,
+                            connection.status()
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to receive response from telemetry endpoint: {:?}", e);
+                        warn!(
+                            "Failed to receive response from telemetry endpoint: {:?}",
+                            e
+                        );
                     }
                 }
             }
@@ -265,13 +297,19 @@ impl CronWorker {
         }
 
         if force || now >= next_check {
-            info!("Task 7 Days: Running check_update() check (target nextCheck: {}, current: {})", next_check, now);
+            info!(
+                "Task 7 Days: Running check_update() check (target nextCheck: {}, current: {})",
+                next_check, now
+            );
             self.perform_check_update(&mut *storage)?;
-            
+
             // Set new target check date to exactly 7 days from now
             let new_next_check = now + 7 * 86400;
             storage.set_str("nextCheck", &new_next_check.to_string())?;
-            info!("NVS target 'nextCheck' updated to: {} (Next 7-day target)", new_next_check);
+            info!(
+                "NVS target 'nextCheck' updated to: {} (Next 7-day target)",
+                new_next_check
+            );
         }
 
         Ok(())
@@ -279,15 +317,17 @@ impl CronWorker {
 
     fn perform_check_update(&self, storage: &mut NvsStorage) -> Result<()> {
         let url = storage.get_str("updateAvailable")?.unwrap_or_default();
-        let fw = storage.get_str("fwVersion")?.unwrap_or_else(|| "v1.0.0-poc".to_string());
-        
+        let fw = storage
+            .get_str("fwVersion")?
+            .unwrap_or_else(|| "v1.0.0-poc".to_string());
+
         if url.is_empty() {
             warn!("check_update skipped: no updateAvailable URL configured");
             return Ok(());
         }
 
         info!("Sending update request to catalogue URL: {}", url);
-        
+
         let config = esp_idf_svc::http::client::Configuration {
             buffer_size: Some(2048),
             crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
@@ -298,7 +338,10 @@ impl CronWorker {
         connection.initiate_response()?;
 
         if connection.status() != 200 {
-            warn!("Upstream catalog server returned HTTP status {}", connection.status());
+            warn!(
+                "Upstream catalog server returned HTTP status {}",
+                connection.status()
+            );
             return Ok(());
         }
 
@@ -325,7 +368,8 @@ impl CronWorker {
                             if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
                                 if let Some(url_str) = v_obj.get("url").and_then(|v| v.as_str()) {
                                     if parse_version(ver_str) > parse_version(&fw) {
-                                        let current_best = new_version.as_deref().unwrap_or(fw.as_str());
+                                        let current_best =
+                                            new_version.as_deref().unwrap_or(fw.as_str());
                                         if parse_version(ver_str) > parse_version(current_best) {
                                             new_stable_url = Some(url_str.to_string());
                                             new_version = Some(ver_str.to_string());
@@ -340,23 +384,27 @@ impl CronWorker {
         }
 
         if let (Some(dl_url), Some(ver)) = (new_stable_url, new_version) {
-            info!("Periodic update found version: {}. Arming OTA and rebooting to recovery...", ver);
+            info!(
+                "Periodic update found version: {}. Arming OTA and rebooting to recovery...",
+                ver
+            );
             storage.set_str("updateDlUrl", &dl_url)?;
             storage.set_i32("otaRetry", 3)?;
-            
+
             thread::sleep(Duration::from_secs(2));
             crate::set_boot_to_recovery();
             unsafe {
                 esp_idf_sys::esp_restart();
             }
         } else {
-            info!("Periodic update check: firmware is up-to-date (Version: {})", fw);
+            info!(
+                "Periodic update check: firmware is up-to-date (Version: {})",
+                fw
+            );
         }
 
         Ok(())
     }
-
-
 }
 
 fn parse_version(v: &str) -> (u32, u32, u32, u32) {
@@ -395,12 +443,12 @@ fn parse_url_host_port(url: &str) -> Option<(String, u16)> {
     } else {
         (url, 80)
     };
-    
+
     let host_part = without_scheme.0.split('/').next()?;
     if host_part.is_empty() {
         return None;
     }
-    
+
     if let Some(colon_idx) = host_part.find(':') {
         let (host, port_str) = host_part.split_at(colon_idx);
         let port = port_str.strip_prefix(':')?.parse::<u16>().ok()?;
@@ -461,7 +509,7 @@ pub fn spawn_cron_scheduler(
     mesh_state: Arc<Mutex<MeshState>>,
 ) -> Result<CronHandle> {
     let (tx, rx) = channel();
-    
+
     // 1. Spawn Worker Thread with a larger stack size (32KB) to prevent stack overflow
     let worker_nvs = Arc::clone(&nvs);
     let worker_wifi = Arc::clone(&wifi);
@@ -474,7 +522,7 @@ pub fn spawn_cron_scheduler(
             worker.run();
         })
         .context("Failed to spawn cron worker thread")?;
-    
+
     // 2. Spawn Tick generator thread (sends a Tick message every second)
     let tick_tx = tx.clone();
     thread::spawn(move || {
@@ -485,6 +533,6 @@ pub fn spawn_cron_scheduler(
             }
         }
     });
-    
+
     Ok(CronHandle { sender: tx })
 }

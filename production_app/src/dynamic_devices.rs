@@ -17,6 +17,103 @@ pub struct DeviceDisplay {
     pub is_static: bool,
     pub present: bool,
     pub value: String,
+    /// Métadonnées du capteur (incertitude, plage, unité) — None pour les actuateurs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensor_meta: Option<SensorMeta>,
+    /// Formule de correction stockée en NVS (par défaut "x")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correction_formula: Option<String>,
+}
+
+/// Métadonnées techniques d'un capteur (issues des documentations officielles)
+#[derive(Debug, Clone, Serialize)]
+pub struct SensorMeta {
+    pub unit: String,
+    pub uncertainty: String,
+    pub range_min: f64,
+    pub range_max: f64,
+}
+
+/// Retourne les métadonnées pour un capteur donné (en dur, doc constructeur)
+pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
+    match device_id {
+        // SHT45 (Sensirion) — https://sensirion.com/products/catalog/SHT45
+        id if id.ends_with("_T") && id.contains("0x44") => Some(SensorMeta {
+            unit: "°C".to_string(),
+            uncertainty: "±0.1°C (20-60°C)".to_string(),
+            range_min: -40.0,
+            range_max: 125.0,
+        }),
+        id if id.ends_with("_H") && id.contains("0x44") => Some(SensorMeta {
+            unit: "%RH".to_string(),
+            uncertainty: "±1.0%RH (20-80%RH)".to_string(),
+            range_min: 0.0,
+            range_max: 100.0,
+        }),
+        // SCD41 (Sensirion) — https://sensirion.com/products/catalog/SCD41
+        id if id.contains("0x62") => Some(SensorMeta {
+            unit: "ppm".to_string(),
+            uncertainty: "±40 ppm + 5% m.v.".to_string(),
+            range_min: 0.0,
+            range_max: 40000.0,
+        }),
+        // DS18B20 (Maxim) — 1-Wire temperature probes
+        id if id.starts_with("onewr:") => Some(SensorMeta {
+            unit: "°C".to_string(),
+            uncertainty: "±0.5°C (-10 à +85°C)".to_string(),
+            range_min: -55.0,
+            range_max: 125.0,
+        }),
+        // BME280 (Bosch) — capteurs futurs
+        id if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
+            unit: "°C".to_string(),
+            uncertainty: "±1.0°C".to_string(),
+            range_min: -40.0,
+            range_max: 85.0,
+        }),
+        id if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
+            unit: "%RH".to_string(),
+            uncertainty: "±3%RH".to_string(),
+            range_min: 0.0,
+            range_max: 100.0,
+        }),
+        id if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
+            unit: "hPa".to_string(),
+            uncertainty: "±1.0 hPa".to_string(),
+            range_min: 300.0,
+            range_max: 1100.0,
+        }),
+        // Capteurs internes
+        "vsense" => Some(SensorMeta {
+            unit: "V".to_string(),
+            uncertainty: "±0.1V".to_string(),
+            range_min: 0.0,
+            range_max: 30.0,
+        }),
+        "isense" => Some(SensorMeta {
+            unit: "A".to_string(),
+            uncertainty: "±0.01A".to_string(),
+            range_min: 0.0,
+            range_max: 3.0,
+        }),
+        _ => None,
+    }
+}
+
+/// Récupère la formule de correction stockée en NVS pour un capteur.
+/// Clé NVS : `corr_<device_id>` (ex: corr_i2c:0:0x44_T). Par défaut "x" (valeur brute = valeur réelle).
+pub fn get_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str) -> String {
+    let storage = nvs.lock().unwrap();
+    let key = format!("corr_{}", device_id);
+    storage.get_str(&key).ok().flatten().unwrap_or_else(|| "x".to_string())
+}
+
+/// Sauvegarde la formule de correction dans la NVS.
+pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, formula: &str) -> Result<(), anyhow::Error> {
+    let mut storage = nvs.lock().unwrap();
+    let key = format!("corr_{}", device_id);
+    storage.set_str(&key, formula)?;
+    Ok(())
 }
 
 pub struct DeviceRegistry {
@@ -108,19 +205,58 @@ impl DeviceRegistry {
         // 4. Dynamic Devices: I2C (SHT45 and SCD41) channel probes
         let i2c_scans = crate::i2c_bus::scan_i2c_devices();
         for (channel, addr) in i2c_scans {
-            let id = format!("i2c:{}:0x{:02x}", channel, addr);
-            let default_name = if addr == 0x44 {
-                "Sonde SHT45 Temp/Hum".to_string()
+            if addr == 0x44 {
+                // SHT45 : séparer en deux capteurs distincts (Température et Humidité)
+                let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
+                let entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
+                    name: "SHT45-Temp".to_string(),
+                    is_static: false,
+                });
+                updated.insert(id_t, entry_t);
+
+                let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
+                let entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
+                    name: "SHT45-Hum".to_string(),
+                    is_static: false,
+                });
+                updated.insert(id_h, entry_h);
             } else if addr == 0x62 {
-                "Capteur CO2 SCD41".to_string()
+                let id = format!("i2c:{}:0x{:02x}", channel, addr);
+                let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
+                    name: "Capteur CO2 SCD41".to_string(),
+                    is_static: false,
+                });
+                updated.insert(id, entry);
+            } else if addr == 0x76 || addr == 0x77 {
+                // BME280 : séparer en trois capteurs (Température, Humidité, Pression)
+                let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
+                let entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
+                    name: format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr),
+                    is_static: false,
+                });
+                updated.insert(id_t, entry_t);
+
+                let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
+                let entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
+                    name: format!("BME280-Hum (i2c:{}:0x{:02x})", channel, addr),
+                    is_static: false,
+                });
+                updated.insert(id_h, entry_h);
+
+                let id_p = format!("i2c:{}:0x{:02x}_P", channel, addr);
+                let entry_p = saved.remove(&id_p).unwrap_or_else(|| DeviceEntry {
+                    name: format!("BME280-Pres (i2c:{}:0x{:02x})", channel, addr),
+                    is_static: false,
+                });
+                updated.insert(id_p, entry_p);
             } else {
-                format!("Périphérique I2C (Ch{} 0x{:02x})", channel, addr)
-            };
-            let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
-                name: default_name,
-                is_static: false,
-            });
-            updated.insert(id, entry);
+                let id = format!("i2c:{}:0x{:02x}", channel, addr);
+                let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
+                    name: format!("Périphérique I2C (Ch{} 0x{:02x})", channel, addr),
+                    is_static: false,
+                });
+                updated.insert(id, entry);
+            }
         }
 
         // Any leftover devices in `saved` are currently offline/absent, but we preserve their custom names
@@ -149,13 +285,11 @@ impl DeviceRegistry {
         let registry = self.load_registry();
         let mut list = Vec::new();
 
-        // Active dynamic devices determined from current scans/states
-        let active_i2c_sht = true;
-        let active_i2c_co2 = true;
-
         for (id, entry) in &registry {
             let mut present = true;
             let mut value = "OK".to_string();
+            let sensor_meta = get_sensor_meta(id);
+            let correction = get_correction_formula(&self.nvs, id);
 
             match id.as_str() {
                 "rla" => {
@@ -168,7 +302,7 @@ impl DeviceRegistry {
                     value = if touch_state { "TOUCHÉ".to_string() } else { "RELÂCHÉ".to_string() };
                 }
                 "vsense" => {
-                    value = "12.4 V".to_string(); // Static simulation values
+                    value = "12.4 V".to_string();
                 }
                 "isense" => {
                     value = "0.18 A".to_string();
@@ -194,20 +328,42 @@ impl DeviceRegistry {
                     let addr = &id[6..];
                     if let Some(temp) = ds_readings.get(addr) {
                         present = true;
-                        value = format!("{:.1} °C", temp);
+                        value = format!("{:.1} °C", *temp);
                     } else {
                         present = false;
                         value = "Absent".to_string();
                     }
                 }
                 _ if id.starts_with("i2c:") => {
-                    if id.contains("0x44") {
-                        present = active_i2c_sht;
-                        value = format!("{:.1} °C, {:.1}%", sht_temp, sht_humi);
-                    } else if id.contains("0x62") {
-                        present = active_i2c_co2;
+                    // SHT45 Temperature (i2c:X:0x44_T)
+                    if id.ends_with("_T") && id.contains("0x44") {
+                        present = true;
+                        value = format!("{:.1} °C", sht_temp);
+                    }
+                    // SHT45 Humidity (i2c:X:0x44_H)
+                    else if id.ends_with("_H") && id.contains("0x44") {
+                        present = true;
+                        value = format!("{:.1} %", sht_humi);
+                    }
+                    // SCD41 CO2 (i2c:X:0x62)
+                    else if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") {
+                        present = true;
                         value = format!("{} ppm", co2_val);
-                    } else {
+                    }
+                    // BME280 Temperature / Humidity / Pressure (futur) — valeurs simulées pour l'instant
+                    else if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) {
+                        present = false; // Pas encore de capteur BME280 physique
+                        value = "N/A".to_string();
+                    }
+                    else if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) {
+                        present = false;
+                        value = "N/A".to_string();
+                    }
+                    else if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) {
+                        present = false;
+                        value = "N/A".to_string();
+                    }
+                    else {
                         present = false;
                         value = "Absent".to_string();
                     }
@@ -221,6 +377,8 @@ impl DeviceRegistry {
                 is_static: entry.is_static,
                 present,
                 value,
+                sensor_meta,
+                correction_formula: Some(correction),
             });
         }
 

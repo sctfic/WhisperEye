@@ -1,12 +1,12 @@
 #![allow(deprecated)]
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::Once;
 use std::thread;
 use std::time::Duration;
-use std::sync::atomic::{AtomicU8, AtomicBool, Ordering};
-use std::sync::Once;
 
-use ws2812_esp32_rmt_driver::driver::Ws2812Esp32RmtDriver;
 use ws2812_esp32_rmt_driver::driver::color::{LedPixelColor, LedPixelColorGrb24};
+use ws2812_esp32_rmt_driver::driver::Ws2812Esp32RmtDriver;
 
 // Instance globale du pilote RMT WS2812, initialisée une seule fois par init_led()
 static LED_DRIVER: Mutex<Option<Ws2812Esp32RmtDriver<'static>>> = Mutex::new(None);
@@ -58,25 +58,29 @@ pub fn set_led_color(color: Color, intensity: u8) {
 
 static LED_STA_STATUS: AtomicU8 = AtomicU8::new(0);
 // 0 = None (rouge), 1 = WifiAttempting (vert clignotant), 2 = WifiOk (vert),
-// 3 = MeshAttempting (bleu clignotant), 4 = MeshOk (bleu)
+// 3 = ProvisioningAttempting (bleu clignotant), 4 = ProvisioningOk (bleu)
 static LED_AP_STATUS: AtomicU8 = AtomicU8::new(0);
-// 0 = Off, 1 = MeshSsid (magenta), 2 = ApPairing (orange clignotant)
+// 0 = Off, 1 = ProvisioningSsid (magenta), 2 = ApPairing (orange clignotant)
 pub static MESH_RETRIES_EXHAUSTED: AtomicBool = AtomicBool::new(false);
 static START_LED_PATTERN: Once = Once::new();
+
+/// Timestamp (Instant) jusqu'auquel le mode "identify" (blanc rapide) est actif.
+/// Stocké comme secondes depuis le boot (u32, suffisant pour ~136 ans).
+static IDENTIFY_SECS: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedStaStatus {
     None = 0,
     WifiAttempting = 1,
     WifiOk = 2,
-    MeshAttempting = 3,
-    MeshOk = 4,
+    ProvisioningAttempting = 3,
+    ProvisioningOk = 4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedApStatus {
     Off = 0,
-    MeshSsid = 1,
+    ProvisioningSsid = 1,
     ApPairing = 2,
 }
 
@@ -90,6 +94,52 @@ pub fn set_ap_status(status: LedApStatus) {
     ensure_pattern_running();
 }
 
+/// Étend ou démarre le mode "identify" (LED blanche clignotement rapide).
+/// Ajoute `duration_secs` secondes au temps restant.
+/// Retourne le timestamp UTC (SystemTime) de fin.
+pub fn extend_identify(duration_secs: u64) -> std::time::SystemTime {
+    let now_instant = std::time::Instant::now();
+    let current_until = from_identify_atomics();
+    let now_boot = now_instant.elapsed().as_secs();
+    let remaining_at_base = if current_until > now_instant { (current_until - now_instant).as_secs() } else { 0 };
+    let total_remaining = remaining_at_base + duration_secs;
+    IDENTIFY_SECS.store((now_boot + total_remaining) as u32, Ordering::SeqCst);
+    let unix_now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let unix_end = unix_now + std::time::Duration::from_secs(total_remaining);
+    log::info!("LED identify extended, ends in {}s (UTC: {:?})", total_remaining, unix_end);
+    std::time::UNIX_EPOCH + unix_end
+}
+
+/// Retourne le temps restant en secondes pour le mode identify, 0 si inactif.
+pub fn identify_remaining_secs() -> u64 {
+    let now = std::time::Instant::now();
+    let until = from_identify_atomics();
+    if until > now {
+        (until - now).as_secs()
+    } else {
+        0
+    }
+}
+
+fn from_identify_atomics() -> std::time::Instant {
+    let target = IDENTIFY_SECS.load(Ordering::SeqCst);
+    let now_secs = std::time::Instant::now().elapsed().as_secs();
+    if target == 0 || (target as u64) <= now_secs {
+        std::time::Instant::now()
+    } else {
+        std::time::Instant::now() + std::time::Duration::from_secs((target as u64) - now_secs)
+    }
+}
+
+fn identify_active() -> bool {
+    let target = IDENTIFY_SECS.load(Ordering::SeqCst);
+    if target == 0 { return false; }
+    let now = std::time::Instant::now().elapsed().as_secs();
+    now < (target as u64)
+}
+
 fn ensure_pattern_running() {
     START_LED_PATTERN.call_once(|| {
         thread::Builder::new()
@@ -97,13 +147,35 @@ fn ensure_pattern_running() {
             .stack_size(4096)
             .spawn(move || {
                 let intensity: u8 = 2; // 2/255
+                let identify_intensity: u8 = 16; // ~6% pour le blanc rapide
                 let tick = Duration::from_millis(10);
-                let pulse_duration_ticks: u32 = 20;  // 200ms
-                let off_ticks: u32 = 40;              // 400ms
-                let cycle_ticks: u32 = pulse_duration_ticks + off_ticks + pulse_duration_ticks + off_ticks; // 1200ms
+                let pulse_duration_ticks: u32 = 20; // 200ms
+                let off_ticks: u32 = 40; // 400ms
+                let cycle_ticks: u32 =
+                    pulse_duration_ticks + off_ticks + pulse_duration_ticks + off_ticks; // 1200ms
                 let mut phase: u32 = 0;
 
                 loop {
+                    // Le mode identify (blanc rapide) prend priorité sur tout
+                    if identify_active() {
+                        // Blanc clignotant rapide : 50ms ON, 50ms OFF
+                        let fast_phase = phase % 10; // 10 ticks = 100ms cycle
+                        let (r, g, b) = if fast_phase < 5 {
+                            (identify_intensity, identify_intensity, identify_intensity)
+                        } else {
+                            (0, 0, 0)
+                        };
+                        let mut guard = LED_DRIVER.lock().unwrap();
+                        if let Some(ref mut driver) = *guard {
+                            let led_color = LedPixelColorGrb24::new_with_rgb(r, g, b);
+                            let _ = driver.write_blocking(led_color.as_ref().iter().copied());
+                        }
+                        drop(guard);
+                        thread::sleep(tick);
+                        phase = (phase + 1) % cycle_ticks;
+                        continue;
+                    }
+
                     let sta = LED_STA_STATUS.load(Ordering::SeqCst);
                     let ap = LED_AP_STATUS.load(Ordering::SeqCst);
 
@@ -111,14 +183,21 @@ fn ensure_pattern_running() {
                         // --- Pulse 1 : STA ---
                         let sub = phase; // 0..19
                         match sta {
-                            1 => { // WifiAttempting: green 50/50/50/50
+                            1 => {
+                                // WifiAttempting: green 50/50/50/50
                                 let m = sub % 10; // 0..9
-                                if m < 5 { (0, intensity, 0) } else { (0, 0, 0) }
+                                if m < 5 {
+                                    (0, intensity, 0)
+                                } else {
+                                    (0, 0, 0)
+                                }
                             }
-                            2 => { // WifiOk: green 200ms
+                            2 => {
+                                // WifiOk: green 200ms
                                 (0, intensity, 0)
                             }
-                            3 => { // MeshAttempting: blue 30/50/30/50/30
+                            3 => {
+                                // ProvisioningAttempting: blue 30/50/30/50/30
                                 let m = sub;
                                 if m < 3 || (m >= 8 && m < 11) || (m >= 16 && m < 19) {
                                     (0, 0, intensity)
@@ -126,10 +205,12 @@ fn ensure_pattern_running() {
                                     (0, 0, 0)
                                 }
                             }
-                            4 => { // MeshOk: blue 200ms
+                            4 => {
+                                // ProvisioningOk: blue 200ms
                                 (0, 0, intensity)
                             }
-                            _ => { // None: 3 flashs rouges
+                            _ => {
+                                // None: 3 flashs rouges
                                 let m = sub; // 0..19
                                 if (m < 3) || (m >= 5 && m < 8) || (m >= 10 && m < 13) {
                                     (intensity, 0, 0)
@@ -145,10 +226,12 @@ fn ensure_pattern_running() {
                         // --- Pulse 2 : AP ---
                         let sub = phase - pulse_duration_ticks - off_ticks; // 0..19
                         match ap {
-                            1 => { // MeshSsid: magenta 200ms
+                            1 => {
+                                // ProvisioningSsid: magenta 200ms
                                 (intensity, 0, intensity)
                             }
-                            2 => { // ApPairing: orange 30/50/30/50/30
+                            2 => {
+                                // ApPairing: orange 30/50/30/50/30
                                 let m = sub;
                                 if m < 3 || (m >= 8 && m < 11) || (m >= 16 && m < 19) {
                                     (intensity, intensity / 2, 0) // orange ≈ (R=2, G=1, B=0)
@@ -156,7 +239,7 @@ fn ensure_pattern_running() {
                                     (0, 0, 0)
                                 }
                             }
-                            _ => { (0, 0, 0) }
+                            _ => (0, 0, 0),
                         }
                     } else {
                         // --- 400ms off ---

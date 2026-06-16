@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.53-0001";
+const FW_VERSION: &str = "1.0.53-0004";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -121,7 +121,7 @@ pub struct MeshState {
     pub pairing_until: Option<std::time::Instant>,
 }
 
-fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Addr) -> Result<(i32, bool)> {
+pub(crate) fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Addr) -> Result<(i32, bool)> {
     let my_ip = unsafe {
         let netif = esp_idf_sys::esp_netif_get_handle_from_ifkey(b"WIFI_STA_DEF\0".as_ptr() as *const _);
         if !netif.is_null() {
@@ -138,7 +138,7 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
         }
     };
 
-    info!("Syncing with Mesh parent at http://{}/api/mesh/sync?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
+    info!("Syncing Wi-Fi credentials from provisioning peer at http://{}/api/mesh/sync?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
     // Court délai de stabilisation réseau après connexion Wi‑Fi
     thread::sleep(std::time::Duration::from_millis(500));
 
@@ -162,17 +162,17 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
                     };
                     if known_psk.is_empty() {
                         // Nouveau réseau : toujours enregistrer
-                        info!("Sync: New wifi '{}' discovered → enregistrement", res.wifi_ssid);
+                            info!("Sync: New wifi '{}' discovered, saving", res.wifi_ssid);
                         true
                     } else if known_psk != res.wifi_psk {
                         // Credential différent : comparer les last_seen
                         let parent_last_seen = res.last_seen.unwrap_or(0);
                         if parent_last_seen > my_last_seen {
-                            info!("Sync: Wifi '{}' PSK differs + parent last_seen={} > local={} → mise à jour",
+                            info!("Sync: Wifi '{}' PSK differs + peer last_seen={} > local={}, updating",
                                 res.wifi_ssid, parent_last_seen, my_last_seen);
                             true
                         } else {
-                            info!("Sync: Wifi '{}' PSK differs but parent last_seen={} <= local={} → conservé",
+                            info!("Sync: Wifi '{}' PSK differs but peer last_seen={} <= local={}, keeping local",
                                 res.wifi_ssid, parent_last_seen, my_last_seen);
                             false
                         }
@@ -427,7 +427,7 @@ fn main() -> Result<()> {
         let _ = registry.scan_and_register((*discovered_probes).clone());
     }
 
-    // Read Mesh configuration parameters from NVS (définies en dur, pas de fallback)
+    // Read provisioning channel from NVS. The old mesh fields are kept for NVS/UI compatibility.
     let (mesh_channel, mesh_ssid, mesh_pmk) = {
         let storage = nvs_storage.lock().unwrap();
         let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
@@ -435,7 +435,7 @@ fn main() -> Result<()> {
         let ssid = if ssid.is_empty() { "Esp32MeshNetwork".to_string() } else { ssid };
         let pmk = storage.get_str("meshPmk")?.unwrap_or_default();
         let pmk = if pmk.is_empty() { "Mesh-IoT@Espressif!".to_string() } else { pmk };
-        info!("Mesh config: channel={}, ssid='{}', pmk='{}...{}'",
+        info!("Provisioning config: channel={}, legacy_ssid='{}', legacy_pmk='{}...{}'",
             channel, ssid, &pmk[..std::cmp::min(2, pmk.len())], &pmk[std::cmp::max(pmk.len().saturating_sub(2), 0)..]);
         (channel, ssid, pmk)
     };
@@ -473,8 +473,8 @@ fn main() -> Result<()> {
                             let mut net = wifi_manager_boot.lock().unwrap();
                             net.state = NetState::ApPairing;
                             net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
-                            if let Err(e) = net.setup_persistent_ap(true, -1) {
-                                warn!("Failed to apply pairing mode to Wi-Fi connection from BOOT button: {:?}", e);
+                            if let Err(e) = net.setup_provisioning_ap() {
+                                warn!("Failed to apply provisioning mode from BOOT button: {:?}", e);
                             }
                             let mut state = mesh_state_boot.lock().unwrap();
                             state.pairing_until = net.pairing_until;
@@ -487,20 +487,8 @@ fn main() -> Result<()> {
             }
         })?;
     
-    // Initialiser l'AP mesh persistant en mode sécurisé ou ouvert selon le mot de passe
-    let open_ap = {
-        let storage = nvs_storage.lock().unwrap();
-        let known_networks = storage.get_known_networks().unwrap_or_default();
-        let default_net_psk = known_networks.iter()
-            .find(|(_, entry)| entry.default.unwrap_or(false))
-            .map(|(_, entry)| entry.psk.clone())
-            .unwrap_or_default();
-        default_net_psk.is_empty()
-    };
-    
     {
         let mut net = wifi_manager.lock().unwrap();
-        let _ = net.setup_persistent_ap(open_ap, -1);
         net.state = NetState::WifiPreferred;
         net.last_state_change = std::time::Instant::now();
     }
@@ -613,32 +601,20 @@ fn main() -> Result<()> {
         connection.initiate_response()?;
 
         let status = connection.status();
-        // Streamer la réponse par chunks de 512 octets sans tout bufferiser
-        const MAX_PROXY_BODY: usize = 32768; // 32 Ko max pour éviter OOM
-        let mut body = Vec::with_capacity(512);
+        // Streamer directement la réponse chunk par chunk (pas de bufferisation)
+        let mut response = req.into_response(status, Some("OK"), &[
+            ("Access-Control-Allow-Origin", "*"),
+        ])?;
         let mut chunk = [0u8; 512];
-        let mut total = 0usize;
         loop {
             match connection.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
-                    total += n;
-                    if total > MAX_PROXY_BODY {
-                        let mut response = req.into_status_response(413)?;
-                        response.write(b"Proxy response too large (>32KB). Use a direct connection.")?;
-                        return Ok(());
-                    }
-                    body.extend_from_slice(&chunk[..n]);
+                    response.write(&chunk[..n])?;
                 }
                 Err(e) => anyhow::bail!("Failed to read proxy response: {:?}", e),
             }
         }
-
-        let mut response = req.into_response(status, Some("OK"), &[
-            ("Content-Type", "application/json"),
-            ("Access-Control-Allow-Origin", "*"),
-        ])?;
-        response.write(&body)?;
         
         Ok(())
     })?;
@@ -954,6 +930,7 @@ fn main() -> Result<()> {
             "mesh_pmk": m_pmk,
             "mesh_ssid": m_ssid,
             "pairing_seconds_remaining": pairing_seconds_remaining,
+            "identify_remaining_secs": common::led::identify_remaining_secs(),
             "author": {
                 "email": AUTHOR_EMAIL,
                 "name": AUTHOR_NAME,
@@ -1025,28 +1002,141 @@ fn main() -> Result<()> {
                         "isense" => ("Current", "A"),
                         _ => ("Generic", "-"),
                     };
-                    sensors.push(serde_json::json!({
+                    let meta = dynamic_devices::get_sensor_meta(dev.id.as_str());
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, dev.id.as_str());
+                    let mut sensor_json = serde_json::json!({
                         "Name": dev.id,
                         "description": dev.name,
                         "Type": s_type,
                         "Unit": unit,
-                    }));
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
                 }
-                id if id.starts_with("onewr:") || id.contains("0x44") => {
-                    sensors.push(serde_json::json!({
+                id if id.starts_with("onewr:") => {
+                    let meta = dynamic_devices::get_sensor_meta(id);
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
+                    let mut sensor_json = serde_json::json!({
                         "Name": dev.id,
                         "description": dev.name,
                         "Type": "Temperature",
                         "Unit": "°C",
-                    }));
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
                 }
-                id if id.contains("0x62") => {
-                    sensors.push(serde_json::json!({
+                id if id.ends_with("_T") && id.contains("0x44") => {
+                    let meta = dynamic_devices::get_sensor_meta(id);
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
+                    let mut sensor_json = serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "Temperature",
+                        "Unit": "°C",
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
+                }
+                id if id.ends_with("_H") && id.contains("0x44") => {
+                    let meta = dynamic_devices::get_sensor_meta(id);
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
+                    let mut sensor_json = serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "Humidite",
+                        "Unit": "%RH",
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
+                }
+                id if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") => {
+                    let meta = dynamic_devices::get_sensor_meta(id);
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
+                    let mut sensor_json = serde_json::json!({
                         "Name": dev.id,
                         "description": dev.name,
                         "Type": "CO2",
                         "Unit": "ppm",
-                    }));
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
+                }
+                // BME280 (futur)
+                id if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) => {
+                    let meta = dynamic_devices::get_sensor_meta(id);
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
+                    let mut sensor_json = serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "Temperature",
+                        "Unit": "°C",
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
+                }
+                id if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) => {
+                    let meta = dynamic_devices::get_sensor_meta(id);
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
+                    let mut sensor_json = serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "Humidite",
+                        "Unit": "%RH",
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
+                }
+                id if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) => {
+                    let meta = dynamic_devices::get_sensor_meta(id);
+                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
+                    let mut sensor_json = serde_json::json!({
+                        "Name": dev.id,
+                        "description": dev.name,
+                        "Type": "Pression",
+                        "Unit": "hPa",
+                        "correction_formula": corr,
+                    });
+                    if let Some(ref m) = meta {
+                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                        sensor_json["range_min"] = serde_json::json!(m.range_min);
+                        sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    }
+                    sensors.push(sensor_json);
                 }
                 _ => {}
             }
@@ -1279,6 +1369,39 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+    // POST /api/sensor-correction — enregistre la formule de correction d'un capteur dans la NVS
+    let corr_nvs = Arc::clone(&nvs_storage);
+    let corr_mesh = Arc::clone(&mesh_state);
+    server.fn_handler("/api/sensor-correction", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
+        extend_pairing!(corr_mesh);
+        let mut buf = vec![0u8; 256];
+        let bytes_read = req.read(&mut buf)?;
+        #[derive(serde::Deserialize)]
+        struct CorrPayload {
+            id: String,
+            formula: String,
+        }
+        let payload: CorrPayload = serde_json::from_slice(&buf[..bytes_read])?;
+        let formula = payload.formula.trim();
+        if formula.is_empty() {
+            let mut response = req.into_status_response(400)?;
+            response.write(b"La formule ne peut pas etre vide")?;
+            return Ok(());
+        }
+        // Validation basique : la formule ne doit contenir que x, chiffres, opérateurs, espaces, parenthèses, point
+        let valid_chars = |c: char| c.is_alphanumeric() || "+-*/^(). _".contains(c);
+        if !formula.chars().all(valid_chars) {
+            let mut response = req.into_status_response(400)?;
+            response.write(b"Formule invalide : caracteres non autorises")?;
+            return Ok(());
+        }
+        dynamic_devices::set_correction_formula(&corr_nvs, &payload.id, formula)?;
+        info!("Correction formula set for '{}': '{}'", payload.id, formula);
+        let mut response = req.into_ok_response()?;
+        response.write(b"OK")?;
+        Ok(())
+    })?;
+
     // POST /api/actuators
     let act_clone = Arc::clone(&actuators_state);
     let static_devs_clone = Arc::clone(&static_devs);
@@ -1308,6 +1431,46 @@ fn main() -> Result<()> {
         let response_data = serde_json::to_string(&payload)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
+    // POST /api/identify — déclenche le clignotement blanc rapide de la LED pendant 15s (cumulatif)
+    let identify_mesh = Arc::clone(&mesh_state);
+    server.fn_handler("/api/identify", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+        extend_pairing!(identify_mesh);
+        let stop_utc = common::led::extend_identify(15);
+        let remaining = common::led::identify_remaining_secs();
+        let stop_str = format!("{:?}", stop_utc);
+        info!("Identify triggered, LED will blink white until UTC: {} ({}s remaining)", stop_str, remaining);
+        let json = serde_json::json!({
+            "status": "ok",
+            "identify_stop_utc": stop_str,
+            "identify_remaining_secs": remaining,
+        });
+        let response_data = serde_json::to_string(&json)?;
+        let mut response = req.into_ok_response()?;
+        response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
+    // POST /api/restart — redémarre l'ESP32 sur la partition production
+    let restart_mesh = Arc::clone(&mesh_state);
+    server.fn_handler("/api/restart", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+        extend_pairing!(restart_mesh);
+        info!("Redémarrage demandé via API. Redémarrage dans 2 secondes...");
+        let json = serde_json::json!({"status": "ok", "message": "Redémarrage dans 2 secondes..."});
+        let response_data = serde_json::to_string(&json)?;
+        let mut response = req.into_ok_response()?;
+        response.write(response_data.as_bytes())?;
+        let _ = thread::Builder::new()
+            .name("api_restart_worker".to_string())
+            .stack_size(4096)
+            .spawn(|| {
+                thread::sleep(std::time::Duration::from_secs(2));
+                unsafe {
+                    esp_idf_sys::esp_restart();
+                }
+            });
         Ok(())
     })?;
 
@@ -1418,24 +1581,24 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // POST /api/mesh/pair
+    // POST /api/mesh/pair (legacy URL): enable provisioning captive portal for 120 seconds.
     let wifi_pair = Arc::clone(&wifi_manager);
     let mesh_state_pair = Arc::clone(&mesh_state);
     server.fn_handler("/api/mesh/pair", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
-        info!("Enabling pairing mode for 120 seconds...");
+        info!("Enabling provisioning pairing mode for 120 seconds...");
         {
             let mut net = wifi_pair.lock().unwrap();
             net.state = NetState::ApPairing;
             net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
-            if let Err(e) = net.setup_persistent_ap(true, -1) {
-                warn!("Failed to apply pairing mode to Wi-Fi connection: {:?}", e);
+            if let Err(e) = net.setup_provisioning_ap() {
+                warn!("Failed to apply provisioning pairing mode: {:?}", e);
             }
             let mut state = mesh_state_pair.lock().unwrap();
             state.pairing_until = net.pairing_until;
         }
         
         let mut response = req.into_ok_response()?;
-        response.write(b"Pairing mode enabled for 120 seconds")?;
+        response.write(b"Provisioning mode enabled for 120 seconds")?;
         Ok(())
     })?;
 
@@ -1570,28 +1733,6 @@ fn main() -> Result<()> {
                 let mut wifi = wifi_clone.lock().unwrap();
                 let mut storage = nvs_clone.lock().unwrap();
                 
-                let default_net_psk = {
-                    let known = storage.get_known_networks().unwrap_or_default();
-                    known.values()
-                        .find(|entry| entry.default.unwrap_or(false))
-                        .map(|entry| entry.psk.clone())
-                        .unwrap_or_default()
-                };
-
-                let distance = {
-                    let state = config_mesh.lock().unwrap();
-                    state.distance
-                };
-
-                let open_ap = {
-                    let state = config_mesh.lock().unwrap();
-                    if let Some(until) = state.pairing_until {
-                        std::time::Instant::now() < until
-                    } else {
-                        false
-                    }
-                } || default_net_psk.is_empty();
-
                 if psk.is_empty() {
                     let known_networks = storage.get_known_networks().unwrap_or_default();
                     if let Some(entry) = known_networks.get(ssid) {
@@ -1600,7 +1741,7 @@ fn main() -> Result<()> {
                 }
 
                 info!("\x1b[35;1mConnexion directe au SSID '{}' (sans scan préalable)...\x1b[0m", ssid);
-                if wifi.try_sta_connect(ssid, &final_psk, open_ap, distance).unwrap_or(false) {
+                if wifi.try_sta_connect(ssid, &final_psk, false, 0).unwrap_or(false) {
                     wifi_success = true;
                 }
                 
@@ -1611,15 +1752,10 @@ fn main() -> Result<()> {
                     wifi.state = NetState::WifiOk;
                     wifi.retry_count = 0;
                     wifi.backoff_delay = std::time::Duration::from_secs(2);
-                    {
-                        let mut state = config_mesh.lock().unwrap();
-                        state.is_root = true;
-                        state.distance = 0;
-                    }
-                    let _ = wifi.setup_persistent_ap(open_ap, 0);
+                    let _ = wifi.stop_provisioning_ap_if_not_pairing();
                 } else {
                     warn!("Échec de la connexion Wi-Fi à '{}'.", ssid);
-                    wifi.state = NetState::WifiFallback;
+                    wifi.state = NetState::ProvisioningScan;
                 }
             }
         }
@@ -1937,6 +2073,11 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
+
+
 
 
 
