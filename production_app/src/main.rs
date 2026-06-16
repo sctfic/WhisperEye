@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.42";
+const FW_VERSION: &str = "1.0.44";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -751,10 +751,21 @@ fn main() -> Result<()> {
             } else {
                 0
             };
-            let children: Vec<serde_json::Value> = state.ip_addresses.iter().map(|(mac, ip)| {
-                serde_json::json!({"mac": mac, "ip": ip})
-            }).collect();
-            (state.is_root, state.distance, state.nodes.len(), rem, children)
+            // Expiration : 120s sans sync → nœud considéré déconnecté
+            let expire_after = std::time::Duration::from_secs(120);
+            let now = std::time::SystemTime::now();
+            let active_nodes: Vec<(String, std::time::SystemTime)> = state.nodes.iter()
+                .filter(|(_, t)| now.duration_since(**t).unwrap_or_default() < expire_after)
+                .map(|(mac, t)| (mac.clone(), *t))
+                .collect();
+            let active_ips: Vec<serde_json::Value> = active_nodes.iter()
+                .filter_map(|(mac, _)| {
+                    state.ip_addresses.get(mac).map(|ip| {
+                        serde_json::json!({"mac": mac, "ip": ip})
+                    })
+                })
+                .collect();
+            (state.is_root, state.distance, active_nodes.len(), rem, active_ips)
         };
         let (m_channel, m_id, m_pmk, m_ssid) = {
             let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
@@ -1875,6 +1886,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 
