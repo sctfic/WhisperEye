@@ -11,6 +11,9 @@ pub struct WifiKnownEntry {
     pub psk: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<bool>,
+    /// Timestamp de dernière connexion réussie (unix_secs / 600, intervalles de 10 min)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<u32>,
 }
 
 impl NvsStorage {
@@ -99,9 +102,11 @@ impl NvsStorage {
         for entry in map.values_mut() {
             entry.default = None;
         }
+        let existing_last_seen = map.get(ssid).and_then(|e| e.last_seen);
         map.insert(ssid.to_string(), WifiKnownEntry {
             psk: psk.to_string(),
             default: Some(true),
+            last_seen: existing_last_seen,
         });
         self.save_known_networks(&map)?;
         Ok(())
@@ -118,6 +123,36 @@ impl NvsStorage {
         }
         self.save_known_networks(&map)?;
         Ok(())
+    }
+
+    /// Enregistre le timestamp de dernière connexion réussie pour un SSID.
+    /// Format : unix_secs / 600 (intervalles de 10 minutes).
+    /// Ne met à jour que si le nouveau timestamp est strictement supérieur à l'ancien.
+    pub fn update_wifi_last_seen(&mut self, ssid: &str) -> Result<()> {
+        if ssid.is_empty() {
+            return Ok(());
+        }
+        let now_10min = (std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / 600) as u32;
+        let mut map = self.get_known_networks()?;
+        if let Some(entry) = map.get_mut(ssid) {
+            if entry.last_seen.unwrap_or(0) < now_10min {
+                entry.last_seen = Some(now_10min);
+                self.save_known_networks(&map)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Retourne le last_seen du réseau Wi-Fi par défaut, s'il existe.
+    pub fn get_default_network_last_seen(&self) -> Result<Option<u32>> {
+        let known = self.get_known_networks()?;
+        Ok(known.iter()
+            .find(|(_, e)| e.default.unwrap_or(false))
+            .and_then(|(_, e)| e.last_seen))
     }
 
     pub fn get_str(&self, key: &str) -> Result<Option<String>> {

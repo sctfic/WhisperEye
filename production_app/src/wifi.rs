@@ -204,6 +204,10 @@ impl NetManager {
         info!("\x1b[35;1m→ Début tentative connexion STA : SSID='{}', PSK={}, Channel={}, OpenAP={}\x1b[0m",
             ssid, masked_psk, self.mesh_channel, open_ap);
 
+        // Se déconnecter de l'AP actuel avant de changer de SSID
+        let _ = self.wifi.disconnect();
+        self.current_sta_ssid = None;
+
         let current_ap_cfg = match self.wifi.get_configuration() {
             Ok(Configuration::Mixed(_, ap_cfg)) => ap_cfg,
             Ok(Configuration::AccessPoint(ap_cfg)) => ap_cfg,
@@ -506,6 +510,11 @@ impl NetManager {
                                     ms.is_root = true;
                                     ms.distance = 0;
                                     let _ = net.setup_persistent_ap(open_ap, 0);
+                                    drop(net);
+                                    // Enregistrer le timestamp de connexion dans la NVS
+                                    if let Ok(mut storage) = nvs.lock() {
+                                        let _ = storage.update_wifi_last_seen(&ssid);
+                                    }
                                 }
                                 _ => {
                                     box_retry_count += 1;

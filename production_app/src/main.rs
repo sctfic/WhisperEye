@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.31-0014";
+const FW_VERSION: &str = "1.0.34";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -144,16 +144,49 @@ fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Add
         }
         match try_mesh_sync_request(gateway_ip, my_ip.as_str()) {
             Ok(res) => {
+                // Valider avant d'enregistrer : si le credential est différent, comparer les dates.
+                let should_save_wifi = if !res.wifi_ssid.is_empty() {
+                    let (known_psk, my_last_seen) = {
+                        let storage = nvs.lock().unwrap();
+                        let known = storage.get_known_networks().unwrap_or_default();
+                        known.get(&res.wifi_ssid)
+                            .map(|e| (e.psk.clone(), e.last_seen.unwrap_or(0)))
+                            .unwrap_or_default()
+                    };
+                    if known_psk.is_empty() {
+                        // Nouveau réseau : toujours enregistrer
+                        info!("Sync: New wifi '{}' discovered → enregistrement", res.wifi_ssid);
+                        true
+                    } else if known_psk != res.wifi_psk {
+                        // Credential différent : comparer les last_seen
+                        let parent_last_seen = res.last_seen.unwrap_or(0);
+                        if parent_last_seen > my_last_seen {
+                            info!("Sync: Wifi '{}' PSK differs + parent last_seen={} > local={} → mise à jour",
+                                res.wifi_ssid, parent_last_seen, my_last_seen);
+                            true
+                        } else {
+                            info!("Sync: Wifi '{}' PSK differs but parent last_seen={} <= local={} → conservé",
+                                res.wifi_ssid, parent_last_seen, my_last_seen);
+                            false
+                        }
+                    } else {
+                        info!("Sync: Wifi '{}' PSK identique → ignoré", res.wifi_ssid);
+                        false
+                    }
+                } else {
+                    false
+                };
                 // Save to NVS
                 {
                     let mut storage = nvs.lock().unwrap();
-                    if !res.wifi_ssid.is_empty() {
+                    if should_save_wifi {
                         let known = storage.get_known_networks().unwrap_or_default();
                         if !known.contains_key(&res.wifi_ssid) {
                             info!("Sync: Saving wifi SSID '{}' to NVS (newly discovered)", res.wifi_ssid);
                             storage.set_default_network(&res.wifi_ssid, &res.wifi_psk)?;
                         } else {
-                            info!("Sync: Wifi SSID '{}' is already known, skipping save", res.wifi_ssid);
+                            info!("Sync: Wifi SSID '{}' is already known, updating PSK", res.wifi_ssid);
+                            storage.set_default_network(&res.wifi_ssid, &res.wifi_psk)?;
                         }
                     }
                     if !res.ntp_server.is_empty() {
@@ -208,6 +241,8 @@ struct SyncResponse {
     wifi_psk: String,
     ntp_server: String,
     distance: i32,
+    #[serde(default)]
+    last_seen: Option<u32>,
 }
 
 
@@ -672,12 +707,17 @@ fn main() -> Result<()> {
             let state = mesh_state_sync.lock().unwrap();
             state.distance
         };
+        let last_seen = {
+            let storage = nvs_sync.lock().unwrap();
+            storage.get_default_network_last_seen().unwrap_or(None)
+        };
         
         let json = serde_json::json!({
             "wifi_ssid": wifi_ssid,
             "wifi_psk": wifi_psk,
             "ntp_server": ntp_server,
             "distance": distance,
+            "last_seen": last_seen,
         });
         
         let response_data = serde_json::to_string(&json)?;
@@ -1520,6 +1560,7 @@ fn main() -> Result<()> {
                 if wifi_success {
                     info!("Connexion réussie au SSID '{}'. Sauvegarde dans le NVS...", ssid);
                     storage.set_default_network(ssid, &final_psk)?;
+                    let _ = storage.update_wifi_last_seen(ssid);
                     wifi.state = NetState::WifiOk;
                     wifi.retry_count = 0;
                     wifi.backoff_delay = std::time::Duration::from_secs(2);
@@ -1834,6 +1875,9 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
 
 
 
