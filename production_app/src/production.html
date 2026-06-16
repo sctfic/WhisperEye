@@ -886,8 +886,7 @@
                 <div
                     style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
                     <div style="flex: 1; min-width: 0;">
-                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Mode
-                            Appairage Mesh</span>
+                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Mode AccessPoint (wifi direct)</span>
                         <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
                             Active le mode appairage pendant 120s. Appuyer 2s sur BOOT fait la même chose.
                         </div>
@@ -910,28 +909,13 @@
                             Fait clignoter la LED en blanc rapide pendant 15s. Chaque appui ajoute 15s.
                         </div>
                     </div>
-                    <div style="position: relative; width: 44px; height: 44px; flex-shrink: 0;">
-                        <svg id="identify_ring" width="44" height="44" viewBox="0 0 44 44" style="cursor: pointer;" onclick="triggerIdentify()">
-                            <circle cx="22" cy="22" r="18" fill="none" stroke="#334155" stroke-width="3"/>
-                            <circle id="identify_ring_progress" cx="22" cy="22" r="18" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-dasharray="113.1" stroke-dashoffset="0" transform="rotate(-90 22 22)" style="transition: stroke-dashoffset 0.3s ease;"/>
-                            <text id="identify_ring_text" x="22" y="25" text-anchor="middle" fill="#ffffff" font-size="10" font-weight="700" font-family="monospace">ID</text>
+                    <div style="position: relative; width: 24px; height: 24px; flex-shrink: 0;">
+                        <svg id="identify_ring" width="24" height="24" viewBox="0 0 24 24" style="cursor: pointer;" onclick="triggerIdentify()">
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="#334155" stroke-width="2"/>
+                            <circle id="identify_ring_progress" cx="12" cy="12" r="10" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-dasharray="62.83" stroke-dashoffset="0" transform="rotate(-90 12 12)" style="display: none; transition: stroke-dashoffset 0.3s ease;"/>
+                            <text id="identify_ring_text" x="12" y="15" text-anchor="middle" fill="#ffffff" font-size="8" font-weight="700" font-family="monospace">ID</text>
                         </svg>
                     </div>
-                </div>
-
-                <!-- Bouton Redémarrer -->
-                <div
-                    style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
-                    <div style="flex: 1; min-width: 0;">
-                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Redémarrer
-                            l'ESP</span>
-                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
-                            Redémarre le microcontrôleur. La connexion Web sera perdue quelques secondes.
-                        </div>
-                    </div>
-                    <button id="btn_restart" type="button" class="btn"
-                        style="width: auto; padding: 0.25rem 0.7rem; font-size: 0.8rem; background-color: var(--warning); color: #0b0f19;"
-                        onclick="triggerRestart()">Redémarrer</button>
                 </div>
 
                 <!-- Rename Enabled Switch -->
@@ -977,6 +961,21 @@
                             </svg>
                         </button>
                     </div>
+                </div>
+
+                <!-- Bouton Redémarrer -->
+                <div
+                    style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
+                    <div style="flex: 1; min-width: 0;">
+                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Redémarrer
+                            l'ESP</span>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
+                            Redémarre le microcontrôleur. La connexion Web sera perdue quelques secondes.
+                        </div>
+                    </div>
+                    <button id="btn_restart" type="button" class="btn"
+                        style="width: auto; padding: 0.25rem 0.7rem; font-size: 0.8rem; background-color: var(--warning); color: #0b0f19;"
+                        onclick="triggerRestart()">Redémarrer</button>
                 </div>
 
                 <!-- Factory Reset -->
@@ -1230,7 +1229,6 @@
                 scanSsids();
             } else if (tabId === 'devices-tab') {
                 fetchDevices();
-                fetchSensors();
             } else if (tabId === 'update-tab') {
                 checkUpdates();
             }
@@ -1720,82 +1718,138 @@
                 .then(res => res.json())
                 .then(data => {
                     window.currentDevices = data;
-                    const container = document.getElementById('devices_list');
-                    if (!container) return;
 
-                    // Update values and badges of active rows dynamically
-                    data.forEach(dev => {
-                        if (dev.id === 'rla') window.actuatorStates.rla = (dev.value === 'ON');
-                        if (dev.id === 'rlb') window.actuatorStates.rlb = (dev.value === 'ON');
-                        if (dev.id === 'swpwr') window.actuatorStates.swpwr = (dev.value === 'ON');
-                        if (dev.id === 'ina') window.actuatorStates.ina = (dev.value === 'ON');
-                        if (dev.id === 'inb') window.actuatorStates.inb = (dev.value === 'ON');
+                    // --- Séparer capteurs et actionneurs ---
+                    const actuators = data.filter(d => d.sensor_meta === null || d.sensor_meta === undefined);
+                    const sensors = data.filter(d => d.sensor_meta !== null && d.sensor_meta !== undefined);
 
-                        const valEl = document.getElementById(`val_${dev.id}`);
-                        if (valEl) valEl.innerText = dev.value;
+                    // ── Actionneurs ──
+                    const actContainer = document.getElementById('devices_list');
+                    if (actContainer) {
+                        // Update values and badges of active rows dynamically
+                        actuators.forEach(dev => {
+                            if (dev.id === 'rla') window.actuatorStates.rla = (dev.value === 'ON');
+                            if (dev.id === 'rlb') window.actuatorStates.rlb = (dev.value === 'ON');
+                            if (dev.id === 'swpwr') window.actuatorStates.swpwr = (dev.value === 'ON');
+                            if (dev.id === 'ina') window.actuatorStates.ina = (dev.value === 'ON');
+                            if (dev.id === 'inb') window.actuatorStates.inb = (dev.value === 'ON');
 
-                        const switchEl = document.getElementById(`switch_${dev.id}`);
-                        if (switchEl) switchEl.checked = (dev.value === 'ON');
+                            const valEl = document.getElementById(`val_${dev.id}`);
+                            if (valEl) valEl.innerText = dev.value;
 
-                        const badgeEl = document.getElementById(`badge_${dev.id}`);
-                        if (badgeEl) {
-                            badgeEl.innerText = dev.present ? 'Présent' : 'Absent';
-                            badgeEl.className = dev.present ? 'badge badge-green' : 'badge badge-error';
+                            const switchEl = document.getElementById(`switch_${dev.id}`);
+                            if (switchEl) switchEl.checked = (dev.value === 'ON');
+
+                            const badgeEl = document.getElementById(`badge_${dev.id}`);
+                            if (badgeEl) {
+                                badgeEl.innerText = dev.present ? 'Présent' : 'Absent';
+                                badgeEl.className = dev.present ? 'badge badge-green' : 'badge badge-error';
+                            }
+                        });
+
+                        // Only redraw the full list if the user is not actively editing any device name
+                        if (editingDeviceId === null) {
+                            let html = '';
+                            actuators.forEach(dev => {
+                                const statusBadge = dev.present
+                                    ? `<span id="badge_${dev.id}" class="badge badge-green">Présent</span>`
+                                    : `<span id="badge_${dev.id}" class="badge badge-error">Absent</span>`;
+
+                                let valueHtml = '';
+                                if (dev.id === 'rla' || dev.id === 'rlb' || dev.id === 'swpwr') {
+                                    const checkedAttr = dev.value === 'ON' ? 'checked' : '';
+                                    valueHtml = `
+                                        <label class="switch">
+                                            <input type="checkbox" id="switch_${dev.id}" ${checkedAttr} onchange="toggleDeviceOutput('${dev.id}')">
+                                            <span class="slider"></span>
+                                        </label>`;
+                                } else {
+                                    valueHtml = `<span id="val_${dev.id}" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">${dev.value}</span>`;
+                                }
+
+                                html += `
+                                <div class="info-group" style="align-items: center; gap: 0.5rem;">
+                                    <div style="flex: 1; min-width: 0;">
+                                        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                            <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: ${window.renameEnabled ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
+                                            <span id="edit_input_container_${dev.id}" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                                <input type="text" id="input_${dev.id}" maxlength="64" value="${dev.name}" 
+                                                    style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;"
+                                                    onblur="handleBlur('${dev.id}')"
+                                                    onkeydown="handleKeyDown(event, '${dev.id}')">
+                                            </span>
+                                            ${window.renameEnabled ? `<button id="edit_btn_${dev.id}" onclick="startEditing('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                            </button>` : ''}
+                                        </div>
+                                        <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">${dev.id} [${dev.is_static ? 'Fixe' : 'Dynamique'}]</div>
+                                    </div>
+                                    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
+                                        ${valueHtml}
+                                        ${statusBadge}
+                                    </div>
+                                </div>`;
+                            });
+                            actContainer.innerHTML = html;
                         }
-                    });
-
-                    // Only redraw the full list if the user is not actively editing any device name
-                    if (editingDeviceId !== null) {
-                        return;
                     }
 
-                    let html = '';
-                    data.forEach(dev => {
-                        // Ne pas afficher les capteurs ici (ils sont dans sensors_list)
-                        if (dev.sensor_meta !== null && dev.sensor_meta !== undefined) return;
-
-                        const statusBadge = dev.present
-                            ? `<span id="badge_${dev.id}" class="badge badge-green">Présent</span>`
-                            : `<span id="badge_${dev.id}" class="badge badge-error">Absent</span>`;
-
-                        let valueHtml = '';
-                        if (dev.id === 'rla' || dev.id === 'rlb' || dev.id === 'swpwr') {
-                            const checkedAttr = dev.value === 'ON' ? 'checked' : '';
-                            valueHtml = `
-                                <label class="switch">
-                                    <input type="checkbox" id="switch_${dev.id}" ${checkedAttr} onchange="toggleDeviceOutput('${dev.id}')">
-                                    <span class="slider"></span>
-                                </label>
-                            `;
+                    // ── Capteurs (affichés en 1er dans l'onglet Devices) ──
+                    const sensContainer = document.getElementById('sensors_list');
+                    if (sensContainer) {
+                        let html = '';
+                        if (sensors.length === 0) {
+                            html = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Aucun capteur détecté.</p>';
                         } else {
-                            valueHtml = `<span id="val_${dev.id}" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">${dev.value}</span>`;
+                            sensors.forEach(dev => {
+                                const meta = dev.sensor_meta || {};
+                                const corr = dev.correction_formula || 'x';
+                                const sensorId = dev.id.replace(/[^a-zA-Z0-9]/g, '_');
+                                html += `
+                                <div class="sensor-row" style="border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 0.4rem; overflow: hidden;">
+                                    <div class="sensor-header" onclick="toggleSensorDetail('${sensorId}')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
+                                        <div style="flex: 1; min-width: 0;">
+                                            <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">${dev.name}</div>
+                                            <div style="font-size: 0.7rem; color: var(--text-secondary); font-family: monospace;">${dev.id}</div>
+                                        </div>
+                                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                            <span style="font-weight: 700; color: var(--accent-color); font-size: 1rem;">${dev.value}</span>
+                                            <span class="badge ${dev.present ? 'badge-green' : 'badge-error'}" style="font-size: 0.7rem;">${dev.present ? 'Actif' : 'Absent'}</span>
+                                            <svg class="sensor-chevron" id="chevron_${sensorId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                        </div>
+                                    </div>
+                                    <div id="detail_${sensorId}" class="sensor-detail" style="display: none; padding: 0.6rem 0.8rem; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.15);">
+                                        <div class="info-group">
+                                            <span class="info-label">Unité</span>
+                                            <span class="info-value" style="font-size: 0.85rem;">${meta.unit || '-'}</span>
+                                        </div>
+                                        <div class="info-group">
+                                            <span class="info-label">Incertitude</span>
+                                            <span class="info-value" style="font-size: 0.85rem;">${meta.uncertainty || '-'}</span>
+                                        </div>
+                                        <div class="info-group">
+                                            <span class="info-label">Plage de mesure</span>
+                                            <span class="info-value" style="font-size: 0.85rem;">${meta.range_min ?? '-'} → ${meta.range_max ?? '-'} ${meta.unit || ''}</span>
+                                        </div>
+                                        <div class="info-group" style="border-bottom: none;">
+                                            <span class="info-label">Formule de correction</span>
+                                            <span class="info-value" style="font-size: 0.85rem; align-items: center; gap: 0.35rem;">
+                                                <span id="corr_display_${sensorId}" style="cursor: pointer; font-family: monospace;" onclick="startEditCorrection('${dev.id}')">${corr}</span>
+                                                <button onclick="startEditCorrection('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0;" title="Modifier la formule">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                                </button>
+                                                <span id="corr_edit_container_${sensorId}" style="display: none; align-items: center; gap: 0.25rem;">
+                                                    <input type="text" id="corr_input_${sensorId}" value="${corr}" style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 120px; font-family: monospace;"
+                                                        onblur="handleBlurCorrection('${dev.id}')" onkeydown="handleKeyDownCorrection(event, '${dev.id}')">
+                                                </span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>`;
+                            });
                         }
-
-                        html += `
-                        <div class="info-group" style="align-items: center; gap: 0.5rem; /*padding: 0.8rem 0;*/">
-                            <div style="flex: 1; min-width: 0;">
-                                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-                                    <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 1rem; color: var(--text-primary); cursor: ${window.renameEnabled ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
-                                    <span id="edit_input_container_${dev.id}" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
-                                        <input type="text" id="input_${dev.id}" maxlength="64" value="${dev.name}" 
-                                            style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;"
-                                            onblur="handleBlur('${dev.id}')"
-                                            onkeydown="handleKeyDown(event, '${dev.id}')">
-                                    </span>
-                                    ${window.renameEnabled ? `<button id="edit_btn_${dev.id}" onclick="startEditing('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                                    </button>` : ''}
-                                </div>
-                                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">${dev.id} [${dev.is_static ? 'Fixe' : 'Dynamique'}]</div>
-                            </div>
-                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem;">
-                                ${valueHtml}
-                                ${statusBadge}
-                            </div>
-                        </div>
-                        `;
-                    });
-                    container.innerHTML = html;
+                        sensContainer.innerHTML = html;
+                    }
                 })
                 .catch(err => console.error('Erreur peripherals:', err));
         }
@@ -2666,6 +2720,7 @@
         let identifyCountdownInterval = null;
         let identifyRemainingSecs = 0;
         let identifyStopUtc = null;
+        let identifyStarted = false; // true après le 1er clic
 
         function triggerIdentify() {
             fetch('/api/identify', { method: 'POST' })
@@ -2673,6 +2728,7 @@
                 .then(data => {
                     identifyRemainingSecs = data.identify_remaining_secs || 15;
                     identifyStopUtc = data.identify_stop_utc || '';
+                    identifyStarted = true;
                     updateIdentifyUI();
                     if (identifyCountdownInterval) clearInterval(identifyCountdownInterval);
                     identifyCountdownInterval = setInterval(() => {
@@ -2681,6 +2737,7 @@
                             clearInterval(identifyCountdownInterval);
                             identifyCountdownInterval = null;
                             identifyRemainingSecs = 0;
+                            identifyStarted = false;
                         }
                         updateIdentifyUI();
                     }, 1000);
@@ -2692,24 +2749,22 @@
             const ringProgress = document.getElementById('identify_ring_progress');
             const ringText = document.getElementById('identify_ring_text');
             if (!ringProgress || !ringText) return;
-            const circumference = 2 * Math.PI * 18; // ~113.1
-            if (identifyRemainingSecs > 0) {
-                // L'anneau se remplit progressivement jusqu'à 15s de base
+            const circumference = 2 * Math.PI * 10; // ~62.83
+            if (identifyStarted && identifyRemainingSecs > 0) {
+                ringProgress.style.display = '';
                 const total = Math.max(identifyRemainingSecs, 15);
                 const fraction = identifyRemainingSecs / total;
                 const offset = circumference * (1 - fraction);
                 ringProgress.setAttribute('stroke-dasharray', circumference);
                 ringProgress.setAttribute('stroke-dashoffset', offset);
                 ringText.textContent = identifyRemainingSecs + 's';
-                ringText.setAttribute('font-size', '9');
+                ringText.setAttribute('font-size', '7');
             } else {
-                ringProgress.setAttribute('stroke-dashoffset', '0');
+                ringProgress.style.display = 'none';
                 ringText.textContent = 'ID';
-                ringText.setAttribute('font-size', '10');
+                ringText.setAttribute('font-size', '8');
+                if (identifyRemainingSecs <= 0) identifyStarted = false;
             }
-            // Supprimer l'ancien compteur en ligne (plus utilisé)
-            const countdownEl = document.getElementById('identify_countdown');
-            if (countdownEl) countdownEl.style.display = 'none';
         }
 
         // ─── Redémarrer ───

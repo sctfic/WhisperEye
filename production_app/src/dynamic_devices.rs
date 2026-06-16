@@ -4,6 +4,23 @@ use common::nvs_storage::NvsStorage;
 use log::info;
 use serde::{Serialize, Deserialize};
 
+/// Static devices — toujours présents, noms en dur dans le code.
+/// Ne sont JAMAIS stockés dans dev_registry NVS.
+const STATIC_DEVICES: &[(&str, &str)] = &[
+    ("touch", "Touche Tactile (TOUCH)"),
+    ("vsense", "Mesure Tension (VSENSE)"),
+    ("rla", "Relais A (RLA)"),
+    ("rlb", "Relais B (RLB)"),
+    ("swpwr", "Coupure Alimentation (SWPWR)"),
+    ("isense", "Mesure Courant Pont H (ISENSE)"),
+    ("ina", "Sortie INA Pont H (INA)"),
+    ("inb", "Sortie INB Pont H (INB)"),
+];
+
+pub fn is_static_device(id: &str) -> bool {
+    STATIC_DEVICES.iter().any(|(i, _)| *i == id)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceEntry {
     pub name: String,
@@ -130,48 +147,51 @@ impl DeviceRegistry {
         }
     }
 
-    /// Load device metadata registry from NVS
+    /// Load device metadata registry from NVS (dynamic only) + static devices from code
     fn load_registry(&self) -> HashMap<String, DeviceEntry> {
+        let mut map: HashMap<String, DeviceEntry> = HashMap::new();
+        // 1. Static devices — toujours présents, en dur
+        for &(id, name) in STATIC_DEVICES {
+            map.insert(id.to_string(), DeviceEntry { name: name.to_string(), is_static: true });
+        }
+        // 2. Dynamic devices from NVS
         let storage = self.nvs.lock().unwrap();
         if let Ok(Some(json_str)) = storage.get_str("dev_registry") {
-            if let Ok(map) = serde_json::from_str::<HashMap<String, DeviceEntry>>(&json_str) {
-                return map;
+            if let Ok(saved) = serde_json::from_str::<HashMap<String, DeviceEntry>>(&json_str) {
+                for (id, entry) in saved {
+                    map.entry(id).or_insert(entry);
+                }
             }
         }
-        HashMap::new()
+        map
     }
 
-    /// Save device metadata registry to NVS
+    /// Save device metadata registry to NVS — filtre les devices statiques (en dur dans le code)
     fn save_registry(&self, map: &HashMap<String, DeviceEntry>) {
+        let dynamic_only: HashMap<String, DeviceEntry> = map
+            .iter()
+            .filter(|(id, _)| !is_static_device(id))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let mut storage = self.nvs.lock().unwrap();
-        if let Ok(json_str) = serde_json::to_string(map) {
+        if let Ok(json_str) = serde_json::to_string(&dynamic_only) {
             let _ = storage.set_str("dev_registry", &json_str);
         }
     }
 
-    /// Scan dynamic and static devices, merge with custom names from NVS
+    /// Scan dynamic and static devices, merge with custom names from NVS.
+    /// Les devices statiques sont en dur (const STATIC_DEVICES), jamais sauvés en NVS.
     pub fn scan_and_register(&mut self, onewr_pins: Vec<String>) -> Result<(), anyhow::Error> {
-        let mut saved = self.load_registry();
+        let mut saved = self.load_registry(); // contient statiques (dur) + dynamiques (NVS)
         let mut updated = HashMap::new();
 
-        // 1. Static Devices (Always present)
-        let static_ids = vec![
-            ("touch", "Touche Tactile (TOUCH)"),
-            ("vsense", "Mesure Tension (VSENSE)"),
-            ("rla", "Relais A (RLA)"),
-            ("rlb", "Relais B (RLB)"),
-            ("swpwr", "Coupure Alimentation (SWPWR)"),
-            ("isense", "Mesure Courant Pont H (ISENSE)"),
-            ("ina", "Sortie INA Pont H (INA)"),
-            ("inb", "Sortie INB Pont H (INB)"),
-        ];
-
-        for (id, default_name) in static_ids {
-            let entry = saved.remove(id).unwrap_or_else(|| DeviceEntry {
+        // 1. Static Devices (Always present, hardcoded) — retire de saved pour ne pas les dupliquer
+        for &(id, default_name) in STATIC_DEVICES {
+            saved.remove(id); // ignore toute entrée NVS résiduelle pour les statiques
+            updated.insert(id.to_string(), DeviceEntry {
                 name: default_name.to_string(),
                 is_static: true,
             });
-            updated.insert(id.to_string(), entry);
         }
 
         // 2. Dynamic Devices: Screen and Radio
@@ -283,10 +303,10 @@ impl DeviceRegistry {
         ds_readings: &HashMap<String, f32>,
         touch_state: bool,
     ) -> Vec<DeviceDisplay> {
-        let registry = self.load_registry();
+        let registry = &self.devices; // cache mémoire (statiques dur + dynamiques NVS)
         let mut list = Vec::new();
 
-        for (id, entry) in &registry {
+        for (id, entry) in registry.iter() {
             let mut present = true;
             let mut value = "OK".to_string();
             let sensor_meta = get_sensor_meta(id);
@@ -373,7 +393,7 @@ impl DeviceRegistry {
             }
 
             list.push(DeviceDisplay {
-                id: id.clone(),
+                id: id.to_string(),
                 name: entry.name.clone(),
                 is_static: entry.is_static,
                 present,
@@ -401,24 +421,32 @@ impl DeviceRegistry {
         self.load_registry()
     }
 
-    /// Rename device in NVS, limiting to 64 characters
+    /// Rename device (statiques : session uniquement ; dynamiques : persistés en NVS via dev_registry)
     pub fn rename_device(&mut self, id: &str, new_name: &str) -> Result<(), anyhow::Error> {
-        let mut map = self.load_registry();
-        if let Some(entry) = map.get_mut(id) {
+        // Update in-session cache
+        if let Some(entry) = self.devices.get_mut(id) {
             let trimmed = new_name.trim();
-            // Limit name to 64 characters
             let name_limit = if trimmed.len() > 64 {
                 trimmed[..64].to_string()
             } else {
                 trimmed.to_string()
             };
-            
             if name_limit.is_empty() {
                 return Err(anyhow::anyhow!("Le nom ne peut pas être vide"));
             }
-
             info!("Renaming device '{}' to '{}'", id, name_limit);
-            entry.name = name_limit;
+            entry.name = name_limit.clone();
+
+            // Persist in NVS (only dynamic devices will actually be saved)
+            let mut map = self.load_registry();
+            if let Some(e) = map.get_mut(id) {
+                e.name = name_limit;
+            } else {
+                map.insert(id.to_string(), DeviceEntry {
+                    name: name_limit,
+                    is_static: false,
+                });
+            }
             self.save_registry(&map);
             return Ok(());
         }

@@ -238,6 +238,26 @@ impl NvsStorage {
                 Err(e) => info!("  {} : Error({:?})", key, e),
             }
         }
+        // Also try to dump device registry and per-device correction formulas if present
+        match self.get_str("dev_registry") {
+            Ok(Some(reg_json)) => {
+                info!("  dev_registry : {}", reg_json);
+                // Try to parse registry and dump any corr_<id> keys
+                if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&reg_json) {
+                    for (id, _entry) in map {
+                        let corr_key = format!("corr_{}", id);
+                        match self.get_str(&corr_key) {
+                            Ok(Some(c)) => info!("  {} : \"{}\"", corr_key, c),
+                            Ok(None) => info!("  {} : [not set]", corr_key),
+                            Err(e) => info!("  {} : Error({:?})", corr_key, e),
+                        }
+                    }
+                }
+            }
+            Ok(None) => info!("  dev_registry : [not set]"),
+            Err(e) => info!("  dev_registry : Error({:?})", e),
+        }
+
         info!("========================");
         Ok(())
     }

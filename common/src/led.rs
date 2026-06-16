@@ -66,6 +66,8 @@ static START_LED_PATTERN: Once = Once::new();
 
 /// Timestamp (Instant) jusqu'auquel le mode "identify" (blanc rapide) est actif.
 /// Stocké comme secondes depuis le boot (u32, suffisant pour ~136 ans).
+// Timestamp (UNIX seconds) jusqu'auquel le mode "identify" (blanc rapide) est actif.
+// Stocké comme secondes UNIX (u32, suffisant jusqu'en 2106).
 static IDENTIFY_SECS: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,46 +100,37 @@ pub fn set_ap_status(status: LedApStatus) {
 /// Ajoute `duration_secs` secondes au temps restant.
 /// Retourne le timestamp UTC (SystemTime) de fin.
 pub fn extend_identify(duration_secs: u64) -> std::time::SystemTime {
-    let now_instant = std::time::Instant::now();
-    let current_until = from_identify_atomics();
-    let now_boot = now_instant.elapsed().as_secs();
-    let remaining_at_base = if current_until > now_instant { (current_until - now_instant).as_secs() } else { 0 };
-    let total_remaining = remaining_at_base + duration_secs;
-    IDENTIFY_SECS.store((now_boot + total_remaining) as u32, Ordering::SeqCst);
-    let unix_now = std::time::SystemTime::now()
+    // Use UNIX epoch seconds for simpler, robust comparisons across threads
+    let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    let unix_end = unix_now + std::time::Duration::from_secs(total_remaining);
+        .unwrap_or_default()
+        .as_secs();
+    let current_target = IDENTIFY_SECS.load(Ordering::SeqCst) as u64;
+    let remaining = if current_target > now_unix { current_target - now_unix } else { 0 };
+    let total_remaining = remaining + duration_secs;
+    let new_target = (now_unix + total_remaining) as u32;
+    IDENTIFY_SECS.store(new_target, Ordering::SeqCst);
+    let unix_end = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_unix + total_remaining);
     log::info!("LED identify extended, ends in {}s (UTC: {:?})", total_remaining, unix_end);
-    std::time::UNIX_EPOCH + unix_end
+    unix_end
 }
 
 /// Retourne le temps restant en secondes pour le mode identify, 0 si inactif.
 pub fn identify_remaining_secs() -> u64 {
-    let now = std::time::Instant::now();
-    let until = from_identify_atomics();
-    if until > now {
-        (until - now).as_secs()
-    } else {
-        0
-    }
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let target = IDENTIFY_SECS.load(Ordering::SeqCst) as u64;
+    if target > now_unix { target - now_unix } else { 0 }
 }
-
-fn from_identify_atomics() -> std::time::Instant {
-    let target = IDENTIFY_SECS.load(Ordering::SeqCst);
-    let now_secs = std::time::Instant::now().elapsed().as_secs();
-    if target == 0 || (target as u64) <= now_secs {
-        std::time::Instant::now()
-    } else {
-        std::time::Instant::now() + std::time::Duration::from_secs((target as u64) - now_secs)
-    }
-}
-
 fn identify_active() -> bool {
-    let target = IDENTIFY_SECS.load(Ordering::SeqCst);
-    if target == 0 { return false; }
-    let now = std::time::Instant::now().elapsed().as_secs();
-    now < (target as u64)
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let target = IDENTIFY_SECS.load(Ordering::SeqCst) as u64;
+    target > now_unix
 }
 
 fn ensure_pattern_running() {
