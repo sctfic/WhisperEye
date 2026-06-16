@@ -18,5 +18,10 @@
             "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.0.46.bin"
         }
     ],
-    "unstable": []
+    "unstable": [
+        {
+            "version": "1.0.53-0001",
+            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.0.53-0001.bin"
+        }
+    ]
 }
