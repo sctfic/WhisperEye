@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.44";
+const FW_VERSION: &str = "1.0.48";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -348,6 +348,7 @@ fn main() -> Result<()> {
                 let mac = info.mac();
                 info!("[WIFI AP] Station connectée -> MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}, AID: {}",
                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], info.aid());
+                wifi::AP_CLIENT_CONNECTED.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             esp_idf_svc::wifi::WifiEvent::ApStaDisconnected(info) => {
                 let mac = info.mac();
@@ -1886,6 +1887,9 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
 
 
 

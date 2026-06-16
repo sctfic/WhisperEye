@@ -434,38 +434,50 @@ impl NetManager {
                     thread::sleep(Duration::from_millis(200));
                     let now = std::time::Instant::now();
 
-                    let (state, pairing_until, distance) = {
+                    let (state, distance) = {
                         let net = this.lock().unwrap();
-                        (net.state, net.pairing_until, {
+                        (net.state, {
                             let ms = mesh_state.lock().unwrap();
                             ms.distance
                         })
                     };
 
-                    // --- Gestion du timeout du mode ApPairing ---
+                    // --- Gestion du mode ApPairing (ESP32-Configuration) ---
                     if state == NetState::ApPairing {
-                        if let Some(until) = pairing_until {
-                            if now >= until {
-                                info!("Pairing mode expired. Reverting to WifiPreferred.");
-                                {
-                                    let mut net = this.lock().unwrap();
-                                    net.state = NetState::WifiPreferred;
-                                    net.pairing_until = None;
-                                    net.retry_count = 0;
-                                    net.backoff_delay = Duration::from_secs(2);
-                                    let mut ms = mesh_state.lock().unwrap();
-                                    ms.pairing_until = None;
-                                    let open_ap = {
-                                        let storage = nvs.lock().unwrap();
-                                        let known = storage.get_known_networks().unwrap_or_default();
-                                        let default_net_psk = known.values().find(|e| e.default.unwrap_or(false)).map(|e| e.psk.clone()).unwrap_or_default();
-                                        default_net_psk.is_empty()
-                                    };
-                                    let _ = net.setup_persistent_ap(open_ap, ms.distance);
-                                }
-                                box_retry_count = 0;
-                                last_box_retry = now;
+                        // 1) Prolonger si un client s'est connecté à l'AP
+                        if AP_CLIENT_CONNECTED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                            let mut ms = mesh_state.lock().unwrap();
+                            if ms.pairing_until.is_some() {
+                                ms.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
+                                info!("ApPairing: Client connecté à l'AP → prolongation 120s");
                             }
+                        }
+                        // 2) Lire le timeout depuis mesh_state (prolongé par extend_pairing! via les API)
+                        let (expired, pairing_until) = {
+                            let ms = mesh_state.lock().unwrap();
+                            let expired = ms.pairing_until.map(|u| now >= u).unwrap_or(true);
+                            (expired, ms.pairing_until)
+                        };
+                        if expired && pairing_until.is_some() {
+                            info!("Pairing mode expired. Reverting to WifiPreferred.");
+                            {
+                                let mut net = this.lock().unwrap();
+                                net.state = NetState::WifiPreferred;
+                                net.pairing_until = None;
+                                net.retry_count = 0;
+                                net.backoff_delay = Duration::from_secs(2);
+                                let mut ms = mesh_state.lock().unwrap();
+                                ms.pairing_until = None;
+                                let open_ap = {
+                                    let storage = nvs.lock().unwrap();
+                                    let known = storage.get_known_networks().unwrap_or_default();
+                                    let default_net_psk = known.values().find(|e| e.default.unwrap_or(false)).map(|e| e.psk.clone()).unwrap_or_default();
+                                    default_net_psk.is_empty()
+                                };
+                                let _ = net.setup_persistent_ap(open_ap, ms.distance);
+                            }
+                            box_retry_count = 0;
+                            last_box_retry = now;
                         }
                         continue;
                     }
@@ -539,6 +551,21 @@ impl NetManager {
                                 mesh_retry_count = 0;
                                 last_box_retry = now;
                                 net.backoff_delay = Duration::from_secs(2);
+                            } else {
+                                // Vérifier la force du signal
+                                let rssi = {
+                                    let net = this.lock().unwrap();
+                                    net.wifi.wifi().get_ap_info().ok().map(|i| i.signal_strength)
+                                };
+                                if let Some(rssi) = rssi {
+                                    if rssi < -85 {
+                                        info!("WifiOk: RSSI={} dBm < -85 → bascule vers le mesh", rssi);
+                                        let mut net = this.lock().unwrap();
+                                        net.state = NetState::WifiFallback;
+                                        mesh_retry_count = 0;
+                                        last_mesh_retry = now;
+                                    }
+                                }
                             }
                         }
 
@@ -746,3 +773,6 @@ fn run_captive_dns_server() -> Result<()> {
         }
     }
 }
+
+/// Flag signalé par main.rs quand un client se connecte à l'AP (ApStaConnected)
+pub static AP_CLIENT_CONNECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
