@@ -2751,7 +2751,7 @@
             const checkbox = document.getElementById('identify_switch_input');
             if (!checkbox) return;
             if (checkbox.checked) {
-                // Start / extend identify
+                // Start identify (15s, non cumulatif)
                 fetch('/api/identify', { method: 'POST' })
                     .then(res => res.json())
                     .then(data => {
@@ -2766,8 +2766,10 @@
                                 identifyCountdownInterval = null;
                                 identifyRemainingSecs = 0;
                                 identifyActive = false;
+                                updateIdentifyUI();
+                            } else {
+                                updateIdentifyUI();
                             }
-                            updateIdentifyUI();
                         }, 1000);
                     })
                     .catch(err => {
@@ -2775,14 +2777,18 @@
                         checkbox.checked = false;
                     });
             } else {
-                // Switch turned off — stop client countdown, server identify will expire on its own
-                if (identifyCountdownInterval) {
-                    clearInterval(identifyCountdownInterval);
-                    identifyCountdownInterval = null;
-                }
-                identifyRemainingSecs = 0;
-                identifyActive = false;
-                updateIdentifyUI();
+                // Stop identify immediately
+                fetch('/api/identify/stop', { method: 'POST' })
+                    .catch(err => console.error('Erreur identify stop:', err))
+                    .finally(() => {
+                        if (identifyCountdownInterval) {
+                            clearInterval(identifyCountdownInterval);
+                            identifyCountdownInterval = null;
+                        }
+                        identifyRemainingSecs = 0;
+                        identifyActive = false;
+                        updateIdentifyUI();
+                    });
             }
         }
 
@@ -2803,8 +2809,7 @@
                 ring.style.transform = 'translateX(24px)';
                 checkbox.checked = true;
 
-                const total = Math.max(identifyRemainingSecs, 15);
-                const fraction = identifyRemainingSecs / total;
+                const fraction = identifyRemainingSecs / 15;
                 const offset = circumference * (1 - fraction);
                 ringProgress.setAttribute('stroke-dasharray', circumference);
                 ringProgress.setAttribute('stroke-dashoffset', offset);
@@ -2924,13 +2929,6 @@
             if (!inputEl) return;
             const newFormula = inputEl.value.trim();
             saveCorrection(deviceId, newFormula);
-            // Refermer le panneau de détails après validation
-            const detail = document.getElementById('detail_' + safeId);
-            if (detail) {
-                detail.classList.remove('open');
-                const chevron = document.getElementById('chevron_' + safeId);
-                if (chevron) chevron.style.transform = 'rotate(0deg)';
-            }
         }
 
         function handleKeyDownCorrection(event, deviceId) {
@@ -2944,13 +2942,6 @@
                 const containerEl = document.getElementById('corr_edit_container_' + safeId);
                 if (displayEl) displayEl.style.display = 'inline';
                 if (containerEl) containerEl.style.display = 'none';
-                // Refermer le panneau de détails
-                const detail = document.getElementById('detail_' + safeId);
-                if (detail) {
-                    detail.classList.remove('open');
-                    const chevron = document.getElementById('chevron_' + safeId);
-                    if (chevron) chevron.style.transform = 'rotate(0deg)';
-                }
             }
         }
 

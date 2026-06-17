@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.55-0005";
+const FW_VERSION: &str = "1.0.55-0006";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -1451,7 +1451,7 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // POST /api/identify — déclenche le clignotement blanc rapide de la LED pendant 15s (cumulatif)
+    // POST /api/identify — déclenche le clignotement blanc rapide de la LED pendant 15s (non cumulatif)
     let identify_mesh = Arc::clone(&mesh_state);
     server.fn_handler("/api/identify", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(identify_mesh);
@@ -1464,6 +1464,19 @@ fn main() -> Result<()> {
             "identify_stop_utc": stop_str,
             "identify_remaining_secs": remaining,
         });
+        let response_data = serde_json::to_string(&json)?;
+        let mut response = req.into_ok_response()?;
+        response.write(response_data.as_bytes())?;
+        Ok(())
+    })?;
+
+    // POST /api/identify/stop — arrête immédiatement le clignotement identify
+    let identify_stop_mesh = Arc::clone(&mesh_state);
+    server.fn_handler("/api/identify/stop", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+        extend_pairing!(identify_stop_mesh);
+        common::led::cancel_identify();
+        info!("Identify cancelled via API");
+        let json = serde_json::json!({"status": "ok", "identify_remaining_secs": 0});
         let response_data = serde_json::to_string(&json)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
@@ -2085,6 +2098,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 

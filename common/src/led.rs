@@ -96,23 +96,25 @@ pub fn set_ap_status(status: LedApStatus) {
     ensure_pattern_running();
 }
 
-/// Étend ou démarre le mode "identify" (LED blanche clignotement rapide).
-/// Ajoute `duration_secs` secondes au temps restant.
+/// Démarre ou réinitialise le mode "identify" (LED blanche clignotement rapide).
+/// Remet le compteur à `duration_secs` (pas d'accumulation).
 /// Retourne le timestamp UTC (SystemTime) de fin.
 pub fn extend_identify(duration_secs: u64) -> std::time::SystemTime {
-    // Use UNIX epoch seconds for simpler, robust comparisons across threads
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let current_target = IDENTIFY_SECS.load(Ordering::SeqCst) as u64;
-    let remaining = if current_target > now_unix { current_target - now_unix } else { 0 };
-    let total_remaining = remaining + duration_secs;
-    let new_target = (now_unix + total_remaining) as u32;
+    let new_target = (now_unix + duration_secs) as u32;
     IDENTIFY_SECS.store(new_target, Ordering::SeqCst);
-    let unix_end = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_unix + total_remaining);
-    log::info!("LED identify extended, ends in {}s (UTC: {:?})", total_remaining, unix_end);
-    unix_end
+    let unix_end = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_unix + duration_secs);
+    log::info!("LED identify set, ends in {}s (UTC: {:?})", duration_secs, unix_end);
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_unix + duration_secs)
+}
+
+/// Annule immédiatement le mode identify.
+pub fn cancel_identify() {
+    IDENTIFY_SECS.store(0, Ordering::SeqCst);
+    log::info!("LED identify cancelled");
 }
 
 /// Retourne le temps restant en secondes pour le mode identify, 0 si inactif.
