@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.55-0002";
+const FW_VERSION: &str = "1.0.55-0005";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -2085,6 +2085,9 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
 
 
 

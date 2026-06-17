@@ -259,6 +259,27 @@
             transform: translateX(24px);
         }
 
+        /* Identify switch : cache le rond blanc pendant le décompte */
+        #identify_switch_label.identify-active .slider::before {
+            opacity: 0;
+        }
+
+        /* Sensor detail drawer animation */
+        .sensor-detail {
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+            padding: 0 0.8rem;
+            border-top: 1px solid var(--border-color);
+            background: rgba(0,0,0,0.15);
+        }
+        .sensor-detail.open {
+            max-height: 500px;
+            opacity: 1;
+            padding: 0.6rem 0.8rem;
+        }
+
         /* SLIDER FOR PWM */
         .slider-group {
             margin-top: 1rem;
@@ -667,19 +688,19 @@
 
         <!-- TAB 1: DEVICES & ACTUATORS -->
         <div id="devices-tab" class="tab-content active">
-            <!-- Section Actuateurs -->
-            <h3 style="margin-bottom: 0.5rem; font-size: 1rem; border-left: 3px solid var(--warning); padding-left: 0.5rem;">
-                Actionneurs
-            </h3>
-            <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1.5rem;">
-                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des actionneurs...</p>
-            </div>
             <!-- Section Capteurs -->
             <h3 style="margin-bottom: 0.5rem; font-size: 1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
                 Capteurs
             </h3>
             <div id="sensors_list" style="display: flex; flex-direction: column; gap: 0.25rem;">
                 <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des capteurs...</p>
+            </div>
+            <!-- Section Actuateurs -->
+            <h3 style="margin-bottom: 0.5rem; font-size: 1rem; border-left: 3px solid var(--warning); padding-left: 0.5rem;">
+                Actionneurs
+            </h3>
+            <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1.5rem;">
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des actionneurs...</p>
             </div>
         </div>
 
@@ -899,23 +920,27 @@
                     </div>
                 </div>
 
-                <!-- Bouton Identifier l'ESP -->
+                <!-- Bouton Identifier l'ESP avec switch + progress ring intégré -->
                 <div
                     style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
                     <div style="flex: 1; min-width: 0;">
                         <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Identifier
                             l'ESP</span>
                         <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
-                            Fait clignoter la LED en blanc rapide pendant 15s. Chaque appui ajoute 15s.
+                            Active le clignotement blanc rapide de la LED pendant 15s. Chaque activation ajoute 15s.
                         </div>
                     </div>
-                    <div style="position: relative; width: 24px; height: 24px; flex-shrink: 0;">
-                        <svg id="identify_ring" width="24" height="24" viewBox="0 0 24 24" style="cursor: pointer;" onclick="triggerIdentify()">
-                            <circle cx="12" cy="12" r="10" fill="none" stroke="#334155" stroke-width="2"/>
-                            <circle id="identify_ring_progress" cx="12" cy="12" r="10" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-dasharray="62.83" stroke-dashoffset="0" transform="rotate(-90 12 12)" style="display: none; transition: stroke-dashoffset 0.3s ease;"/>
-                            <text id="identify_ring_text" x="12" y="15" text-anchor="middle" fill="#ffffff" font-size="8" font-weight="700" font-family="monospace">ID</text>
+                    <label class="switch" id="identify_switch_label" style="position: relative;">
+                        <input type="checkbox" id="identify_switch_input" onchange="toggleIdentify()">
+                        <span class="slider" id="identify_slider"></span>
+                        <!-- Progress ring — remplace .slider:before pendant le décompte -->
+                        <svg id="identify_ring" width="22" height="22" viewBox="0 0 22 22"
+                             style="position: absolute; top: 1px; left: 1px; display: none; transition: transform .3s; pointer-events: none; z-index: 2;">
+                            <circle cx="11" cy="11" r="9" fill="#0b0f19" stroke="#" stroke-width="2"/>
+                            <circle id="identify_ring_progress" cx="11" cy="11" r="9" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-dasharray="56.55" stroke-dashoffset="0" transform="rotate(-90 11 11)"/>
+                            <text id="identify_ring_text" x="11" y="13" text-anchor="middle" fill="#3b82f6" font-size="7" font-weight="700" font-family="monospace"></text>
                         </svg>
-                    </div>
+                    </label>
                 </div>
 
                 <!-- Rename Enabled Switch -->
@@ -1659,7 +1684,7 @@
                     // Identify countdown (from /api/status)
                     if (data.identify_remaining_secs !== undefined && data.identify_remaining_secs > 0) {
                         identifyRemainingSecs = data.identify_remaining_secs;
-                        identifyStopUtc = '';
+                        identifyActive = true;
                         updateIdentifyUI();
                         if (identifyCountdownInterval) clearInterval(identifyCountdownInterval);
                         identifyCountdownInterval = setInterval(() => {
@@ -1668,6 +1693,7 @@
                                 clearInterval(identifyCountdownInterval);
                                 identifyCountdownInterval = null;
                                 identifyRemainingSecs = 0;
+                                identifyActive = false;
                             }
                             updateIdentifyUI();
                         }, 1000);
@@ -1818,7 +1844,7 @@
                                             <svg class="sensor-chevron" id="chevron_${sensorId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                         </div>
                                     </div>
-                                    <div id="detail_${sensorId}" class="sensor-detail" style="display: none; padding: 0.6rem 0.8rem; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.15);">
+                                    <div id="detail_${sensorId}" class="sensor-detail">
                                         <div class="info-group">
                                             <span class="info-label">Unité</span>
                                             <span class="info-value" style="font-size: 0.85rem;">${meta.unit || '-'}</span>
@@ -1831,18 +1857,18 @@
                                             <span class="info-label">Plage de mesure</span>
                                             <span class="info-value" style="font-size: 0.85rem;">${meta.range_min ?? '-'} → ${meta.range_max ?? '-'} ${meta.unit || ''}</span>
                                         </div>
-                                        <div class="info-group" style="border-bottom: none;">
+                                        <div class="info-group" style="border-bottom: none; flex-direction: column; align-items: stretch;">
                                             <span class="info-label">Formule de correction</span>
-                                            <span class="info-value" style="font-size: 0.85rem; align-items: center; gap: 0.35rem;">
-                                                <span id="corr_display_${sensorId}" style="cursor: pointer; font-family: monospace;" onclick="startEditCorrection('${dev.id}')">${corr}</span>
-                                                <button onclick="startEditCorrection('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0;" title="Modifier la formule">
+                                            <div style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.2rem;">
+                                                <span id="corr_display_${sensorId}" style="cursor: pointer; font-family: monospace; font-size: 0.85rem; word-break: break-all;" onclick="startEditCorrection('${dev.id}')">${corr}</span>
+                                                <button onclick="startEditCorrection('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0; flex-shrink: 0;" title="Modifier la formule">
                                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                                 </button>
-                                                <span id="corr_edit_container_${sensorId}" style="display: none; align-items: center; gap: 0.25rem;">
-                                                    <input type="text" id="corr_input_${sensorId}" value="${corr}" style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 120px; font-family: monospace;"
+                                                <span id="corr_edit_container_${sensorId}" style="display: none; align-items: center; gap: 0.25rem; flex: 1;">
+                                                    <input type="text" id="corr_input_${sensorId}" value="${corr}" style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 100%; font-family: monospace;"
                                                         onblur="handleBlurCorrection('${dev.id}')" onkeydown="handleKeyDownCorrection(event, '${dev.id}')">
                                                 </span>
-                                            </span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>`;
@@ -2719,51 +2745,76 @@
         // ─── Identify (LED blanche clignotante) ───
         let identifyCountdownInterval = null;
         let identifyRemainingSecs = 0;
-        let identifyStopUtc = null;
-        let identifyStarted = false; // true après le 1er clic
+        let identifyActive = false;
 
-        function triggerIdentify() {
-            fetch('/api/identify', { method: 'POST' })
-                .then(res => res.json())
-                .then(data => {
-                    identifyRemainingSecs = data.identify_remaining_secs || 15;
-                    identifyStopUtc = data.identify_stop_utc || '';
-                    identifyStarted = true;
-                    updateIdentifyUI();
-                    if (identifyCountdownInterval) clearInterval(identifyCountdownInterval);
-                    identifyCountdownInterval = setInterval(() => {
-                        identifyRemainingSecs--;
-                        if (identifyRemainingSecs <= 0) {
-                            clearInterval(identifyCountdownInterval);
-                            identifyCountdownInterval = null;
-                            identifyRemainingSecs = 0;
-                            identifyStarted = false;
-                        }
+        function toggleIdentify() {
+            const checkbox = document.getElementById('identify_switch_input');
+            if (!checkbox) return;
+            if (checkbox.checked) {
+                // Start / extend identify
+                fetch('/api/identify', { method: 'POST' })
+                    .then(res => res.json())
+                    .then(data => {
+                        identifyRemainingSecs = data.identify_remaining_secs || 15;
+                        identifyActive = true;
                         updateIdentifyUI();
-                    }, 1000);
-                })
-                .catch(err => console.error('Erreur identify:', err));
+                        if (identifyCountdownInterval) clearInterval(identifyCountdownInterval);
+                        identifyCountdownInterval = setInterval(() => {
+                            identifyRemainingSecs--;
+                            if (identifyRemainingSecs <= 0) {
+                                clearInterval(identifyCountdownInterval);
+                                identifyCountdownInterval = null;
+                                identifyRemainingSecs = 0;
+                                identifyActive = false;
+                            }
+                            updateIdentifyUI();
+                        }, 1000);
+                    })
+                    .catch(err => {
+                        console.error('Erreur identify:', err);
+                        checkbox.checked = false;
+                    });
+            } else {
+                // Switch turned off — stop client countdown, server identify will expire on its own
+                if (identifyCountdownInterval) {
+                    clearInterval(identifyCountdownInterval);
+                    identifyCountdownInterval = null;
+                }
+                identifyRemainingSecs = 0;
+                identifyActive = false;
+                updateIdentifyUI();
+            }
         }
 
         function updateIdentifyUI() {
+            const label = document.getElementById('identify_switch_label');
+            const ring = document.getElementById('identify_ring');
             const ringProgress = document.getElementById('identify_ring_progress');
             const ringText = document.getElementById('identify_ring_text');
-            if (!ringProgress || !ringText) return;
-            const circumference = 2 * Math.PI * 10; // ~62.83
-            if (identifyStarted && identifyRemainingSecs > 0) {
-                ringProgress.style.display = '';
+            const checkbox = document.getElementById('identify_switch_input');
+            if (!label || !ring || !ringProgress || !ringText || !checkbox) return;
+
+            const circumference = 2 * Math.PI * 9; // ~56.55
+
+            if (identifyActive && identifyRemainingSecs > 0) {
+                label.classList.add('identify-active');
+                ring.style.display = '';
+                // Ring suit la position du slider (ON → translateX 24px)
+                ring.style.transform = 'translateX(24px)';
+                checkbox.checked = true;
+
                 const total = Math.max(identifyRemainingSecs, 15);
                 const fraction = identifyRemainingSecs / total;
                 const offset = circumference * (1 - fraction);
                 ringProgress.setAttribute('stroke-dasharray', circumference);
                 ringProgress.setAttribute('stroke-dashoffset', offset);
-                ringText.textContent = identifyRemainingSecs + 's';
-                ringText.setAttribute('font-size', '7');
+                ringText.textContent = identifyRemainingSecs;
             } else {
-                ringProgress.style.display = 'none';
-                ringText.textContent = 'ID';
-                ringText.setAttribute('font-size', '8');
-                if (identifyRemainingSecs <= 0) identifyStarted = false;
+                label.classList.remove('identify-active');
+                ring.style.display = 'none';
+                ring.style.transform = 'translateX(0)';
+                checkbox.checked = false;
+                identifyActive = false;
             }
         }
 
@@ -2812,7 +2863,7 @@
                                         <svg class="sensor-chevron" id="chevron_${sensorId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                     </div>
                                 </div>
-                                <div id="detail_${sensorId}" class="sensor-detail" style="display: none; padding: 0.6rem 0.8rem; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.15);">
+                                <div id="detail_${sensorId}" class="sensor-detail">
                                     <div class="info-group">
                                         <span class="info-label">Unité</span>
                                         <span class="info-value" style="font-size: 0.85rem;">${meta.unit || '-'}</span>
@@ -2825,18 +2876,18 @@
                                         <span class="info-label">Plage de mesure</span>
                                         <span class="info-value" style="font-size: 0.85rem;">${meta.range_min ?? '-'} → ${meta.range_max ?? '-'} ${meta.unit || ''}</span>
                                     </div>
-                                    <div class="info-group" style="border-bottom: none;">
+                                    <div class="info-group" style="border-bottom: none; flex-direction: column; align-items: stretch;">
                                         <span class="info-label">Formule de correction</span>
-                                        <span class="info-value" style="font-size: 0.85rem; align-items: center; gap: 0.35rem;">
-                                            <span id="corr_display_${sensorId}" style="cursor: pointer; font-family: monospace;" onclick="startEditCorrection('${dev.id}')">${corr}</span>
-                                            <button onclick="startEditCorrection('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0;" title="Modifier la formule">
+                                        <div style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.2rem;">
+                                            <span id="corr_display_${sensorId}" style="cursor: pointer; font-family: monospace; font-size: 0.85rem; word-break: break-all;" onclick="startEditCorrection('${dev.id}')">${corr}</span>
+                                            <button onclick="startEditCorrection('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0; flex-shrink: 0;" title="Modifier la formule">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                             </button>
-                                            <span id="corr_edit_container_${sensorId}" style="display: none; align-items: center; gap: 0.25rem;">
-                                                <input type="text" id="corr_input_${sensorId}" value="${corr}" style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 120px; font-family: monospace;"
+                                            <span id="corr_edit_container_${sensorId}" style="display: none; align-items: center; gap: 0.25rem; flex: 1;">
+                                                <input type="text" id="corr_input_${sensorId}" value="${corr}" style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 100%; font-family: monospace;"
                                                     onblur="handleBlurCorrection('${dev.id}')" onkeydown="handleKeyDownCorrection(event, '${dev.id}')">
                                             </span>
-                                        </span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>`;
@@ -2851,8 +2902,8 @@
             const detail = document.getElementById('detail_' + sensorId);
             const chevron = document.getElementById('chevron_' + sensorId);
             if (detail) {
-                const isOpen = detail.style.display === 'block';
-                detail.style.display = isOpen ? 'none' : 'block';
+                const isOpen = detail.classList.contains('open');
+                detail.classList.toggle('open');
                 if (chevron) chevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
             }
         }
@@ -2873,6 +2924,13 @@
             if (!inputEl) return;
             const newFormula = inputEl.value.trim();
             saveCorrection(deviceId, newFormula);
+            // Refermer le panneau de détails après validation
+            const detail = document.getElementById('detail_' + safeId);
+            if (detail) {
+                detail.classList.remove('open');
+                const chevron = document.getElementById('chevron_' + safeId);
+                if (chevron) chevron.style.transform = 'rotate(0deg)';
+            }
         }
 
         function handleKeyDownCorrection(event, deviceId) {
@@ -2886,6 +2944,13 @@
                 const containerEl = document.getElementById('corr_edit_container_' + safeId);
                 if (displayEl) displayEl.style.display = 'inline';
                 if (containerEl) containerEl.style.display = 'none';
+                // Refermer le panneau de détails
+                const detail = document.getElementById('detail_' + safeId);
+                if (detail) {
+                    detail.classList.remove('open');
+                    const chevron = document.getElementById('chevron_' + safeId);
+                    if (chevron) chevron.style.transform = 'rotate(0deg)';
+                }
             }
         }
 

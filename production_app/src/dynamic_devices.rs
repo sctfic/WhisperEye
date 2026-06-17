@@ -25,6 +25,15 @@ pub fn is_static_device(id: &str) -> bool {
 pub struct DeviceEntry {
     pub name: String,
     pub is_static: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correction_formula: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistEntry {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    correction_formula: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,46 +66,46 @@ pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
         // SHT45 (Sensirion) — https://sensirion.com/products/catalog/SHT45
         id if id.ends_with("_T") && id.contains("0x44") => Some(SensorMeta {
             unit: "°C".to_string(),
-            uncertainty: "±0.1°C (20-60°C)".to_string(),
+            uncertainty: "±0.1 °C (typ., 0-75 °C)\n±0.2 °C (max.)".to_string(),
             range_min: -40.0,
             range_max: 125.0,
         }),
         id if id.ends_with("_H") && id.contains("0x44") => Some(SensorMeta {
             unit: "%RH".to_string(),
-            uncertainty: "±1.0%RH (20-80%RH)".to_string(),
+            uncertainty: "±1.0 %RH (typ., 25-75 %RH)\n±1.5 %RH (max.)".to_string(),
             range_min: 0.0,
             range_max: 100.0,
         }),
         // SCD41 (Sensirion) — https://sensirion.com/products/catalog/SCD41
         id if id.contains("0x62") => Some(SensorMeta {
             unit: "ppm".to_string(),
-            uncertainty: "±40 ppm + 5% m.v.".to_string(),
+            uncertainty: "±(40 ppm + 5 % de la lecture)".to_string(),
             range_min: 0.0,
             range_max: 40000.0,
         }),
         // DS18B20 (Maxim) — 1-Wire temperature probes
         id if id.starts_with("onewr:") => Some(SensorMeta {
             unit: "°C".to_string(),
-            uncertainty: "±0.5°C (-10 à +85°C)".to_string(),
+            uncertainty: "±0.5 °C (-10 à +85 °C)\n±2 °C (hors plage)".to_string(),
             range_min: -55.0,
             range_max: 125.0,
         }),
-        // BME280 (Bosch) — capteurs futurs
+        // BME280 (Bosch)
         id if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
             unit: "°C".to_string(),
-            uncertainty: "±1.0°C".to_string(),
+            uncertainty: "±0.5 °C (à 25 °C)".to_string(),
             range_min: -40.0,
             range_max: 85.0,
         }),
         id if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
             unit: "%RH".to_string(),
-            uncertainty: "±3%RH".to_string(),
+            uncertainty: "±3 %RH (20-80 %RH, 25 °C)".to_string(),
             range_min: 0.0,
             range_max: 100.0,
         }),
         id if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
             unit: "hPa".to_string(),
-            uncertainty: "±1.0 hPa".to_string(),
+            uncertainty: "±0.12 hPa (éq. ±1 m)".to_string(),
             range_min: 300.0,
             range_max: 1100.0,
         }),
@@ -105,7 +114,7 @@ pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
             unit: "V".to_string(),
             uncertainty: "±0.1V".to_string(),
             range_min: 0.0,
-            range_max: 30.0,
+            range_max: 25.0,
         }),
         "isense" => Some(SensorMeta {
             unit: "A".to_string(),
@@ -121,16 +130,32 @@ pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
 /// Clé NVS : `corr_<device_id>` (ex: corr_i2c:0:0x44_T).
 /// Par défaut: "<device_id>.raw" (la valeur réelle = la valeur brute).
 pub fn get_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str) -> String {
+    // Prefer correction formula stored in dev_registry (if present), fall back to legacy corr_<id> key
     let storage = nvs.lock().unwrap();
+    if let Ok(Some(reg_json)) = storage.get_str("dev_registry") {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, PersistEntry>>(&reg_json) {
+            if let Some(pe) = map.get(device_id) {
+                if let Some(c) = &pe.correction_formula {
+                    return c.clone();
+                }
+            }
+        }
+    }
+    // legacy key
     let key = format!("corr_{}", device_id);
     storage.get_str(&key).ok().flatten().unwrap_or_else(|| format!("{}.raw", device_id))
 }
 
-/// Sauvegarde la formule de correction dans la NVS.
+/// Sauvegarde la formule de correction dans le registre (dev_registry). Persist only for dynamic devices.
 pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, formula: &str) -> Result<(), anyhow::Error> {
     let mut storage = nvs.lock().unwrap();
-    let key = format!("corr_{}", device_id);
-    storage.set_str(&key, formula)?;
+    // load existing registry (as PersistEntry map)
+    let mut persist_map: HashMap<String, PersistEntry> = if let Ok(Some(j)) = storage.get_str("dev_registry") {
+        serde_json::from_str(&j).unwrap_or_default()
+    } else { HashMap::new() };
+    persist_map.insert(device_id.to_string(), PersistEntry { name: persist_map.get(device_id).map(|p| p.name.clone()).unwrap_or_else(|| device_id.to_string()), correction_formula: Some(formula.to_string()) });
+    let new_str = serde_json::to_string(&persist_map)?;
+    storage.set_str("dev_registry", &new_str)?;
     Ok(())
 }
 
@@ -152,14 +177,15 @@ impl DeviceRegistry {
         let mut map: HashMap<String, DeviceEntry> = HashMap::new();
         // 1. Static devices — toujours présents, en dur
         for &(id, name) in STATIC_DEVICES {
-            map.insert(id.to_string(), DeviceEntry { name: name.to_string(), is_static: true });
+            map.insert(id.to_string(), DeviceEntry { name: name.to_string(), is_static: true, correction_formula: None });
         }
         // 2. Dynamic devices from NVS
         let storage = self.nvs.lock().unwrap();
         if let Ok(Some(json_str)) = storage.get_str("dev_registry") {
-            if let Ok(saved) = serde_json::from_str::<HashMap<String, DeviceEntry>>(&json_str) {
-                for (id, entry) in saved {
-                    map.entry(id).or_insert(entry);
+            if let Ok(saved) = serde_json::from_str::<HashMap<String, PersistEntry>>(&json_str) {
+                for (id, pe) in saved {
+                    if is_static_device(&id) { continue; }
+                    map.entry(id.clone()).or_insert(DeviceEntry { name: pe.name, is_static: false, correction_formula: pe.correction_formula });
                 }
             }
         }
@@ -168,13 +194,13 @@ impl DeviceRegistry {
 
     /// Save device metadata registry to NVS — filtre les devices statiques (en dur dans le code)
     fn save_registry(&self, map: &HashMap<String, DeviceEntry>) {
-        let dynamic_only: HashMap<String, DeviceEntry> = map
-            .iter()
-            .filter(|(id, _)| !is_static_device(id))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let mut persist_map: HashMap<String, PersistEntry> = HashMap::new();
+        for (k, v) in map.iter() {
+            if is_static_device(k) { continue; }
+            persist_map.insert(k.clone(), PersistEntry { name: v.name.clone(), correction_formula: v.correction_formula.clone() });
+        }
         let mut storage = self.nvs.lock().unwrap();
-        if let Ok(json_str) = serde_json::to_string(&dynamic_only) {
+        if let Ok(json_str) = serde_json::to_string(&persist_map) {
             let _ = storage.set_str("dev_registry", &json_str);
         }
     }
@@ -191,6 +217,7 @@ impl DeviceRegistry {
             updated.insert(id.to_string(), DeviceEntry {
                 name: default_name.to_string(),
                 is_static: true,
+                correction_formula: None,
             });
         }
 
@@ -200,6 +227,7 @@ impl DeviceRegistry {
             let entry = saved.remove("screen").unwrap_or_else(|| DeviceEntry {
                 name: "Écran ST7789".to_string(),
                 is_static: false,
+                correction_formula: None,
             });
             updated.insert("screen".to_string(), entry);
         }
@@ -209,6 +237,7 @@ impl DeviceRegistry {
             let entry = saved.remove("radio").unwrap_or_else(|| DeviceEntry {
                 name: "Transmetteur Radio RF".to_string(),
                 is_static: false,
+                correction_formula: None,
             });
             updated.insert("radio".to_string(), entry);
         }
@@ -219,6 +248,7 @@ impl DeviceRegistry {
             let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
                 name: format!("Sonde 1-Wire ({})", &addr[..6].to_uppercase()),
                 is_static: false,
+                correction_formula: None,
             });
             updated.insert(id, entry);
         }
@@ -232,6 +262,7 @@ impl DeviceRegistry {
                 let entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
                     name: "SHT45-Temp".to_string(),
                     is_static: false,
+                    correction_formula: None,
                 });
                 updated.insert(id_t, entry_t);
 
@@ -239,6 +270,7 @@ impl DeviceRegistry {
                 let entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
                     name: "SHT45-Hum".to_string(),
                     is_static: false,
+                    correction_formula: None,
                 });
                 updated.insert(id_h, entry_h);
             } else if addr == 0x62 {
@@ -246,6 +278,7 @@ impl DeviceRegistry {
                 let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
                     name: "Capteur CO2 SCD41".to_string(),
                     is_static: false,
+                    correction_formula: None,
                 });
                 updated.insert(id, entry);
             } else if addr == 0x76 || addr == 0x77 {
@@ -254,6 +287,7 @@ impl DeviceRegistry {
                 let entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
+                    correction_formula: None,
                 });
                 updated.insert(id_t, entry_t);
 
@@ -261,6 +295,7 @@ impl DeviceRegistry {
                 let entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Hum (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
+                    correction_formula: None,
                 });
                 updated.insert(id_h, entry_h);
 
@@ -268,6 +303,7 @@ impl DeviceRegistry {
                 let entry_p = saved.remove(&id_p).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Pres (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
+                    correction_formula: None,
                 });
                 updated.insert(id_p, entry_p);
             } else {
@@ -275,6 +311,7 @@ impl DeviceRegistry {
                 let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
                     name: format!("Périphérique I2C (Ch{} 0x{:02x})", channel, addr),
                     is_static: false,
+                    correction_formula: None,
                 });
                 updated.insert(id, entry);
             }
@@ -303,14 +340,14 @@ impl DeviceRegistry {
         ds_readings: &HashMap<String, f32>,
         touch_state: bool,
     ) -> Vec<DeviceDisplay> {
-        let registry = &self.devices; // cache mémoire (statiques dur + dynamiques NVS)
+        let registry = self.load_registry(); // construit à partir des statiques + NVS dynamiques
         let mut list = Vec::new();
 
         for (id, entry) in registry.iter() {
             let mut present = true;
             let mut value = "OK".to_string();
             let sensor_meta = get_sensor_meta(id);
-            let correction = get_correction_formula(&self.nvs, id);
+            let correction = entry.correction_formula.clone().unwrap_or_else(|| get_correction_formula(&self.nvs, id));
 
             match id.as_str() {
                 "rla" => {
@@ -445,6 +482,7 @@ impl DeviceRegistry {
                 map.insert(id.to_string(), DeviceEntry {
                     name: name_limit,
                     is_static: false,
+                    correction_formula: None,
                 });
             }
             self.save_registry(&map);
