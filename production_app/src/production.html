@@ -934,11 +934,10 @@
                         <input type="checkbox" id="identify_switch_input" onchange="toggleIdentify()">
                         <span class="slider" id="identify_slider"></span>
                         <!-- Progress ring — remplace .slider:before pendant le décompte -->
-                        <svg id="identify_ring" width="22" height="22" viewBox="0 0 22 22"
-                             style="position: absolute; top: 1px; left: 1px; display: none; transition: transform .3s; pointer-events: none; z-index: 2;">
-                            <circle cx="11" cy="11" r="9" fill="#0b0f19" stroke="#" stroke-width="2"/>
-                            <circle id="identify_ring_progress" cx="11" cy="11" r="9" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-dasharray="56.55" stroke-dashoffset="0" transform="rotate(-90 11 11)"/>
-                            <text id="identify_ring_text" x="11" y="13" text-anchor="middle" fill="#3b82f6" font-size="7" font-weight="700" font-family="monospace"></text>
+
+                        <svg id="identify_ring" width="22" height="22" viewBox="0 0 22 22" style="position: absolute; top: 1px; left: 1px; transition: transform 0.3s; pointer-events: none; z-index: 2; transform: translateX(0px); display: none;">
+                            <circle id="identify_ring_progress" cx="11" cy="11" r="10" fill="#64748b" stroke="#f1f5f9" stroke-width="2" stroke-linecap="round" stroke-dasharray="56.548667764616276" stroke-dashoffset="52.778756580308524" transform="rotate(-90 11 11)"></circle>
+                            <text id="identify_ring_text" x="11" y="14" text-anchor="middle" fill="#f1f5f9" font-size="9" font-weight="700" font-family="monospace">1</text>
                         </svg>
                     </label>
                 </div>
