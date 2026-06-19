@@ -41,7 +41,8 @@ pub struct DeviceDisplay {
     pub id: String,
     pub name: String,
     pub is_static: bool,
-    pub present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub present: Option<bool>,
     pub value: String,
     /// Métadonnées du capteur (incertitude, plage, unité) — None pour les actuateurs
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,6 +50,9 @@ pub struct DeviceDisplay {
     /// Formule de correction stockée en NVS (par défaut "x")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correction_formula: Option<String>,
+    /// Planifications actives (uniquement pour les actionneurs)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
 }
 
 /// Métadonnées techniques d'un capteur (issues des documentations officielles)
@@ -339,6 +343,7 @@ impl DeviceRegistry {
         co2_val: u32,
         ds_readings: &HashMap<String, f32>,
         touch_state: bool,
+        schedules: Option<&HashMap<String, Vec<crate::actuators::ScheduledAction>>>,
     ) -> Vec<DeviceDisplay> {
         let registry = self.load_registry(); // construit à partir des statiques + NVS dynamiques
         let mut list = Vec::new();
@@ -429,14 +434,21 @@ impl DeviceRegistry {
                 _ => {}
             }
 
+            let is_act = matches!(id.as_str(), "rla" | "rlb" | "swpwr" | "ina" | "inb");
+            let dev_schedules = if is_act {
+                schedules.and_then(|s| s.get(id).cloned())
+            } else {
+                None
+            };
             list.push(DeviceDisplay {
                 id: id.to_string(),
                 name: entry.name.clone(),
                 is_static: entry.is_static,
-                present,
+                present: if is_act { None } else { Some(present) },
                 value,
                 sensor_meta,
-                correction_formula: Some(correction),
+                correction_formula: if is_act { None } else { Some(correction) },
+                schedules: dev_schedules,
             });
         }
 

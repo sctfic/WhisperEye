@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.55-0007";
+const FW_VERSION: &str = "1.0.56";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -532,16 +532,20 @@ fn main() -> Result<()> {
         Arc::clone(&mesh_state),
     )?;
 
+    // Shared actuator state and scheduled actions
+    let actuators_state = Arc::new(Mutex::new(actuators::ActuatorsState::default()));
+    let scheduled_actions = Arc::new(Mutex::new(actuators::ScheduledActions::default()));
+
     // Spawn robust periodic task scheduler
     let cron_handle = cron::spawn_cron_scheduler(
         Arc::clone(&nvs_storage),
         Arc::clone(&wifi_manager),
         Arc::clone(&mesh_state),
+        Arc::clone(&actuators_state),
+        Arc::clone(&static_devs),
+        Arc::clone(&scheduled_actions),
     )
     .context("Failed to spawn cron periodic task scheduler")?;
-
-    // Shared actuator state
-    let actuators_state = Arc::new(Mutex::new(ActuatorsState::default()));
 
     // Start HTTP Web Server
     let mut server = EspHttpServer::new(&ServerConfig::default())
@@ -948,6 +952,7 @@ fn main() -> Result<()> {
     let cap_probes = Arc::clone(&discovered_probes);
     let cap_act = Arc::clone(&actuators_state);
     let cap_mesh = Arc::clone(&mesh_state);
+    let cap_sched = Arc::clone(&scheduled_actions);
     server.fn_handler("/api/capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(cap_mesh);
         let (rla, rlb, swpwr, ina, inb) = {
@@ -963,35 +968,44 @@ fn main() -> Result<()> {
         }
 
         let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&cap_nvs));
-        let list = registry.get_devices_display(
-            rla,
-            rlb,
-            swpwr,
-            ina,
-            inb,
-            readings.temperature_sht45,
-            readings.humidity_sht45,
-            readings.co2_scd41,
-            &ds_readings,
-            touch_state,
-        );
+        let list = {
+            let sched_lock = cap_sched.lock().unwrap();
+            registry.get_devices_display(
+                rla,
+                rlb,
+                swpwr,
+                ina,
+                inb,
+                readings.temperature_sht45,
+                readings.humidity_sht45,
+                readings.co2_scd41,
+                &ds_readings,
+                touch_state,
+                Some(&sched_lock.schedules),
+            )
+        };
 
         let mut sensors = Vec::new();
         let mut actuators = Vec::new();
 
         for dev in &list {
-            if !dev.present {
+            if dev.present == Some(false) {
                 continue;
             }
 
             match dev.id.as_str() {
                 // Return only: rla, rlb, ina, inb, swpwr
                 "rla" | "rlb" | "ina" | "inb" | "swpwr" => {
+                    let schedules = {
+                        let sched_lock = cap_sched.lock().unwrap();
+                        sched_lock.schedules.get(&dev.id).cloned().unwrap_or_default()
+                    };
                     actuators.push(serde_json::json!({
                         "Name": dev.id,
                         "description": dev.name,
                         "Type": "tout ou rien",
                         "range": "bool:0 1",
+                        "schedules": schedules,
                     }));
                 }
                 // Allowed Sensors
@@ -1300,6 +1314,7 @@ fn main() -> Result<()> {
     let periphs_act = Arc::clone(&actuators_state);
     let periphs_probes = Arc::clone(&discovered_probes);
     let periphs_mesh = Arc::clone(&mesh_state);
+    let periphs_sched = Arc::clone(&scheduled_actions);
     server.fn_handler("/api/peripherals", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(periphs_mesh);
         let (rla, rlb, swpwr, ina, inb) = {
@@ -1315,18 +1330,22 @@ fn main() -> Result<()> {
         }
 
         let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&periphs_nvs));
-        let list = registry.get_devices_display(
-            rla,
-            rlb,
-            swpwr,
-            ina,
-            inb,
-            readings.temperature_sht45,
-            readings.humidity_sht45,
-            readings.co2_scd41,
-            &ds_readings,
-            touch_state,
-        );
+        let list = {
+            let sched_lock = periphs_sched.lock().unwrap();
+            registry.get_devices_display(
+                rla,
+                rlb,
+                swpwr,
+                ina,
+                inb,
+                readings.temperature_sht45,
+                readings.humidity_sht45,
+                readings.co2_scd41,
+                &ds_readings,
+                touch_state,
+                Some(&sched_lock.schedules),
+            )
+        };
 
         let response_data = serde_json::to_string(&list)?;
         let mut response = req.into_response(200, Some("OK"), &[
@@ -1449,6 +1468,97 @@ fn main() -> Result<()> {
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
         Ok(())
+    })?;
+
+    // POST /api/actuators/control (direct control or scheduling with TOTP validation)
+    #[derive(serde::Deserialize)]
+    struct ActuatorControlPayload {
+        id: String,
+        state: bool,
+        token: String,
+        #[serde(rename = "datetimeUTC")]
+        datetime_utc: Option<String>,
+    }
+    let ctrl_nvs = Arc::clone(&nvs_storage);
+    let ctrl_mesh = Arc::clone(&mesh_state);
+    let ctrl_act = Arc::clone(&actuators_state);
+    let ctrl_devs = Arc::clone(&static_devs);
+    let ctrl_sched = Arc::clone(&scheduled_actions);
+    server.fn_handler("/api/actuators/control", esp_idf_svc::http::Method::Post, move |mut req| -> Result<(), anyhow::Error> {
+        extend_pairing!(ctrl_mesh);
+        let mut buf = vec![0u8; 256];
+        let bytes_read = req.read(&mut buf)?;
+        
+        let payload: ActuatorControlPayload = match serde_json::from_slice(&buf[..bytes_read]) {
+            Ok(p) => p,
+            Err(_) => {
+                let mut response = req.into_status_response(400)?;
+                response.write(b"Format JSON ou payload invalide")?;
+                return Ok(());
+            }
+        };
+
+        // TOTP token validation (if secret exists in NVS)
+        let current_secret = {
+            let storage = ctrl_nvs.lock().unwrap();
+            storage.get_str("totpSecret")?.unwrap_or_default()
+        };
+        if !current_secret.is_empty() {
+            if !current_secret.eq_ignore_ascii_case(&payload.token) {
+                warn!("Control attempt rejected: Invalid TOTP token");
+                let mut response = req.into_status_response(403)?;
+                response.write(b"Non autorise : token TOTP incorrect.")?;
+                return Ok(());
+            }
+        }
+
+        if let Some(ref datetime_utc) = payload.datetime_utc {
+            // Schedule the action
+            let mut scheds = ctrl_sched.lock().unwrap();
+            if let Err(e) = scheds.add_schedule(&payload.id, datetime_utc.clone(), payload.state) {
+                warn!("Failed to add scheduled action for {}: {}", payload.id, e);
+                let mut response = req.into_status_response(400)?;
+                response.write(e.as_bytes())?;
+                return Ok(());
+            }
+            info!("Scheduled action added for {} at {}: state={}", payload.id, datetime_utc, payload.state);
+            let mut response = req.into_ok_response()?;
+            response.write(b"Planification enregistree avec succes.")?;
+            Ok(())
+        } else {
+            // Instant control execution
+            info!("Executing instant control for {}: state={}", payload.id, payload.state);
+            {
+                let mut acts = ctrl_act.lock().unwrap();
+                match payload.id.as_str() {
+                    "rla" => acts.rla = payload.state,
+                    "rlb" => acts.rlb = payload.state,
+                    "swpwr" => acts.swpwr = payload.state,
+                    "ina" => acts.ina = payload.state,
+                    "inb" => acts.inb = payload.state,
+                    _ => {
+                        let mut response = req.into_status_response(400)?;
+                        response.write(b"Identifiant d'actionneur inconnu")?;
+                        return Ok(());
+                    }
+                }
+            }
+            // Apply physically to pins
+            {
+                let mut devs = ctrl_devs.lock().unwrap();
+                match payload.id.as_str() {
+                    "rla" => { let _ = devs.relay_a.set_level(payload.state.into()); }
+                    "rlb" => { let _ = devs.relay_b.set_level(payload.state.into()); }
+                    "swpwr" => { let _ = devs.sw_pwr.set_level(payload.state.into()); }
+                    "ina" => { let _ = devs.ina.set_level(payload.state.into()); }
+                    "inb" => { let _ = devs.inb.set_level(payload.state.into()); }
+                    _ => {}
+                }
+            }
+            let mut response = req.into_ok_response()?;
+            response.write(b"Action executee avec succes.")?;
+            Ok(())
+        }
     })?;
 
     // POST /api/identify — déclenche le clignotement blanc rapide de la LED pendant 15s (non cumulatif)
@@ -2098,6 +2208,9 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
 
 
 

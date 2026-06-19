@@ -29,6 +29,9 @@ pub struct CronWorker {
     wifi: Arc<Mutex<NetManager>>,
     #[allow(dead_code)]
     mesh_state: Arc<Mutex<MeshState>>,
+    actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
+    static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
+    scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
     last_metrics_run: Option<std::time::Instant>,
     last_telemetry_run: Option<std::time::Instant>,
     last_update_check_run: Option<std::time::Instant>,
@@ -40,6 +43,9 @@ impl CronWorker {
         nvs: Arc<Mutex<NvsStorage>>,
         wifi: Arc<Mutex<NetManager>>,
         mesh_state: Arc<Mutex<MeshState>>,
+        actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
+        static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
+        scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
     ) -> Self {
         Self {
             rx,
@@ -47,6 +53,9 @@ impl CronWorker {
             nvs,
             wifi,
             mesh_state,
+            actuators_state,
+            static_devs,
+            scheduled_actions,
             last_metrics_run: None,
             last_telemetry_run: None,
             last_update_check_run: None,
@@ -116,6 +125,51 @@ impl CronWorker {
                     if elapsed_update >= Duration::from_secs(60) {
                         self.last_update_check_run = Some(now_instant);
                         let _ = self.evaluate_need_update_check(false);
+                    }
+
+                    // Task 4: Check and execute scheduled actions
+                    let now_str = crate::get_formatted_time();
+                    if now_str != "1970-01-01T00:00:00Z" { // Only check if NTP is synchronized
+                        let mut scheds = self.scheduled_actions.lock().unwrap();
+                        let mut acts = self.actuators_state.lock().unwrap();
+                        let mut devs = self.static_devs.lock().unwrap();
+                        let mut changed = false;
+
+                        for (id, list) in scheds.schedules.iter_mut() {
+                            while !list.is_empty() && list[0].datetime_utc <= now_str {
+                                let action = list.remove(0);
+                                info!("Executing scheduled action for actuator {}: setting state to {}", id, action.state);
+                                match id.as_str() {
+                                    "rla" => {
+                                        acts.rla = action.state;
+                                        let _ = devs.relay_a.set_level(action.state.into());
+                                    }
+                                    "rlb" => {
+                                        acts.rlb = action.state;
+                                        let _ = devs.relay_b.set_level(action.state.into());
+                                    }
+                                    "swpwr" => {
+                                        acts.swpwr = action.state;
+                                        let _ = devs.sw_pwr.set_level(action.state.into());
+                                    }
+                                    "ina" => {
+                                        acts.ina = action.state;
+                                        let _ = devs.ina.set_level(action.state.into());
+                                    }
+                                    "inb" => {
+                                        acts.inb = action.state;
+                                        let _ = devs.inb.set_level(action.state.into());
+                                    }
+                                    _ => {
+                                        warn!("Unknown actuator id in schedule: {}", id);
+                                    }
+                                }
+                                changed = true;
+                            }
+                        }
+                        if changed {
+                            info!("Actuators state updated from schedules: {:?}", *acts);
+                        }
                     }
                 }
                 CronMessage::ForceCheckUpdate => {
@@ -507,6 +561,9 @@ pub fn spawn_cron_scheduler(
     nvs: Arc<Mutex<NvsStorage>>,
     wifi: Arc<Mutex<NetManager>>,
     mesh_state: Arc<Mutex<MeshState>>,
+    actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
+    static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
+    scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
 ) -> Result<CronHandle> {
     let (tx, rx) = channel();
 
@@ -514,11 +571,22 @@ pub fn spawn_cron_scheduler(
     let worker_nvs = Arc::clone(&nvs);
     let worker_wifi = Arc::clone(&wifi);
     let worker_mesh = Arc::clone(&mesh_state);
+    let worker_act = Arc::clone(&actuators_state);
+    let worker_devs = Arc::clone(&static_devs);
+    let worker_sched = Arc::clone(&scheduled_actions);
     thread::Builder::new()
         .name("cron_worker".to_string())
         .stack_size(32768)
         .spawn(move || {
-            let worker = CronWorker::new(rx, worker_nvs, worker_wifi, worker_mesh);
+            let worker = CronWorker::new(
+                rx,
+                worker_nvs,
+                worker_wifi,
+                worker_mesh,
+                worker_act,
+                worker_devs,
+                worker_sched,
+            );
             worker.run();
         })
         .context("Failed to spawn cron worker thread")?;
