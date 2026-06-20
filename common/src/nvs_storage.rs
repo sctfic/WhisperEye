@@ -221,6 +221,16 @@ impl NvsStorage {
                             val.clone()
                         };
                         info!("  {} : \"{}\"", key, masked);
+                    } else if *key == "wifiKnown" {
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&val) {
+                            if let Ok(pretty) = serde_json::to_string_pretty(&json_val) {
+                                info!("  {} :\n{}", key, pretty);
+                            } else {
+                                info!("  {} : \"{}\"", key, val);
+                            }
+                        } else {
+                            info!("  {} : \"{}\"", key, val);
+                        }
                     } else {
                         info!("  {} : \"{}\"", key, val);
                     }
@@ -241,8 +251,7 @@ impl NvsStorage {
         // Also try to dump device registry and per-device correction formulas if present
         match self.get_str("devicesKnow") {
             Ok(Some(reg_json)) => {
-                info!("  devicesKnow : {}", reg_json);
-                // Try to parse registry and dump any corr_<id> keys
+                // Try to parse registry and dump any corr_<id> keys first
                 if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&reg_json) {
                     for (id, _entry) in map {
                         let corr_key = format!("corr_{}", id);
@@ -252,6 +261,16 @@ impl NvsStorage {
                             Err(e) => info!("  {} : Error({:?})", corr_key, e),
                         }
                     }
+                }
+                // Dump devicesKnow registry JSON in pretty-printed multiline format at the very end
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&reg_json) {
+                    if let Ok(pretty) = serde_json::to_string_pretty(&json_val) {
+                        info!("  devicesKnow :\n{}", pretty);
+                    } else {
+                        info!("  devicesKnow : {}", reg_json);
+                    }
+                } else {
+                    info!("  devicesKnow : {}", reg_json);
                 }
             }
             Ok(None) => info!("  devicesKnow : [not set]"),

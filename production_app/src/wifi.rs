@@ -262,6 +262,10 @@ impl NetManager {
     }
 
     pub fn scan_available_networks(&mut self) -> Result<Vec<(String, i32)>> {
+        if !self.wifi.is_started().unwrap_or(false) {
+            info!("Wi-Fi driver not started. Starting Wi-Fi before scan.");
+            self.wifi.start()?;
+        }
         info!("Performing active Wi-Fi scan");
         let config = ScanConfig {
             ssid: None,
