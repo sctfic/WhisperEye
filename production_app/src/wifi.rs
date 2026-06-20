@@ -220,6 +220,11 @@ impl NetManager {
             } else {
                 AuthMethod::WPA2Personal
             },
+            channel: if ssid == PROVISIONING_SSID {
+                Some(self.provisioning_channel)
+            } else {
+                None
+            },
             pmf_cfg: PmfConfiguration::Capable { required: false },
             ..Default::default()
         };
@@ -530,24 +535,9 @@ fn try_provisioning_peer(
     this: &Arc<Mutex<NetManager>>,
     nvs: &Arc<Mutex<NvsStorage>>,
 ) -> Result<bool> {
-    let visible = {
-        let mut net = this.lock().unwrap();
-        match net.scan_available_networks() {
-            Ok(list) => list.iter().any(|(ssid, _)| ssid == PROVISIONING_SSID),
-            Err(e) => {
-                warn!("Provisioning scan failed: {:?}", e);
-                false
-            }
-        }
-    };
-
-    if !visible {
-        return Ok(false);
-    }
-
     {
         let mut net = this.lock().unwrap();
-        info!("Trying provisioning peer '{}'", PROVISIONING_SSID);
+        info!("Trying provisioning peer '{}' (direct connection on channel {})", PROVISIONING_SSID, net.provisioning_channel);
         if !net.try_sta_connect(PROVISIONING_SSID, "", true, -1)? {
             return Ok(false);
         }

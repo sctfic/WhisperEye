@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.1.1-0005";
+const FW_VERSION: &str = "1.1.2";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -138,7 +138,7 @@ pub(crate) fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::n
         }
     };
 
-    info!("Syncing Wi-Fi credentials from provisioning peer at http://{}/api/network/known?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
+    info!("Syncing Wi-Fi credentials from provisioning peer at http://{}/api/network/knowledge?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
     // Court délai de stabilisation réseau après connexion Wi‑Fi
     thread::sleep(std::time::Duration::from_millis(500));
 
@@ -220,7 +220,7 @@ fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str, my_name: &
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
     let encoded_name = percent_encode(my_name);
-    let url = format!("http://{}/api/network/known?mac={}&ip={}&name={}", gateway_ip, get_mac_address(), my_ip, encoded_name);
+    let url = format!("http://{}/api/network/knowledge?mac={}&ip={}&name={}", gateway_ip, get_mac_address(), my_ip, encoded_name);
     connection.initiate_request(esp_idf_svc::http::Method::Get, &url, &[])?;
     connection.initiate_response()?;
     
@@ -699,10 +699,10 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // GET /api/network/known
+    // GET /api/network/knowledge
     let nvs_sync = Arc::clone(&nvs_storage);
     let mesh_state_sync = Arc::clone(&mesh_state);
-    server.fn_handler("/api/network/known", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.fn_handler("/api/network/knowledge", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let uri = req.uri();
         let mut mac = if let Some(pos) = uri.find("mac=") {
             let raw_mac = &uri[pos + 4..];
@@ -774,7 +774,7 @@ fn main() -> Result<()> {
         });
         
         let response_data = serde_json::to_string(&json)?;
-        info!("Responding to /api/network/known: {}", response_data);
+        info!("Responding to /api/network/knowledge: {}", response_data);
         let mut response = req.into_response(200, Some("OK"), &[
             ("Content-Type", "application/json"),
             ("Access-Control-Allow-Origin", "*")
@@ -2211,6 +2211,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 
