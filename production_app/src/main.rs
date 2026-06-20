@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.1.1-0002";
+const FW_VERSION: &str = "1.1.1-0003";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -240,6 +240,7 @@ fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str, my_name: &
     }
     
     let res: SyncResponse = serde_json::from_slice(&body)?;
+    info!("Mesh sync response from parent: SSID='{}', distance={}, last_seen={:?}", res.wifi_ssid, res.distance, res.last_seen);
     Ok(res)
 }
 
@@ -773,6 +774,7 @@ fn main() -> Result<()> {
         });
         
         let response_data = serde_json::to_string(&json)?;
+        info!("Responding to /api/network/known: {}", response_data);
         let mut response = req.into_response(200, Some("OK"), &[
             ("Content-Type", "application/json"),
             ("Access-Control-Allow-Origin", "*")
@@ -2209,6 +2211,7 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
 
 
 

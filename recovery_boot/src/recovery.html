@@ -1199,7 +1199,7 @@
             const updatesList = document.getElementById('updates_list');
             updatesList.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">' + SPINNER_SVG + 'Recherche de mises à jour en cours...</p>';
 
-            fetch('/api/check_updates')
+            fetch('/api/check_updates?t=' + Date.now())
                 .then(res => {
                     if (!res.ok) throw new Error('HTTP ' + res.status);
                     return res.json();

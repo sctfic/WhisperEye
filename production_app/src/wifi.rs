@@ -100,10 +100,6 @@ impl NetManager {
         })
     }
 
-    pub fn setup_persistent_ap(&mut self, _open_ap: bool, _distance: i32) -> Result<()> {
-        self.setup_provisioning_ap()
-    }
-
     pub fn setup_provisioning_ap(&mut self) -> Result<()> {
         AP_IP_B.store(PROVISIONING_SUBNET, std::sync::atomic::Ordering::SeqCst);
         info!(
@@ -339,7 +335,6 @@ impl NetManager {
             .spawn(move || {
                 info!("Network Controller Thread started (direct Wi-Fi + provisioning mode).");
                 let mut last_wifi_cycle = Instant::now() - WIFI_RETRY_DELAY;
-                let mut last_provisioning_retry = Instant::now() - PROVISIONING_RETRY_DELAY;
 
                 loop {
                     thread::sleep(Duration::from_millis(200));
@@ -425,17 +420,9 @@ impl NetManager {
                         }
 
                         NetState::ProvisioningAp => {
-                            if now.duration_since(last_provisioning_retry) < PROVISIONING_RETRY_DELAY {
-                                continue;
-                            }
-                            last_provisioning_retry = now;
-
-                            if try_provisioning_peer(&this, &nvs).unwrap_or(false) {
-                                let mut net = this.lock().unwrap();
-                                net.state = NetState::WifiPreferred;
-                                net.last_state_change = now;
-                                last_wifi_cycle = now - WIFI_RETRY_DELAY;
-                            }
+                            // En mode Portail Captif permanent, aucun scan d'arrière-plan n'est requis.
+                            // On attend passivement qu'une nouvelle configuration soit injectée par l'API.
+                            continue;
                         }
 
                         NetState::ProvisioningOk => {
