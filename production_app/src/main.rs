@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.56";
+const FW_VERSION: &str = "1.1.1-0002";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -138,7 +138,7 @@ pub(crate) fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::n
         }
     };
 
-    info!("Syncing Wi-Fi credentials from provisioning peer at http://{}/api/mesh/sync?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
+    info!("Syncing Wi-Fi credentials from provisioning peer at http://{}/api/network/known?mac={}&ip={} (My IP: {})", gateway_ip, get_mac_address(), my_ip, my_ip);
     // Court délai de stabilisation réseau après connexion Wi‑Fi
     thread::sleep(std::time::Duration::from_millis(500));
 
@@ -220,7 +220,7 @@ fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str, my_name: &
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
     let encoded_name = percent_encode(my_name);
-    let url = format!("http://{}/api/mesh/sync?mac={}&ip={}&name={}", gateway_ip, get_mac_address(), my_ip, encoded_name);
+    let url = format!("http://{}/api/network/known?mac={}&ip={}&name={}", gateway_ip, get_mac_address(), my_ip, encoded_name);
     connection.initiate_request(esp_idf_svc::http::Method::Get, &url, &[])?;
     connection.initiate_response()?;
     
@@ -458,6 +458,7 @@ fn main() -> Result<()> {
 
     let wifi_manager_boot = Arc::clone(&wifi_manager);
     let mesh_state_boot = Arc::clone(&mesh_state);
+    let nvs_boot = Arc::clone(&nvs_storage);
 
     thread::Builder::new()
         .name("boot_button_worker".to_string())
@@ -478,6 +479,47 @@ fn main() -> Result<()> {
                             }
                             let mut state = mesh_state_boot.lock().unwrap();
                             state.pairing_until = net.pairing_until;
+                        }
+                    } else if pressed_ticks == 40 { // 40 * 100ms = 4 seconds
+                        info!("BOOT button held for 4 seconds! Playing pre-reset red pulses.");
+                        common::led::set_reset_flashing(true);
+
+                        let intensities = [3, 25, 48, 71, 93, 116, 139, 161, 184, 207, 230, 252]; // 12 pas de 1% à 99% de 255
+                        for &intensity in intensities.iter() {
+                            common::led::set_led_color(common::led::RED, intensity);
+                            thread::sleep(std::time::Duration::from_millis(20));
+                            common::led::set_led_color((0, 0, 0), 0);
+                            thread::sleep(std::time::Duration::from_millis(200));
+                        }
+
+                        // Si à la fin des flashs le bouton BOOT est toujours enfoncé
+                        if boot_pin.is_low() {
+                            info!("BOOT button still held after red pulses. Performing factory reset with white fadeout.");
+                            
+                            // Clignotement rapide (10ms ON / 40ms OFF) blanc dégressif de 100% à 0%
+                            let cycles = 25; // 25 cycles * 50ms = 1.25s
+                            for i in 0..cycles {
+                                let intensity = ((255 * (cycles - i)) / cycles) as u8;
+                                common::led::set_led_color(common::led::WHITE, intensity);
+                                thread::sleep(std::time::Duration::from_millis(10));
+                                common::led::set_led_color((0, 0, 0), 0);
+                                thread::sleep(std::time::Duration::from_millis(40));
+                            }
+
+                            // Appliquer le reset d'usine
+                            {
+                                let mut storage = nvs_boot.lock().unwrap();
+                                let _ = perform_factory_reset(&mut storage);
+                            }
+
+                            info!("Factory reset complete! Restarting ESP32...");
+                            unsafe {
+                                esp_idf_sys::esp_restart();
+                            }
+                        } else {
+                            info!("BOOT button released during or after red pulses. Reset aborted.");
+                            common::led::set_reset_flashing(false);
+                            pressed_ticks = 0;
                         }
                     }
                 } else {
@@ -656,10 +698,10 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // GET /api/mesh/sync
+    // GET /api/network/known
     let nvs_sync = Arc::clone(&nvs_storage);
     let mesh_state_sync = Arc::clone(&mesh_state);
-    server.fn_handler("/api/mesh/sync", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.fn_handler("/api/network/known", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let uri = req.uri();
         let mut mac = if let Some(pos) = uri.find("mac=") {
             let raw_mac = &uri[pos + 4..];
@@ -749,9 +791,9 @@ fn main() -> Result<()> {
         let storage = nvs_clone.lock().unwrap();
         let wifi = wifi_clone.lock().unwrap();
         
-        let (m_root, m_distance, m_nodes_count, pairing_seconds_remaining, m_children) = {
+        let pairing_remaining = {
             let state = mesh_state_clone.lock().unwrap();
-            let rem = if let Some(until) = state.pairing_until {
+            if let Some(until) = state.pairing_until {
                 let now = std::time::Instant::now();
                 if now < until {
                     (until - now).as_secs() as i64
@@ -760,35 +802,7 @@ fn main() -> Result<()> {
                 }
             } else {
                 0
-            };
-            // Expiration : 120s sans sync → nœud considéré déconnecté
-            let expire_after = std::time::Duration::from_secs(120);
-            let now = std::time::SystemTime::now();
-            let active_nodes: Vec<(String, std::time::SystemTime)> = state.nodes.iter()
-                .filter(|(_, t)| now.duration_since(**t).unwrap_or_default() < expire_after)
-                .map(|(mac, t)| (mac.clone(), *t))
-                .collect();
-            let active_ips: Vec<serde_json::Value> = active_nodes.iter()
-                .filter_map(|(mac, _)| {
-                    let ip = state.ip_addresses.get(mac);
-                    let name = state.node_names.get(mac);
-                    ip.map(|ip| {
-                        let mut obj = serde_json::json!({"mac": mac, "ip": ip});
-                        if let Some(n) = name {
-                            obj["name"] = serde_json::json!(n);
-                        }
-                        obj
-                    })
-                })
-                .collect();
-            (state.is_root, state.distance, active_nodes.len(), rem, active_ips)
-        };
-        let (m_channel, m_id, m_pmk, m_ssid) = {
-            let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
-            let id = storage.get_str("meshId")?.unwrap_or_default();
-            let pmk = storage.get_str("meshPmk")?.unwrap_or_default();
-            let ssid = storage.get_str("meshSsid")?.unwrap_or_default();
-            (channel, id, pmk, ssid)
+            }
         };
 
         let (active_mode, wifi_ssid) = match wifi.wifi.get_configuration() {
@@ -810,24 +824,14 @@ fn main() -> Result<()> {
         let ap_ip_info = wifi.wifi.wifi().ap_netif().get_ip_info().ok();
 
         // 1. Wi-Fi (Box Connection)
-        let (wifi_ip, wifi_gateway, wifi_cidr) = if m_root {
-            if let Some(info) = sta_ip_info {
-                (info.ip.to_string(), info.subnet.gateway.to_string(), info.subnet.mask.0)
-            } else {
-                ("0.0.0.0".to_string(), "0.0.0.0".to_string(), 0)
-            }
+        let (wifi_ip, wifi_gateway, wifi_cidr) = if let Some(info) = sta_ip_info {
+            (info.ip.to_string(), info.subnet.gateway.to_string(), info.subnet.mask.0)
         } else {
-            ("".to_string(), "".to_string(), 0)
+            ("0.0.0.0".to_string(), "0.0.0.0".to_string(), 0)
         };
 
-        // 2. Mesh Connection
-        let mesh_ip = if let Some(info) = sta_ip_info {
-            info.ip.to_string()
-        } else {
-            "0.0.0.0".to_string()
-        };
-
-        let mesh_ap_ip = if let Some(info) = ap_ip_info {
+        // 2. AP Connection (Captive Portal)
+        let ap_ip = if let Some(info) = ap_ip_info {
             format!("{}/24", info.ip)
         } else {
             let subnet = wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
@@ -848,7 +852,7 @@ fn main() -> Result<()> {
         let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
         let last_ota_dl = storage.get_str("lastOtaDl")?.unwrap_or_default();
         let last_ota_write = storage.get_str("lastOtaWrite")?.unwrap_or_default();
-        let update_url = storage.get_str("updateAvailable")?.unwrap_or_default();
+        let update_url = storage.get_str("updateRepoList")?.unwrap_or_default();
         let update_url_valid_val = if update_url.is_empty() {
             serde_json::Value::Null
         } else {
@@ -878,7 +882,7 @@ fn main() -> Result<()> {
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
         let wifi_known = storage.get_known_networks().unwrap_or_default();
         let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1) == 1;
-        let rename_enabled = storage.get_i32("renameEnabled")?.unwrap_or(1) == 1;
+        let rename_enabled = storage.get_i32("deviceRenamable")?.unwrap_or(1) == 1;
         let totp_secret = storage.get_str("totpSecret")?.unwrap_or_default();
         let has_totp = !totp_secret.is_empty();
         let partial_totp = if totp_secret.len() >= 12 {
@@ -902,8 +906,7 @@ fn main() -> Result<()> {
             "wifi_ip": wifi_ip,
             "wifi_gateway": wifi_gateway,
             "wifi_cidr": wifi_cidr,
-            "mesh_ip": mesh_ip,
-            "mesh_ap_ip": mesh_ap_ip,
+            "ap_ip": ap_ip,
             "sys_time": now_str,
             "ntp_server": ntp_server,
             "metrics_url": metrics_url,
@@ -915,7 +918,6 @@ fn main() -> Result<()> {
             "update_url_valid": update_url_valid_val,
             "update_interval": update_interval,
             "whispereye_board": WHISPEREYE_BOARD,
-            "board_type": WHISPEREYE_BOARD,
             "chip_type": CHIP_TYPE,
             "wifi_known": wifi_known,
             "auto_update": auto_update,
@@ -924,16 +926,7 @@ fn main() -> Result<()> {
             "partial_totp": partial_totp,
             "ext_name": ext_name,
             "ext_desc": ext_desc,
-            "mesh_enabled": true,
-            "mesh_root": m_root,
-            "mesh_distance": m_distance,
-            "mesh_nodes_count": m_nodes_count,
-            "mesh_children": m_children,
-            "mesh_channel": m_channel,
-            "mesh_id": m_id,
-            "mesh_pmk": m_pmk,
-            "mesh_ssid": m_ssid,
-            "pairing_seconds_remaining": pairing_seconds_remaining,
+            "pairing_remaining": pairing_remaining,
             "identify_remaining_secs": common::led::identify_remaining_secs(),
             "author": {
                 "email": AUTHOR_EMAIL,
@@ -1164,7 +1157,7 @@ fn main() -> Result<()> {
                 format!("WE-{}", &clean[8..12])
             });
             let desc = storage.get_str("extDesc")?.unwrap_or_else(|| "WhisperEye Extender".to_string());
-            let rename_enabled = storage.get_i32("renameEnabled")?.unwrap_or(1) == 1;
+            let rename_enabled = storage.get_i32("deviceRenamable")?.unwrap_or(1) == 1;
             (m, name, desc, rename_enabled)
         };
 
@@ -1186,7 +1179,7 @@ fn main() -> Result<()> {
         response.write(response_data.as_bytes())?;
         Ok(())
     })?;
-    // GET /api/check_updates (proxies firmware.json from updateAvailable NVS key to bypass CORS!)
+    // GET /api/check_updates (proxies firmware.json from updateRepoList NVS key to bypass CORS!)
     let nvs_updates_clone = Arc::clone(&nvs_storage);
     let updates_mesh = Arc::clone(&mesh_state);
     let updates_url_state = Arc::clone(&url_validation_state);
@@ -1206,7 +1199,7 @@ fn main() -> Result<()> {
             query_url
         } else {
             let storage = nvs_updates_clone.lock().unwrap();
-            storage.get_str("updateAvailable")?.unwrap_or_default()
+            storage.get_str("updateRepoList")?.unwrap_or_default()
         };
 
         if update_url.is_empty() {
@@ -1664,6 +1657,16 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
+pub fn perform_factory_reset(storage: &mut common::nvs_storage::NvsStorage) -> Result<(), anyhow::Error> {
+    info!("Factory reset triggered: removing TOTP secret, clearing Wi-Fi config, metricsUrl, autoUpdate, and deviceRenamable");
+    let _ = storage.remove_key("totpSecret");
+    let _ = storage.set_str("wifiKnown", "{}");
+    let _ = storage.remove_key("metricsUrl");
+    let _ = storage.set_i32("autoUpdate", 0);
+    let _ = storage.set_i32("deviceRenamable", 0);
+    Ok(())
+}
+
     // POST /api/reset
     let nvs_reset = Arc::clone(&nvs_storage);
     let reset_mesh = Arc::clone(&mesh_state);
@@ -1694,9 +1697,7 @@ fn main() -> Result<()> {
         
         {
             let mut storage = nvs_reset.lock().unwrap();
-            info!("Factory reset triggered: removing TOTP secret and clearing Wi-Fi config");
-            storage.remove_key("totpSecret")?;
-            storage.set_str("wifiKnown", "{}")?;
+            perform_factory_reset(&mut storage)?;
         }
         
         let mut response = req.into_ok_response()?;
@@ -1716,10 +1717,10 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // POST /api/mesh/pair (legacy URL): enable provisioning captive portal for 120 seconds.
+    // POST /api/network/ApPairing (legacy URL): enable provisioning captive portal for 120 seconds.
     let wifi_pair = Arc::clone(&wifi_manager);
     let mesh_state_pair = Arc::clone(&mesh_state);
-    server.fn_handler("/api/mesh/pair", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.fn_handler("/api/network/ApPairing", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         info!("Enabling provisioning pairing mode for 120 seconds...");
         {
             let mut net = wifi_pair.lock().unwrap();
@@ -1825,8 +1826,8 @@ fn main() -> Result<()> {
                 }
                 if let Some(rename_en) = payload.rename_enabled {
                     let new_val = if rename_en { 1 } else { 0 };
-                    info!("Saving renameEnabled to NVS: {}", new_val);
-                    storage.set_i32("renameEnabled", new_val)?;
+                    info!("Saving deviceRenamable to NVS: {}", new_val);
+                    storage.set_i32("deviceRenamable", new_val)?;
                 }
 
                 // mesh_channel is no longer a user choice, aligned automatically on active wifiChannel.
@@ -1905,7 +1906,7 @@ fn main() -> Result<()> {
             let mut storage = nvs_clone.lock().unwrap();
             
             if let Some(ref update_url) = payload.update_url {
-                let current_url = storage.get_str("updateAvailable")?.unwrap_or_default();
+                let current_url = storage.get_str("updateRepoList")?.unwrap_or_default();
                 if update_url != &current_url {
                     let mut state_lock = config_url_state.lock().unwrap();
                     *state_lock = UrlValidationState::NotChecked;
@@ -1923,7 +1924,7 @@ fn main() -> Result<()> {
                     storage.set_str("updateDlUrl", update_url)?;
                     storage.set_i32("otaRetry", 3)?;
                 } else {
-                    storage.set_str("updateAvailable", update_url)?;
+                    storage.set_str("updateRepoList", update_url)?;
                 }
                 storage.set_str("updateInterval", "7j")?;
             }
@@ -1956,7 +1957,7 @@ fn main() -> Result<()> {
                 if update_url.is_empty() {
                     false
                 } else {
-                    let current_url = storage.get_str("updateAvailable")?.unwrap_or_default();
+                    let current_url = storage.get_str("updateRepoList")?.unwrap_or_default();
                     let is_bin = update_url.ends_with(".bin");
                     is_bin || update_url != &current_url
                 }
@@ -2208,6 +2209,10 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+
+
+
 
 
 

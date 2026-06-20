@@ -5,6 +5,7 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::config::{ScanConfig, ScanType};
 use esp_idf_svc::wifi::{
     AccessPointConfiguration, AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi,
+    PmfConfiguration,
 };
 use log::{error, info, warn};
 use std::collections::{HashMap, HashSet};
@@ -223,6 +224,7 @@ impl NetManager {
             } else {
                 AuthMethod::WPA2Personal
             },
+            pmf_cfg: PmfConfiguration::Capable { required: false },
             ..Default::default()
         };
 

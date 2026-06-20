@@ -272,8 +272,9 @@
             transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
             padding: 0 0.8rem;
             border-top: 1px solid var(--border-color);
-            background: rgba(0,0,0,0.15);
+            background: rgba(0, 0, 0, 0.15);
         }
+
         .sensor-detail.open {
             max-height: 500px;
             opacity: 1;
@@ -689,35 +690,66 @@
         <!-- TAB 1: DEVICES & ACTUATORS -->
         <div id="devices-tab" class="tab-content active">
             <!-- Section Capteurs -->
-            <h3 style="margin-bottom: 0.5rem; font-size: 1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
+            <h3
+                style="margin: 2rem 1rem 1rem 1rem; font-size: 1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
                 Capteurs
             </h3>
             <div id="sensors_list" style="display: flex; flex-direction: column; gap: 0.25rem;">
                 <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des capteurs...</p>
             </div>
             <!-- Ligne dépliable Push -->
-            <div class="sensor-row" style="border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 0.4rem; overflow: hidden;">
-                <div class="sensor-header" onclick="toggleSensorDetail('push')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
+            <div class="sensor-row"
+                style="border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 0.4rem; overflow: hidden;">
+                <div class="sensor-header" onclick="toggleSensorDetail('push')"
+                    style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
                     <div style="flex: 1; min-width: 0;">
-                        <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">Push</div>
-                        <div style="font-size: 0.7rem; color: var(--text-secondary); font-family: monospace;">metricsUrl</div>
+                        <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path
+                                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z">
+                                </path>
+                            </svg>
+                            Push Data
+                        </div>
+                        <div style="font-size: 0.7rem; color: var(--text-secondary); font-family: monospace;">metricsUrl
+                        </div>
                     </div>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span id="push_status_value" style="font-weight: 700; color: var(--text-secondary); font-size: 1rem;">Inactif</span>
+                        <span id="push_status_value"
+                            style="font-weight: 700; color: var(--text-secondary); font-size: 1rem;">Inactif</span>
                         <span id="push_status_badge"></span>
-                        <svg class="sensor-chevron" id="chevron_push" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg class="sensor-chevron" id="chevron_push" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
                     </div>
                 </div>
                 <div id="detail_push" class="sensor-detail">
                     <div class="info-group" style="border-bottom: none; flex-direction: column; align-items: stretch;">
-                        <span class="info-label" style="font-size: 0.85rem; color: var(--text-secondary);">URL de dépôt automatique des métriques (PUT)</span>
-                        <div style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.2rem; flex-wrap: wrap;">
-                            <span id="metrics_url_display" style="cursor: pointer; font-family: monospace; font-size: 0.85rem; word-break: break-all; color: var(--text-primary);" onclick="startEditingMetricsUrl()">Non configuré</span>
-                            <button id="metrics_url_edit_btn" onclick="startEditingMetricsUrl()" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0; flex-shrink: 0;" title="Modifier l'URL de dépôt des métriques">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        <span class="info-label" style="font-size: 0.85rem; color: var(--text-secondary);">URL de dépôt
+                            automatique des métriques (PUT)</span>
+                        <div
+                            style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.2rem; flex-wrap: wrap;">
+                            <span id="metrics_url_display"
+                                style="cursor: pointer; font-family: monospace; font-size: 0.85rem; word-break: break-all; color: var(--text-primary);"
+                                onclick="startEditingMetricsUrl()">Non configuré</span>
+                            <button id="metrics_url_edit_btn" onclick="startEditingMetricsUrl()"
+                                style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0; flex-shrink: 0;"
+                                title="Modifier l'URL de dépôt des métriques">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                    <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
                             </button>
-                            <span id="metrics_url_input_container" style="display: none; align-items: center; gap: 0.25rem; flex: 1; min-width: 200px;">
-                                <input type="text" id="metrics_url_input" placeholder="http://mon-serveur:8080/api/metrics" style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 100%; font-family: monospace;"
+                            <span id="metrics_url_input_container"
+                                style="display: none; align-items: center; gap: 0.25rem; flex: 1; min-width: 200px;">
+                                <input type="text" id="metrics_url_input"
+                                    placeholder="http://mon-serveur:8080/api/metrics"
+                                    style="padding: 0.15rem 0.3rem; font-size: 0.8rem; width: 100%; font-family: monospace;"
                                     onblur="handleBlurMetricsUrl()" onkeydown="handleKeyDownMetricsUrl(event)">
                             </span>
                         </div>
@@ -728,9 +760,9 @@
                 </div>
             </div>
             <!-- Section Actuateurs -->
-            <h3 style="margin-bottom: 0.5rem; font-size: 1rem; border-left: 3px solid var(--warning); padding-left: 0.5rem;">
-                Actionneurs
-            </h3>
+            <h3
+                style="margin: 2rem 1rem 1rem 1rem; font-size: 1rem; border-left: 3px solid var(--warning); padding-left: 0.5rem;">
+                Actionneurs</h3>
             <div id="devices_list" style="display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1.5rem;">
                 <p style="color: var(--text-secondary); font-size: 0.9rem;">Chargement des actionneurs...</p>
             </div>
@@ -762,11 +794,15 @@
                 <span class="info-value" id="sys_time">1970-01-01 00:00:00</span>
             </div>
 
-            <!-- Section 2: Réseau Wi-Fi -->
+            <!-- Section 2: Réseau -->
             <h3
                 style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
-                Réseau Wi-Fi
+                Réseau
             </h3>
+            <div class="info-group">
+                <span class="info-label">Mode Réseau</span>
+                <span class="info-value"><span id="network_mode" class="badge badge-green">Station</span></span>
+            </div>
             <div class="info-group">
                 <span class="info-label">SSID Wi-Fi</span>
                 <span class="info-value" id="wifi_ssid">Chargement...</span>
@@ -776,55 +812,16 @@
                 <span class="info-value" id="wifi_rssi_container"><span id="wifi_rssi">- dBm</span></span>
             </div>
             <div class="info-group">
-                <span class="info-label">Adresse IP Wi-Fi</span>
+                <span class="info-label">Adresse IP Wi-Fi (Station)</span>
                 <span class="info-value" id="wifi_ip">--</span>
             </div>
             <div class="info-group">
                 <span class="info-label">Passerelle Wi-Fi (CIDR)</span>
                 <span class="info-value" id="wifi_gateway_cidr">--</span>
             </div>
-
-            <!-- Section 3: Réseau Mesh -->
-            <h3
-                style="margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.1rem; border-left: 3px solid var(--accent-color); padding-left: 0.5rem;">
-                Réseau Mesh
-            </h3>
             <div class="info-group">
-                <span class="info-label">Mode Réseau</span>
-                <span class="info-value"><span id="network_mode" class="badge badge-green">Station</span></span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Rôle dans le maillage</span>
-                <span class="info-value" id="mesh_role">--</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Distance Racine</span>
-                <span class="info-value" id="mesh_distance">--</span>
-            </div>
-            <div class="info-group" style="position: relative; flex-direction: column; align-items: stretch;">
-                <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;" onclick="toggleMeshChildren()" title="Cliquer pour voir la liste des nœuds enfants">
-                    <span class="info-label" style="flex: 1;">Nœuds connectés</span>
-                    <span class="info-value" id="mesh_nodes_count">
-                        -- <svg id="mesh_burger_icon" width="14" height="14" viewBox="0 0 16 16" style="vertical-align: middle; margin-left: 4px; opacity: 0.6; transition: transform 0.2s;"><rect y="2" width="16" height="2" rx="1" fill="currentColor"/><rect y="7" width="16" height="2" rx="1" fill="currentColor"/><rect y="12" width="16" height="2" rx="1" fill="currentColor"/></svg>
-                    </span>
-                </div>
-                <div id="mesh_children_list" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: rgba(0,0,0,0.3); border-radius: 6px; font-size: 0.8rem; max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color);">
-                    <div style="color: var(--text-secondary); font-style: italic;">Aucun nœud enfant</div>
-                </div>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Adresse IP (STA side) </span>
-                <span class="info-value" id="mesh_ip">--</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">AccessPoint Mesh (AP side)</span>
-                <span class="info-value" id="mesh_ap_ip">--</span>
-            </div>
-            <div class="info-group">
-                <span class="info-label">Mode Appairage (press BOOT 2sec)</span>
-                <span class="info-value" id="mesh_pairing">
-                    <span id="mesh_pairing_badge" class="badge badge-error">Inactif</span>
-                </span>
+                <span class="info-label">IP Point d'Accès (Portail Captif)</span>
+                <span class="info-value" id="ap_ip">--</span>
             </div>
 
             <!-- Section 4: Variables de Configuration (NVS) -->
@@ -939,7 +936,8 @@
                 <div
                     style="display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid rgba(30, 41, 59, 0.6);">
                     <div style="flex: 1; min-width: 0;">
-                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Mode AccessPoint (wifi direct)</span>
+                        <span style="font-size: 0.95rem; color: var(--text-primary); font-weight: 500;">Mode AccessPoint
+                            (wifi direct)</span>
                         <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">
                             Active le mode appairage pendant 120s. Appuyer 2s sur BOOT fait la même chose.
                         </div>
@@ -967,9 +965,13 @@
                         <span class="slider" id="identify_slider"></span>
                         <!-- Progress ring — remplace .slider:before pendant le décompte -->
 
-                        <svg id="identify_ring" width="22" height="22" viewBox="0 0 22 22" style="position: absolute; top: 1px; left: 1px; transition: transform 0.3s; pointer-events: none; z-index: 2; transform: translateX(0px); display: none;">
-                            <circle id="identify_ring_progress" cx="11" cy="11" r="10" fill="#64748b" stroke="#f1f5f9" stroke-width="2" stroke-linecap="round" stroke-dasharray="56.548667764616276" stroke-dashoffset="52.778756580308524" transform="rotate(-90 11 11)"></circle>
-                            <text id="identify_ring_text" x="11" y="14" text-anchor="middle" fill="#f1f5f9" font-size="9" font-weight="700" font-family="monospace">1</text>
+                        <svg id="identify_ring" width="22" height="22" viewBox="0 0 22 22"
+                            style="position: absolute; top: 1px; left: 1px; transition: transform 0.3s; pointer-events: none; z-index: 2; transform: translateX(0px); display: none;">
+                            <circle id="identify_ring_progress" cx="11" cy="11" r="10" fill="#64748b" stroke="#f1f5f9"
+                                stroke-width="2" stroke-linecap="round" stroke-dasharray="56.548667764616276"
+                                stroke-dashoffset="52.778756580308524" transform="rotate(-90 11 11)"></circle>
+                            <text id="identify_ring_text" x="11" y="14" text-anchor="middle" fill="#f1f5f9"
+                                font-size="9" font-weight="700" font-family="monospace">1</text>
                         </svg>
                     </label>
                 </div>
@@ -1147,7 +1149,7 @@
     </footer>
 
     <script>
-        window.renameEnabled = true;
+        window.deviceRenamable = true;
         const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
 
         function truncateCenter(str, maxLen = 64) {
@@ -1285,17 +1287,7 @@
             customGroup.style.display = select.value === 'custom' ? 'block' : 'none';
         }
 
-        function toggleMeshChildren() {
-            const list = document.getElementById('mesh_children_list');
-            const icon = document.getElementById('mesh_burger_icon');
-            if (list) {
-                const isOpen = (list.style.display === 'block');
-                list.style.display = isOpen ? 'none' : 'block';
-                if (icon) {
-                    icon.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
-                }
-            }
-        }
+
 
         function showMessage(elementId, html, type) {
             const el = document.getElementById(elementId);
@@ -1327,7 +1319,7 @@
             if (!confirm("Voulez-vous vraiment activer le mode d'appairage mesh pendant 120 secondes ?")) {
                 return;
             }
-            fetch('/api/mesh/pair', { method: 'POST' })
+            fetch('/api/network/ApPairing', { method: 'POST' })
                 .then(res => {
                     if (res.ok) {
                         fetchStatus();
@@ -1360,7 +1352,7 @@
                         repoUrlDisp.innerText = rawUrl === 'Non configuré' ? rawUrl : truncateCenter(rawUrl, 64);
                     }
 
-        // Retirer status_metrics_url — plus affiché
+                    // Retirer status_metrics_url — plus affiché
 
                     // Populate metrics_url editable field
                     const metricsUrlDisp = document.getElementById('metrics_url_display');
@@ -1385,19 +1377,19 @@
                         pushStatusBadge.innerHTML = getStatusSvg(isPushActive ? 'green' : 'red');
                     }
 
-                    // Update renameEnabled state
-                    const oldRenameEnabled = window.renameEnabled;
-                    window.renameEnabled = data.rename_enabled !== undefined ? data.rename_enabled : true;
-                    if (oldRenameEnabled !== window.renameEnabled) {
+                    // Update deviceRenamable state
+                    const oldRenameEnabled = window.deviceRenamable;
+                    window.deviceRenamable = data.rename_enabled !== undefined ? data.rename_enabled : true;
+                    if (oldRenameEnabled !== window.deviceRenamable) {
                         fetchDevices();
                     }
                     const renameToggle = document.getElementById('rename_enabled_toggle');
                     if (renameToggle) {
-                        renameToggle.checked = window.renameEnabled;
+                        renameToggle.checked = window.deviceRenamable;
                     }
                     const statusRenameEl = document.getElementById('status_rename_enabled');
                     if (statusRenameEl) {
-                        if (window.renameEnabled) {
+                        if (window.deviceRenamable) {
                             statusRenameEl.innerHTML = '<span class="badge badge-green">Autorisé</span>';
                         } else {
                             statusRenameEl.innerHTML = '<span class="badge badge-warn">Verrouillé</span>';
@@ -1428,11 +1420,11 @@
 
                     const hNameDisp = document.getElementById('header_ext_name_display');
                     if (hNameDisp) {
-                        hNameDisp.style.cursor = window.renameEnabled ? 'pointer' : 'default';
+                        hNameDisp.style.cursor = window.deviceRenamable ? 'pointer' : 'default';
                     }
                     const hNameEditBtn = document.getElementById('header_ext_name_edit_btn');
                     if (hNameEditBtn) {
-                        hNameEditBtn.style.display = window.renameEnabled ? 'flex' : 'none';
+                        hNameEditBtn.style.display = window.deviceRenamable ? 'flex' : 'none';
                     }
 
                     // Dynamic system status calculation
@@ -1560,50 +1552,6 @@
                         }
                     }
 
-                    if (data.mesh_root !== undefined) {
-                        const mRoleEl = document.getElementById('mesh_role');
-                        if (mRoleEl) {
-                            mRoleEl.innerHTML = data.mesh_root ? '<span class="badge badge-green">Nœud Racine (Root)</span>' : '<span class="badge badge-blue">Nœud Enfant (Node)</span>';
-                        }
-                    }
-
-                    if (data.mesh_distance !== undefined) {
-                        const mDistanceEl = document.getElementById('mesh_distance');
-                        if (mDistanceEl) {
-                            if (data.mesh_distance === -1) {
-                                mDistanceEl.innerHTML = 'Déconnecté / En attente' + getStatusSvg('yellow');
-                            } else {
-                                mDistanceEl.innerText = `${data.mesh_distance} bond(s)`;
-                            }
-                        }
-                    }
-
-                    if (data.mesh_nodes_count !== undefined) {
-                        const mNodesEl = document.getElementById('mesh_nodes_count');
-                        if (mNodesEl) {
-                            mNodesEl.innerHTML = data.mesh_nodes_count + ' <svg id="mesh_burger_icon" width="14" height="14" viewBox="0 0 16 16" style="vertical-align: middle; margin-left: 4px; opacity: 0.6; transition: transform 0.2s;"><rect y="2" width="16" height="2" rx="1" fill="currentColor"/><rect y="7" width="16" height="2" rx="1" fill="currentColor"/><rect y="12" width="16" height="2" rx="1" fill="currentColor"/></svg>';
-                        }
-                        // Mettre à jour la liste des enfants
-                        const childrenList = document.getElementById('mesh_children_list');
-                        if (childrenList && data.mesh_children !== undefined) {
-                            if (data.mesh_children.length === 0) {
-                                childrenList.innerHTML = '<div style="color: var(--text-secondary); font-style: italic; padding: 4px 0;">Aucun nœud enfant</div>';
-                            } else {
-                                let html = '';
-                                for (const child of data.mesh_children) {
-                                    html += `<div style="padding: 6px 4px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color);">
-                                        <div style="min-width: 0; flex: 1;">
-                                            <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${child.name || '(inconnu)'}</div>
-                                            <div style="font-family: monospace; font-size: 0.7rem; color: var(--text-secondary); margin-top: 1px;">${child.mac}</div>
-                                        </div>
-                                        <a href="/proxy?mac=${child.mac}" target="_blank" rel="noopener" style="color: var(--accent-color); font-family: monospace; font-weight: 600; text-decoration: none; padding: 2px 6px; border-radius: 4px; background: rgba(16,185,129,0.1); transition: background 0.2s; flex-shrink: 0;" onmouseover="this.style.background='rgba(16,185,129,0.25)'" onmouseout="this.style.background='rgba(16,185,129,0.1)'" title="Ouvrir ${child.name || child.ip}">${child.ip} ↗</a>
-                                    </div>`;
-                                }
-                                childrenList.innerHTML = html;
-                            }
-                        }
-                    }
-
                     // Alimentation IP Wi-Fi
                     const wifiIpEl = document.getElementById('wifi_ip');
                     if (wifiIpEl) {
@@ -1624,29 +1572,18 @@
                         }
                     }
 
-                    // Alimentation IP Mesh (AP et STA)
-                    const mApIpEl = document.getElementById('mesh_ap_ip');
-                    if (mApIpEl) {
-                        if (data.mesh_ap_ip) {
-                            mApIpEl.innerHTML = data.mesh_ap_ip + getStatusSvg('green');
+                    // Alimentation IP Point d'Accès
+                    const apIpEl = document.getElementById('ap_ip');
+                    if (apIpEl) {
+                        if (data.ap_ip) {
+                            apIpEl.innerHTML = data.ap_ip + getStatusSvg('green');
                         } else {
-                            mApIpEl.innerHTML = '--';
+                            apIpEl.innerHTML = '--';
                         }
                     }
-
-                    const mIpEl = document.getElementById('mesh_ip');
-                    if (mIpEl) {
-                        if (data.mesh_ip && data.mesh_ip !== '0.0.0.0' && data.mesh_ip !== '') {
-                            mIpEl.innerHTML = data.mesh_ip + getStatusSvg('green');
-                        } else {
-                            mIpEl.innerHTML = '--';
-                        }
-                    }
-
-
 
                     // Pairing mode countdown
-                    pairingSecondsRemaining = data.pairing_seconds_remaining || 0;
+                    pairingSecondsRemaining = data.pairing_remaining || 0;
                     const pairingBadge = document.getElementById('mesh_pairing_badge');
                     const pairBtn = document.getElementById('btn_pair_mesh');
                     const pairingBadgeAdv = document.getElementById('mesh_pairing_badge_adv');
@@ -1818,14 +1755,14 @@
                                     <div class="sensor-header" onclick="toggleSensorDetail('${dev.id}')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
                                         <div style="flex: 1; min-width: 0;" onclick="event.stopPropagation()">
                                             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-                                                <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary); cursor: ${window.renameEnabled ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
+                                                <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary); cursor: ${window.deviceRenamable ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
                                                 <span id="edit_input_container_${dev.id}" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
                                                     <input type="text" id="input_${dev.id}" maxlength="64" value="${dev.name}" 
                                                         style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;"
                                                         onblur="handleBlur('${dev.id}')"
                                                         onkeydown="handleKeyDown(event, '${dev.id}')">
                                                 </span>
-                                                ${window.renameEnabled ? `<button id="edit_btn_${dev.id}" onclick="startEditing('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                                ${window.deviceRenamable ? `<button id="edit_btn_${dev.id}" onclick="startEditing('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
                                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                                 </button>` : ''}
                                             </div>
@@ -1853,7 +1790,7 @@
 
                     // ── Capteurs (affichés en 1er dans l'onglet Devices) ──
                     const sensContainer = document.getElementById('sensors_list');
-                    if (sensContainer) {
+                    if (sensContainer && editingDeviceId === null) {
                         let html = '';
                         if (sensors.length === 0) {
                             html = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Aucun capteur détecté.</p>';
@@ -1865,9 +1802,20 @@
                                 html += `
                                 <div class="sensor-row" style="border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 0.4rem; overflow: hidden;">
                                     <div class="sensor-header" onclick="toggleSensorDetail('${sensorId}')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
-                                        <div style="flex: 1; min-width: 0;">
-                                            <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">${dev.name}</div>
-                                            <div style="font-size: 0.7rem; color: var(--text-secondary); font-family: monospace;">${dev.id}</div>
+                                        <div style="flex: 1; min-width: 0;" onclick="event.stopPropagation()">
+                                            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                                                <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary); cursor: ${window.deviceRenamable ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
+                                                <span id="edit_input_container_${dev.id}" style="display: none; align-items: center; gap: 0.25rem; width: 100%;">
+                                                    <input type="text" id="input_${dev.id}" maxlength="64" value="${dev.name}" 
+                                                        style="padding: 0.25rem 0.5rem; font-size: 0.9rem; flex: 1; min-width: 100px;"
+                                                        onblur="handleBlur('${dev.id}')"
+                                                        onkeydown="handleKeyDown(event, '${dev.id}')">
+                                                </span>
+                                                ${window.deviceRenamable ? `<button id="edit_btn_${dev.id}" onclick="startEditing('${dev.id}')" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 0.2rem;" title="Renommer">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                                </button>` : ''}
+                                            </div>
+                                            <div style="font-size: 0.7rem; color: var(--text-secondary); font-family: monospace; margin-top: 0.15rem;">${dev.id}</div>
                                         </div>
                                         <div style="display: flex; align-items: center; gap: 0.5rem;">
                                             <span style="font-weight: 700; color: var(--accent-color); font-size: 1rem;">${dev.value}</span>
@@ -1912,7 +1860,7 @@
         }
 
         function startEditing(id) {
-            if (!window.renameEnabled) {
+            if (!window.deviceRenamable) {
                 return;
             }
             const dev = (window.currentDevices || []).find(d => d.id === id);
@@ -2008,7 +1956,7 @@
         let editingExtDesc = false;
 
         function startEditingExtName() {
-            if (!window.renameEnabled) return;
+            if (!window.deviceRenamable) return;
             editingExtName = true;
 
             const nameEl = document.getElementById('header_ext_name_display');
@@ -2731,7 +2679,7 @@
         }
 
         function saveRenameEnabled(enabled) {
-            window.renameEnabled = enabled;
+            window.deviceRenamable = enabled;
             fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

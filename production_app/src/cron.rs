@@ -192,7 +192,7 @@ impl CronWorker {
         let onewr_probes = {
             let storage = self.nvs.lock().unwrap();
             let mut list = Vec::new();
-            if let Ok(Some(json_str)) = storage.get_str("dev_registry") {
+            if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
                 if let Ok(map) = serde_json::from_str::<
                     std::collections::HashMap<String, serde_json::Value>,
                 >(&json_str)
@@ -370,13 +370,13 @@ impl CronWorker {
     }
 
     fn perform_check_update(&self, storage: &mut NvsStorage) -> Result<()> {
-        let url = storage.get_str("updateAvailable")?.unwrap_or_default();
+        let url = storage.get_str("updateRepoList")?.unwrap_or_default();
         let fw = storage
             .get_str("fwVersion")?
             .unwrap_or_else(|| "v1.0.0-poc".to_string());
 
         if url.is_empty() {
-            warn!("check_update skipped: no updateAvailable URL configured");
+            warn!("check_update skipped: no updateRepoList URL configured");
             return Ok(());
         }
 

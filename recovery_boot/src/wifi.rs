@@ -1,4 +1,4 @@
-use esp_idf_svc::wifi::{BlockingWifi, EspWifi, Configuration, ClientConfiguration, AccessPointConfiguration, AuthMethod};
+use esp_idf_svc::wifi::{BlockingWifi, EspWifi, Configuration, ClientConfiguration, AccessPointConfiguration, AuthMethod, PmfConfiguration};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use anyhow::{Result, Context};
@@ -27,6 +27,12 @@ impl WifiManager {
         let config = Configuration::Client(ClientConfiguration {
             ssid: ssid.try_into().unwrap(),
             password: psk.try_into().unwrap(),
+            auth_method: if psk.is_empty() {
+                AuthMethod::None
+            } else {
+                AuthMethod::WPA2Personal
+            },
+            pmf_cfg: PmfConfiguration::Capable { required: false },
             ..Default::default()
         });
 

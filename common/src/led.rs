@@ -69,6 +69,11 @@ static START_LED_PATTERN: Once = Once::new();
 // Timestamp (UNIX seconds) jusqu'auquel le mode "identify" (blanc rapide) est actif.
 // Stocké comme secondes UNIX (u32, suffisant jusqu'en 2106).
 static IDENTIFY_SECS: AtomicU32 = AtomicU32::new(0);
+static RESET_FLASHING: AtomicBool = AtomicBool::new(false);
+
+pub fn set_reset_flashing(flashing: bool) {
+    RESET_FLASHING.store(flashing, Ordering::SeqCst);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedStaStatus {
@@ -151,6 +156,11 @@ fn ensure_pattern_running() {
                 let mut phase: u32 = 0;
 
                 loop {
+                    if RESET_FLASHING.load(Ordering::SeqCst) {
+                        thread::sleep(tick);
+                        continue;
+                    }
+
                     // Le mode identify (blanc rapide) prend priorité sur tout
                     if identify_active() {
                         // Blanc clignotant rapide : 50ms ON, 50ms OFF

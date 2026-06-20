@@ -5,7 +5,7 @@ use log::info;
 use serde::{Serialize, Deserialize};
 
 /// Static devices — toujours présents, noms en dur dans le code.
-/// Ne sont JAMAIS stockés dans dev_registry NVS.
+/// Ne sont JAMAIS stockés dans devicesKnow NVS.
 const STATIC_DEVICES: &[(&str, &str)] = &[
     ("touch", "Touche Tactile (TOUCH)"),
     ("vsense", "Mesure Tension (VSENSE)"),
@@ -134,9 +134,9 @@ pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
 /// Clé NVS : `corr_<device_id>` (ex: corr_i2c:0:0x44_T).
 /// Par défaut: "<device_id>.raw" (la valeur réelle = la valeur brute).
 pub fn get_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str) -> String {
-    // Prefer correction formula stored in dev_registry (if present), fall back to legacy corr_<id> key
+    // Prefer correction formula stored in devicesKnow (if present), fall back to legacy corr_<id> key
     let storage = nvs.lock().unwrap();
-    if let Ok(Some(reg_json)) = storage.get_str("dev_registry") {
+    if let Ok(Some(reg_json)) = storage.get_str("devicesKnow") {
         if let Ok(map) = serde_json::from_str::<HashMap<String, PersistEntry>>(&reg_json) {
             if let Some(pe) = map.get(device_id) {
                 if let Some(c) = &pe.correction_formula {
@@ -150,16 +150,16 @@ pub fn get_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str) -> 
     storage.get_str(&key).ok().flatten().unwrap_or_else(|| format!("{}.raw", device_id))
 }
 
-/// Sauvegarde la formule de correction dans le registre (dev_registry). Persist only for dynamic devices.
+/// Sauvegarde la formule de correction dans le registre (devicesKnow). Persist only for dynamic devices.
 pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, formula: &str) -> Result<(), anyhow::Error> {
     let mut storage = nvs.lock().unwrap();
     // load existing registry (as PersistEntry map)
-    let mut persist_map: HashMap<String, PersistEntry> = if let Ok(Some(j)) = storage.get_str("dev_registry") {
+    let mut persist_map: HashMap<String, PersistEntry> = if let Ok(Some(j)) = storage.get_str("devicesKnow") {
         serde_json::from_str(&j).unwrap_or_default()
     } else { HashMap::new() };
     persist_map.insert(device_id.to_string(), PersistEntry { name: persist_map.get(device_id).map(|p| p.name.clone()).unwrap_or_else(|| device_id.to_string()), correction_formula: Some(formula.to_string()) });
     let new_str = serde_json::to_string(&persist_map)?;
-    storage.set_str("dev_registry", &new_str)?;
+    storage.set_str("devicesKnow", &new_str)?;
     Ok(())
 }
 
@@ -185,7 +185,7 @@ impl DeviceRegistry {
         }
         // 2. Dynamic devices from NVS
         let storage = self.nvs.lock().unwrap();
-        if let Ok(Some(json_str)) = storage.get_str("dev_registry") {
+        if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
             if let Ok(saved) = serde_json::from_str::<HashMap<String, PersistEntry>>(&json_str) {
                 for (id, pe) in saved {
                     if is_static_device(&id) { continue; }
@@ -205,7 +205,7 @@ impl DeviceRegistry {
         }
         let mut storage = self.nvs.lock().unwrap();
         if let Ok(json_str) = serde_json::to_string(&persist_map) {
-            let _ = storage.set_str("dev_registry", &json_str);
+            let _ = storage.set_str("devicesKnow", &json_str);
         }
     }
 
@@ -470,7 +470,7 @@ impl DeviceRegistry {
         self.load_registry()
     }
 
-    /// Rename device (statiques : session uniquement ; dynamiques : persistés en NVS via dev_registry)
+    /// Rename device (statiques : session uniquement ; dynamiques : persistés en NVS via devicesKnow)
     pub fn rename_device(&mut self, id: &str, new_name: &str) -> Result<(), anyhow::Error> {
         // Update in-session cache
         if let Some(entry) = self.devices.get_mut(id) {

@@ -24,7 +24,7 @@ Pour éviter tout risque de blocage ou d'inaccessibilité en production, la mém
 
 
 ### Rôle détaillé des partitions :
-* **`nvs` (24 Ko)** : Stockage non volatile. Elle contient les identifiants réseaux mémorisés dans le dictionnaire `wifiKnown`, le drapeau `autoUpdate` (activant/désactivant la mise à jour automatique), l'URL du dépôt de mise à jour `updateAvailable`, le compteur de tentatives de boot `otaRetry` (permettant de se prémunir des mises à jour infinies en boucle en cas de binaire défaillant), et la date cible du prochain contrôle `nextCheck`.
+* **`nvs` (24 Ko)** : Stockage non volatile. Elle contient les identifiants réseaux mémorisés dans le dictionnaire `wifiKnown`, le drapeau `autoUpdate` (activant/désactivant la mise à jour automatique), l'URL du dépôt de mise à jour `updateRepoList`, le compteur de tentatives de boot `otaRetry` (permettant de se prémunir des mises à jour infinies en boucle en cas de binaire défaillant), et la date cible du prochain contrôle `nextCheck`.
 * **`otadata` (8 Ko)** : Coordonne la table de démarrage (boot slot active). L'ESP32 l'utilise pour décider de démarrer sur la partition de production ou de secours.
 * **`phy_init` (4 Ko)** : Contient les données d'initialisation pour la couche physique radio (Wi-Fi et Bluetooth).
 * **`recovery` (2 Mo)** : Contient le firmware de secours autonome `recovery_boot`.
@@ -243,7 +243,7 @@ const CHIP_TYPE:  &str = "ESP32-S3";         // Type du microcontrôleur cible (
 ```
 
 ### 3. Configurer le Serveur de Mise à Jour OTA
-Le firmware de production interroge régulièrement l'URL stockée dans la NVS sous la clé `updateAvailable`. Le fichier ciblé par cette URL doit respecter la structure JSON attendue.
+Le firmware de production interroge régulièrement l'URL stockée dans la NVS sous la clé `updateRepoList`. Le fichier ciblé par cette URL doit respecter la structure JSON attendue.
 
 Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware-s3.json](./boards/board_default/firmware-s3.json) sur votre serveur d'hébergement :
 ```json
@@ -263,7 +263,7 @@ Pour déployer vos firmwares, créez un fichier JSON similaire à [firmware-s3.j
     ]
   }
 ```
-### 4. Enregistrer la Clé `updateAvailable` dans la NVS
+### 4. Enregistrer la Clé `updateRepoList` dans la NVS
 Modifier les valeurs par défaut dans le fichier `common/src/nvs_storage.rs`.
 
 ---

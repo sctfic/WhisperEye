@@ -71,7 +71,7 @@ L'IP par défaut en mode Point d'Accès est **`192.168.71.1`**.
 * **URL** : `/api/check_updates`
 * **Méthode** : `GET`
 * **Type de retour** : `application/json`
-* **Description** : Lit l'URL du catalogue enregistrée en NVS (`updateAvailable`), télécharge le fichier de configuration et extrait l'entrée correspondante au type de puce `ESP32-S3`. Sert de proxy local pour contourner les blocages de CORS.
+* **Description** : Lit l'URL du catalogue enregistrée en NVS (`updateRepoList`), télécharge le fichier de configuration et extrait l'entrée correspondante au type de puce `ESP32-S3`. Sert de proxy local pour contourner les blocages de CORS.
 
 ### Scan des réseaux Wi-Fi
 * **URL** : `/api/ssids`

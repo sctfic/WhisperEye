@@ -337,7 +337,7 @@ fn main() -> Result<()> {
         let last_ota_success = storage.get_str("lastOtaSuccess")?.unwrap_or_default();
         let last_ota_dl = storage.get_str("lastOtaDl")?.unwrap_or_default();
         let last_ota_write = storage.get_str("lastOtaWrite")?.unwrap_or_default();
-        let update_url = storage.get_str("updateAvailable")?.unwrap_or_default();
+        let update_url = storage.get_str("updateRepoList")?.unwrap_or_default();
         let update_interval = storage.get_str("updateInterval")?.unwrap_or_else(|| "7j".to_string());
         let wifi_known = storage.get_known_networks().unwrap_or_default();
         let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1) == 1;
@@ -394,12 +394,12 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    // GET /api/check_updates (proxies firmware.json from updateAvailable NVS key to bypass CORS!)
+    // GET /api/check_updates (proxies firmware.json from updateRepoList NVS key to bypass CORS!)
     let nvs_updates_clone = Arc::clone(&nvs_storage);
     server.fn_handler("/api/check_updates", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let update_url = {
             let storage = nvs_updates_clone.lock().unwrap();
-            storage.get_str("updateAvailable")?.unwrap_or_default()
+            storage.get_str("updateRepoList")?.unwrap_or_default()
         };
 
         if update_url.is_empty() {
@@ -684,7 +684,7 @@ fn main() -> Result<()> {
                     storage.set_str("updateDlUrl", update_url)?;
                     storage.set_i32("otaRetry", 3)?;
                 } else {
-                    storage.set_str("updateAvailable", update_url)?;
+                    storage.set_str("updateRepoList", update_url)?;
                 }
             }
         }

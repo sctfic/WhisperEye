@@ -47,9 +47,9 @@ impl NvsStorage {
         if self.get_str("lastOtaWrite")?.is_none() {
             self.set_str("lastOtaWrite", "1970-01-01T00:00:00Z")?;
         }
-        if self.get_str("updateAvailable")?.is_none() {
-            // self.set_str("updateAvailable", "https://raw.githubusercontent.com/sctfic/WhisperEye/refs/heads/mesh/boards/board_default/firmware-s3.json")?;
-            self.set_str("updateAvailable", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3.json")?;
+        if self.get_str("updateRepoList")?.is_none() {
+            // self.set_str("updateRepoList", "https://raw.githubusercontent.com/sctfic/WhisperEye/refs/heads/mesh/boards/board_default/firmware-s3.json")?;
+            self.set_str("updateRepoList", "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3.json")?;
         }
         if self.get_str("updateDlUrl")?.is_none() {
             self.set_str("updateDlUrl", "empty")?;
@@ -63,8 +63,8 @@ impl NvsStorage {
         if self.get_str("nextCheck")?.is_none() {
             self.set_str("nextCheck", "0")?;
         }
-        if self.get_i32("renameEnabled")?.is_none() {
-            self.set_i32("renameEnabled", 1)?;
+        if self.get_i32("deviceRenamable")?.is_none() {
+            self.set_i32("deviceRenamable", 1)?;
         }
 
         if self.get_i32("wifiChannel")?.is_none() {
@@ -201,7 +201,7 @@ impl NvsStorage {
             "lastOtaDl",
             "lastOtaSuccess",
             "lastOtaWrite",
-            "updateAvailable",
+            "updateRepoList",
             "updateDlUrl",
             "wifiKnown",
             "nextCheck",
@@ -230,7 +230,7 @@ impl NvsStorage {
             }
         }
         
-        let keys_i32 = &["otaRetry", "autoUpdate", "renameEnabled", "wifiChannel"];
+        let keys_i32 = &["otaRetry", "autoUpdate", "deviceRenamable", "wifiChannel"];
         for key in keys_i32 {
             match self.get_i32(key) {
                 Ok(Some(val)) => info!("  {} : {}", key, val),
@@ -239,9 +239,9 @@ impl NvsStorage {
             }
         }
         // Also try to dump device registry and per-device correction formulas if present
-        match self.get_str("dev_registry") {
+        match self.get_str("devicesKnow") {
             Ok(Some(reg_json)) => {
-                info!("  dev_registry : {}", reg_json);
+                info!("  devicesKnow : {}", reg_json);
                 // Try to parse registry and dump any corr_<id> keys
                 if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&reg_json) {
                     for (id, _entry) in map {
@@ -254,8 +254,8 @@ impl NvsStorage {
                     }
                 }
             }
-            Ok(None) => info!("  dev_registry : [not set]"),
-            Err(e) => info!("  dev_registry : Error({:?})", e),
+            Ok(None) => info!("  devicesKnow : [not set]"),
+            Err(e) => info!("  devicesKnow : Error({:?})", e),
         }
 
         info!("========================");
