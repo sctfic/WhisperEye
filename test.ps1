@@ -226,7 +226,7 @@ Describe "WhisperEye Production API Integration" {
         }
 
         # Possible responses:
-        #   400 - No updateAvailable URL configured in NVS
+        #   400 - No updateRepoList URL configured in NVS
         #   502 - Upstream firmware manifest server unreachable
         #   200 - Returns matched board entry JSON (or null if no board match)
         It "should check updates or return 400/502 when update URL not configured or unreachable (GET /api/check_updates)" {

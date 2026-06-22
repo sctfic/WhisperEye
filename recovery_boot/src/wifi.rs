@@ -32,7 +32,7 @@ impl WifiManager {
             } else {
                 AuthMethod::WPA2Personal
             },
-            pmf_cfg: PmfConfiguration::Capable { required: false },
+            pmf_cfg: PmfConfiguration::NotCapable,
             ..Default::default()
         });
 

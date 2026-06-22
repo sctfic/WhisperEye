@@ -21,7 +21,6 @@ use common::led::{self, LedStaStatus, LedApStatus};
 pub const PROVISIONING_SSID: &str = "ESP32-Configuration";
 const PROVISIONING_SUBNET: u8 = 70;
 const WIFI_RETRY_DELAY: Duration = Duration::from_secs(10);
-const PROVISIONING_RETRY_DELAY: Duration = Duration::from_secs(3);
 const PAIRING_DURATION: Duration = Duration::from_secs(120);
 
 static DNS_SERVER_RUNNING: std::sync::atomic::AtomicBool =
@@ -225,7 +224,7 @@ impl NetManager {
             } else {
                 None
             },
-            pmf_cfg: PmfConfiguration::Capable { required: false },
+            pmf_cfg: PmfConfiguration::NotCapable,
             ..Default::default()
         };
 

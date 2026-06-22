@@ -152,6 +152,95 @@ function Increment-RecoveryVersion {
     return "1.0.0-recovery"
 }
 
+function Update-FullFlashFolder {
+    param(
+        [string]$BuildProfile = "release"
+    )
+    
+    $FullFlashDir = "boards\board_default\fullFlash"
+    if (-not (Test-Path $FullFlashDir)) {
+        New-Item -ItemType Directory -Path $FullFlashDir -Force | Out-Null
+    }
+
+    Write-Host "[*] Updating WhisperEye fullFlash binaries directory..." -ForegroundColor Cyan
+
+    # 1. Copy/Generate otadata.bin
+    if (Test-Path "otadata_ota0.bin") {
+        Copy-Item "otadata_ota0.bin" "$FullFlashDir\otadata.bin" -Force
+        Write-Host "    [+] Copied otadata.bin" -ForegroundColor DarkGray
+    }
+
+    # 2. Generate empty nvs.bin (24 KB filled with 0xFF)
+    $NvsBytes = New-Object Byte[] 24576
+    for ($i=0; $i -lt $NvsBytes.Length; $i++) { $NvsBytes[$i] = 0xFF }
+    [System.IO.File]::WriteAllBytes("$FullFlashDir\nvs.bin", $NvsBytes)
+    Write-Host "    [+] Generated nvs.bin" -ForegroundColor DarkGray
+
+    # 3. Generate empty phy_init.bin (4 KB filled with 0xFF)
+    $PhyBytes = New-Object Byte[] 4096
+    for ($i=0; $i -lt $PhyBytes.Length; $i++) { $PhyBytes[$i] = 0xFF }
+    [System.IO.File]::WriteAllBytes("$FullFlashDir\phy_init.bin", $PhyBytes)
+    Write-Host "    [+] Generated phy_init.bin" -ForegroundColor DarkGray
+
+    # 4. Export merged recovery image to extract bootloader and partitions
+    Write-Host "    [*] Exporting merged recovery image to extract bootloader & partitions..." -ForegroundColor DarkGray
+    $MergedFile = Join-Path $FullFlashDir "merged_temp.bin"
+    $SaveMergedCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery --merge $MergedFile"
+    if ($BuildProfile -eq "release") { $SaveMergedCmd += " --release" }
+    
+    $OldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    Invoke-Expression $SaveMergedCmd
+    $ErrorActionPreference = $OldErrorAction
+
+    if (Test-Path $MergedFile) {
+        # Read the merged image bytes
+        $MergedBytes = [System.IO.File]::ReadAllBytes($MergedFile)
+        
+        # Extract bootloader (offset 0, size 32768)
+        $BootloaderBytes = New-Object Byte[] 32768
+        [Array]::Copy($MergedBytes, 0, $BootloaderBytes, 0, 32768)
+        [System.IO.File]::WriteAllBytes((Join-Path $FullFlashDir "bootloader.bin"), $BootloaderBytes)
+        Write-Host "    [+] Extracted bootloader.bin" -ForegroundColor DarkGray
+        
+        # Extract partitions table (offset 32768, size 4096)
+        $PartitionsBytes = New-Object Byte[] 4096
+        [Array]::Copy($MergedBytes, 32768, $PartitionsBytes, 0, 4096)
+        [System.IO.File]::WriteAllBytes((Join-Path $FullFlashDir "partitions.bin"), $PartitionsBytes)
+        Write-Host "    [+] Extracted partitions.bin" -ForegroundColor DarkGray
+        
+        # Clean up temporary merged file
+        Remove-Item $MergedFile -Force
+    }
+
+    # 5. Export individual recovery_boot binary
+    Write-Host "    [*] Exporting recovery_boot application binary..." -ForegroundColor DarkGray
+    $TempRecFile = Join-Path $FullFlashDir "recovery.bin"
+    $SaveRecCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery $TempRecFile"
+    if ($BuildProfile -eq "release") { $SaveRecCmd += " --release" }
+    
+    $OldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    Invoke-Expression $SaveRecCmd
+    $ErrorActionPreference = $OldErrorAction
+    Write-Host "    [+] Saved recovery.bin" -ForegroundColor DarkGray
+
+    # 6. Export individual production_app binary
+    Write-Host "    [*] Exporting production_app application binary..." -ForegroundColor DarkGray
+    $TempProdFile = Join-Path $FullFlashDir "production.bin"
+    $SaveProdCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production $TempProdFile"
+    if ($BuildProfile -eq "release") { $SaveProdCmd += " --release" }
+    
+    $OldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    Invoke-Expression $SaveProdCmd
+    $ErrorActionPreference = $OldErrorAction
+    Write-Host "    [+] Saved production.bin" -ForegroundColor DarkGray
+
+    Write-Host "[+] Directory fullFlash successfully updated!" -ForegroundColor Green
+}
+
+
 
 
 # 2. Setup targets
@@ -288,6 +377,7 @@ if ($Target -eq "all") {
         exit 1
     }
 
+    Update-FullFlashFolder -BuildProfile $BuildProfile
 
     Write-Host "[+] All target packages compiled successfully. Ready to flash." -ForegroundColor Green
 
@@ -404,6 +494,7 @@ if ($Package -eq "production_app") {
     }
 }
 
+Update-FullFlashFolder -BuildProfile $BuildProfile
 
 # 5. Flash Upload
 Write-Host "[*] Initiating upload process for $Package..." -ForegroundColor Cyan
