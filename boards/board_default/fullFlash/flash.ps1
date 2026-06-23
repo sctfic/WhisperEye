@@ -25,8 +25,8 @@ $RequiredFiles = @{
     "nvs.bin"        = "0x9000"
     "otadata.bin"    = "0xf000"
     "phy_init.bin"   = "0x11000"
-    "recovery.bin"   = "0x12000"
-    "production.bin" = "0x212000"
+    "recovery.bin"   = "0x20000"
+    "production.bin" = "0x220000"
 }
 
 # 1. Verify that all binary files exist in the same directory
@@ -51,6 +51,15 @@ Write-Host "[+] All required firmware binaries are present." -ForegroundColor Gr
 
 # 2. Check for esptool.exe and download it if missing
 $EsptoolExe = Join-Path $BinDir "esptool.exe"
+
+# If not at root, but inside a nested folder (e.g. esptool-win64), move it first!
+$NestedFolder = Get-ChildItem $BinDir -Directory | Where-Object { $_.Name -like "esptool-*" } | Select-Object -First 1
+if ($NestedFolder -and -not (Test-Path $EsptoolExe)) {
+    Write-Host "[*] esptool.exe found in nested folder, moving to root..." -ForegroundColor Gray
+    Get-ChildItem $NestedFolder.FullName | Move-Item -Destination $BinDir -Force
+    Remove-Item $NestedFolder.FullName -Recurse -Force
+}
+
 if (-not (Test-Path $EsptoolExe)) {
     Write-Host "[*] esptool.exe not found. Downloading officially from Espressif GitHub releases..." -ForegroundColor Cyan
     $Url = "https://github.com/espressif/esptool/releases/download/v4.8.1/esptool-v4.8.1-win64.zip"
@@ -66,11 +75,11 @@ if (-not (Test-Path $EsptoolExe)) {
         # Cleanup zip file
         Remove-Item $ZipPath -ErrorAction SilentlyContinue
         
-        # Handle folder nesting inside zip (esptool zip contains esptool-v4.8.1-win64 folder)
-        $NestedFolder = Join-Path $BinDir "esptool-v4.8.1-win64"
-        if (Test-Path $NestedFolder) {
-            Get-ChildItem $NestedFolder | Move-Item -Destination $BinDir -Force
-            Remove-Item $NestedFolder -Recurse -Force
+        # Handle folder nesting inside zip (esptool zip contains a folder starting with esptool-)
+        $NestedFolder = Get-ChildItem $BinDir -Directory | Where-Object { $_.Name -like "esptool-*" } | Select-Object -First 1
+        if ($NestedFolder) {
+            Get-ChildItem $NestedFolder.FullName | Move-Item -Destination $BinDir -Force
+            Remove-Item $NestedFolder.FullName -Recurse -Force
         }
         Write-Host "[+] esptool.exe downloaded and extracted successfully." -ForegroundColor Green
     }
@@ -157,18 +166,22 @@ $PrintCmd = "esptool.exe " + ($FlashArgs -join " ")
 Write-Host "Command: $PrintCmd" -ForegroundColor DarkGray
 Write-Host ""
 
-$LASTEXITCODE = 0
+$Success = $true
 try {
     # Run esptool.exe directly to pipe output/logs in real-time into the terminal
     & $EsptoolExe @FlashArgs
+    if ($LASTEXITCODE -ne 0) {
+        $Success = $false
+    }
 }
 catch {
     Write-Host "[-] Execution failed with error: $_" -ForegroundColor Red
+    $Success = $false
 }
 
 # 5. Handle success/failure
 Write-Host ""
-if ($LASTEXITCODE -eq 0) {
+if ($Success) {
     Write-Host "==========================================================" -ForegroundColor Green
     Write-Host "       ESP32-S3 FIRMWARE FLASHED SUCCESSFULLY!            " -ForegroundColor Green
     Write-Host "==========================================================" -ForegroundColor Green
