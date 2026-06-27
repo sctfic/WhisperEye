@@ -34,7 +34,7 @@ struct ConfigPayload {
 
 const WHISPEREYE_BOARD: &str = "1.0";
 const CHIP_TYPE: &str = "ESP32-S3";
-const FW_VERSION: &str = "1.0.0-recovery-0099";
+const FW_VERSION: &str = "1.0.0-recovery-0102";
 
 const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -912,6 +912,9 @@ fn get_formatted_time() -> String {
     
     format!("2026-05-27T{:02}:{:02}:{:02}Z", hours, mins, secs)
 }
+
+
+
 
 
 

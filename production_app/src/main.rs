@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.1.3-0006";
+const FW_VERSION: &str = "1.1.3-0016";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -942,6 +942,54 @@ fn main() -> Result<()> {
         response.write(response_data.as_bytes())?;
         Ok(())
     })?;
+
+    // Start UDP Discovery Server thread
+    let udp_nvs = Arc::clone(&nvs_storage);
+    let udp_probes = Arc::clone(&discovered_probes);
+    let udp_act = Arc::clone(&actuators_state);
+    let udp_sched = Arc::clone(&scheduled_actions);
+    thread::Builder::new()
+        .name("udp_discovery".to_string())
+        .stack_size(16384)
+        .spawn(move || {
+            let socket = match std::net::UdpSocket::bind("0.0.0.0:3030") {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("UDP Discovery: Failed to bind to port 3030: {:?}", e);
+                    return;
+                }
+            };
+            log::info!("UDP Discovery: Server listening on UDP port 3030");
+            let mut buf = [0u8; 128];
+            loop {
+                match socket.recv_from(&mut buf) {
+                    Ok((amt, src)) => {
+                        let msg = std::str::from_utf8(&buf[..amt]).unwrap_or("").trim();
+                        if msg == "DISCOVER_WHISPEREYE" {
+                            log::info!("UDP Discovery: Received query from {}", src);
+                            match build_capacity_info(&udp_nvs, &udp_probes, &udp_act, &udp_sched) {
+                                Ok(cap) => {
+                                    if let Ok(resp_str) = serde_json::to_string(&cap) {
+                                        if let Err(e) = socket.send_to(resp_str.as_bytes(), src) {
+                                            log::error!("UDP Discovery: Failed to send response to {}: {:?}", src, e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("UDP Discovery: Failed to build capacity: {:?}", e);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("UDP Discovery: socket recv error: {:?}", e);
+                        thread::sleep(std::time::Duration::from_millis(1000));
+                    }
+                }
+            }
+        })
+        .context("Failed to spawn UDP Discovery thread")?;
+
     // GET /api/capacity
     let cap_nvs = Arc::clone(&nvs_storage);
     let cap_probes = Arc::clone(&discovered_probes);
@@ -950,236 +998,24 @@ fn main() -> Result<()> {
     let cap_sched = Arc::clone(&scheduled_actions);
     server.fn_handler("/api/capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(cap_mesh);
-        let (rla, rlb, swpwr, ina, inb) = {
-            let act = cap_act.lock().unwrap();
-            (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
-        };
-        let touch_state = false;
-        
-        let readings = sensors::read_sensors(&cap_probes);
-        let mut ds_readings = std::collections::HashMap::new();
-        for (addr, temp) in &readings.ds18b20_temperatures {
-            ds_readings.insert(addr.clone(), *temp);
-        }
-
-        let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&cap_nvs));
-        let list = {
-            let sched_lock = cap_sched.lock().unwrap();
-            registry.get_devices_display(
-                rla,
-                rlb,
-                swpwr,
-                ina,
-                inb,
-                readings.temperature_sht45,
-                readings.humidity_sht45,
-                readings.co2_scd41,
-                &ds_readings,
-                touch_state,
-                Some(&sched_lock.schedules),
-            )
-        };
-
-        let mut sensors = Vec::new();
-        let mut actuators = Vec::new();
-
-        for dev in &list {
-            if dev.present == Some(false) {
-                continue;
+        match build_capacity_info(&cap_nvs, &cap_probes, &cap_act, &cap_sched) {
+            Ok(cap_json) => {
+                let response_data = serde_json::to_string(&cap_json)?;
+                let mut response = req.into_response(200, Some("OK"), &[
+                    ("Content-Type", "application/json"),
+                    ("Access-Control-Allow-Origin", "*")
+                ])?;
+                response.write(response_data.as_bytes())?;
+                Ok(())
             }
-
-            match dev.id.as_str() {
-                // Return only: rla, rlb, ina, inb, swpwr
-                "rla" | "rlb" | "ina" | "inb" | "swpwr" => {
-                    let schedules = {
-                        let sched_lock = cap_sched.lock().unwrap();
-                        sched_lock.schedules.get(&dev.id).cloned().unwrap_or_default()
-                    };
-                    actuators.push(serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "tout ou rien",
-                        "range": "bool:0 1",
-                        "schedules": schedules,
-                    }));
-                }
-                // Allowed Sensors
-                "touch" | "vsense" | "isense" => {
-                    let (s_type, unit) = match dev.id.as_str() {
-                        "touch" => ("Touch", "-"),
-                        "vsense" => ("Voltage", "V"),
-                        "isense" => ("Current", "A"),
-                        _ => ("Generic", "-"),
-                    };
-                    let meta = dynamic_devices::get_sensor_meta(dev.id.as_str());
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, dev.id.as_str());
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": s_type,
-                        "Unit": unit,
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                id if id.starts_with("onewr:") => {
-                    let meta = dynamic_devices::get_sensor_meta(id);
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "Temperature",
-                        "Unit": "°C",
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                id if id.ends_with("_T") && id.contains("0x44") => {
-                    let meta = dynamic_devices::get_sensor_meta(id);
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "Temperature",
-                        "Unit": "°C",
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                id if id.ends_with("_H") && id.contains("0x44") => {
-                    let meta = dynamic_devices::get_sensor_meta(id);
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "Humidite",
-                        "Unit": "%RH",
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                id if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") => {
-                    let meta = dynamic_devices::get_sensor_meta(id);
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "CO2",
-                        "Unit": "ppm",
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                // BME280 (futur)
-                id if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) => {
-                    let meta = dynamic_devices::get_sensor_meta(id);
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "Temperature",
-                        "Unit": "°C",
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                id if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) => {
-                    let meta = dynamic_devices::get_sensor_meta(id);
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "Humidite",
-                        "Unit": "%RH",
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                id if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) => {
-                    let meta = dynamic_devices::get_sensor_meta(id);
-                    let corr = dynamic_devices::get_correction_formula(&cap_nvs, id);
-                    let mut sensor_json = serde_json::json!({
-                        "Name": dev.id,
-                        "description": dev.name,
-                        "Type": "Pression",
-                        "Unit": "hPa",
-                        "correction_formula": corr,
-                    });
-                    if let Some(ref m) = meta {
-                        sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                        sensor_json["range_min"] = serde_json::json!(m.range_min);
-                        sensor_json["range_max"] = serde_json::json!(m.range_max);
-                    }
-                    sensors.push(sensor_json);
-                }
-                _ => {}
+            Err(e) => {
+                let mut response = req.into_response(500, Some("Internal Server Error"), &[
+                    ("Content-Type", "text/plain"),
+                ])?;
+                response.write(format!("Error: {:?}", e).as_bytes())?;
+                Ok(())
             }
         }
-
-        let (mac, name, desc, rename_enabled) = {
-            let storage = cap_nvs.lock().unwrap();
-            let m = get_mac_address();
-            let name = storage.get_str("extName")?.unwrap_or_else(|| {
-                let clean = m.replace(":", "");
-                format!("WE-{}", &clean[8..12])
-            });
-            let desc = storage.get_str("extDesc")?.unwrap_or_else(|| "WhisperEye Extender".to_string());
-            let rename_enabled = storage.get_i32("deviceRenamable")?.unwrap_or(1) == 1;
-            (m, name, desc, rename_enabled)
-        };
-
-        let cap_json = serde_json::json!({
-            "mac": mac,
-            "name": name,
-            "description": desc,
-            "version": FW_VERSION,
-            "rename_enabled": rename_enabled,
-            "sensors": sensors,
-            "actuators": actuators,
-        });
-
-        let response_data = serde_json::to_string(&cap_json)?;
-        let mut response = req.into_response(200, Some("OK"), &[
-            ("Content-Type", "application/json"),
-            ("Access-Control-Allow-Origin", "*")
-        ])?;
-        response.write(response_data.as_bytes())?;
-        Ok(())
     })?;
     // GET /api/check_updates (proxies firmware.json from updateRepoList NVS key to bypass CORS!)
     let nvs_updates_clone = Arc::clone(&nvs_storage);
@@ -2211,6 +2047,246 @@ pub fn set_boot_to_recovery() {
         }
     }
 }
+
+fn build_capacity_info(
+    cap_nvs: &Arc<Mutex<NvsStorage>>,
+    cap_probes: &Arc<Vec<String>>,
+    cap_act: &Arc<Mutex<ActuatorsState>>,
+    cap_sched: &Arc<Mutex<actuators::ScheduledActions>>,
+) -> Result<serde_json::Value, anyhow::Error> {
+    let (rla, rlb, swpwr, ina, inb) = {
+        let act = cap_act.lock().unwrap();
+        (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
+    };
+    let touch_state = false;
+    
+    let readings = sensors::read_sensors(cap_probes);
+    let mut ds_readings = std::collections::HashMap::new();
+    for (addr, temp) in &readings.ds18b20_temperatures {
+        ds_readings.insert(addr.clone(), *temp);
+    }
+
+    let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(cap_nvs));
+    let list = {
+        let sched_lock = cap_sched.lock().unwrap();
+        registry.get_devices_display(
+            rla,
+            rlb,
+            swpwr,
+            ina,
+            inb,
+            readings.temperature_sht45,
+            readings.humidity_sht45,
+            readings.co2_scd41,
+            &ds_readings,
+            touch_state,
+            Some(&sched_lock.schedules),
+        )
+    };
+
+    let mut sensors = Vec::new();
+    let mut actuators = Vec::new();
+
+    for dev in &list {
+        if dev.present == Some(false) {
+            continue;
+        }
+
+        match dev.id.as_str() {
+            // Return only: rla, rlb, ina, inb, swpwr
+            "rla" | "rlb" | "ina" | "inb" | "swpwr" => {
+                let schedules = {
+                    let sched_lock = cap_sched.lock().unwrap();
+                    sched_lock.schedules.get(&dev.id).cloned().unwrap_or_default()
+                };
+                actuators.push(serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "tout ou rien",
+                    "range": "bool:0 1",
+                    "schedules": schedules,
+                }));
+            }
+            // Allowed Sensors
+            "touch" | "vsense" | "isense" => {
+                let (s_type, unit) = match dev.id.as_str() {
+                    "touch" => ("Touch", "-"),
+                    "vsense" => ("Voltage", "V"),
+                    "isense" => ("Current", "A"),
+                    _ => ("Generic", "-"),
+                };
+                let meta = dynamic_devices::get_sensor_meta(dev.id.as_str());
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, dev.id.as_str());
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": s_type,
+                    "Unit": unit,
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            id if id.starts_with("onewr:") => {
+                let meta = dynamic_devices::get_sensor_meta(id);
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, id);
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "Temperature",
+                    "Unit": "°C",
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            id if id.ends_with("_T") && id.contains("0x44") => {
+                let meta = dynamic_devices::get_sensor_meta(id);
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, id);
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "Temperature",
+                    "Unit": "°C",
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            id if id.ends_with("_H") && id.contains("0x44") => {
+                let meta = dynamic_devices::get_sensor_meta(id);
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, id);
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "Humidite",
+                    "Unit": "%RH",
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            id if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") => {
+                let meta = dynamic_devices::get_sensor_meta(id);
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, id);
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "CO2",
+                    "Unit": "ppm",
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            // BME280 (futur)
+            id if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) => {
+                let meta = dynamic_devices::get_sensor_meta(id);
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, id);
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "Temperature",
+                    "Unit": "°C",
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            id if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) => {
+                let meta = dynamic_devices::get_sensor_meta(id);
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, id);
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "Humidite",
+                    "Unit": "%RH",
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            id if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) => {
+                let meta = dynamic_devices::get_sensor_meta(id);
+                let corr = dynamic_devices::get_correction_formula(cap_nvs, id);
+                let mut sensor_json = serde_json::json!({
+                    "Name": dev.id,
+                    "description": dev.name,
+                    "Type": "Pression",
+                    "Unit": "hPa",
+                    "correction_formula": corr,
+                });
+                if let Some(ref m) = meta {
+                    sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
+                    sensor_json["range_min"] = serde_json::json!(m.range_min);
+                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                }
+                sensors.push(sensor_json);
+            }
+            _ => {}
+        }
+    }
+
+    let (mac, name, desc, rename_enabled) = {
+        let storage = cap_nvs.lock().unwrap();
+        let m = get_mac_address();
+        let name = storage.get_str("extName")?.unwrap_or_else(|| {
+            let clean = m.replace(":", "");
+            format!("WE-{}", &clean[8..12])
+        });
+        let desc = storage.get_str("extDesc")?.unwrap_or_else(|| "WhisperEye Extender".to_string());
+        let rename_enabled = storage.get_i32("deviceRenamable")?.unwrap_or(1) == 1;
+        (m, name, desc, rename_enabled)
+    };
+
+    Ok(serde_json::json!({
+        "mac": mac,
+        "name": name,
+        "description": desc,
+        "version": FW_VERSION,
+        "rename_enabled": rename_enabled,
+        "sensors": sensors,
+        "actuators": actuators,
+    }))
+}
+
+
+
+
+
+
+
+
+
+
 
 
 

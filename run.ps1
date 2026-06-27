@@ -157,7 +157,7 @@ function Update-FullFlashFolder {
         [string]$BuildProfile = "release"
     )
     
-    $FullFlashDir = "boards\board_default\fullFlash"
+    $FullFlashDir = Join-Path $PSScriptRoot "boards\board_default\fullFlash"
     if (-not (Test-Path $FullFlashDir)) {
         New-Item -ItemType Directory -Path $FullFlashDir -Force | Out-Null
     }
