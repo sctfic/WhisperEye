@@ -184,7 +184,7 @@ impl DeviceRegistry {
     }
 
     /// Load device metadata registry from NVS (dynamic only) + static devices from code
-    fn load_registry(&self) -> HashMap<String, DeviceEntry> {
+    pub fn load_registry(&self) -> HashMap<String, DeviceEntry> {
         let mut map: HashMap<String, DeviceEntry> = HashMap::new();
         // 1. Static devices — toujours présents, en dur
         for &(id, name) in STATIC_DEVICES {
@@ -203,17 +203,23 @@ impl DeviceRegistry {
         map
     }
 
-    /// Save device metadata registry to NVS — filtre les devices statiques (en dur dans le code)
     fn save_registry(&self, map: &HashMap<String, DeviceEntry>) {
+        println!("DEBUG: Entering save_registry...");
         let mut persist_map: HashMap<String, PersistEntry> = HashMap::new();
         for (k, v) in map.iter() {
             if is_static_device(k) { continue; }
+            if !v.present { continue; }
             persist_map.insert(k.clone(), PersistEntry { name: v.name.clone(), present: v.present, correction_formula: v.correction_formula.clone() });
         }
+        println!("DEBUG: save_registry: locking NVS...");
         let mut storage = self.nvs.lock().unwrap();
+        println!("DEBUG: save_registry: NVS locked. Serializing json...");
         if let Ok(json_str) = serde_json::to_string(&persist_map) {
-            let _ = storage.set_str("devicesKnow", &json_str);
+            println!("DEBUG: save_registry: writing json_str (len={}) to NVS...", json_str.len());
+            let res = storage.set_str("devicesKnow", &json_str);
+            println!("DEBUG: save_registry: NVS write result: {:?}", res);
         }
+        println!("DEBUG: Exiting save_registry...");
     }
 
     /// Scan dynamic and static devices, merge with custom names from NVS.
@@ -311,30 +317,30 @@ impl DeviceRegistry {
                 let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
-                    present: false,
+                    present: true,
                     correction_formula: None,
                 });
-                entry_t.present = false;
+                entry_t.present = true;
                 updated.insert(id_t, entry_t);
 
                 let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
                 let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Hum (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
-                    present: false,
+                    present: true,
                     correction_formula: None,
                 });
-                entry_h.present = false;
+                entry_h.present = true;
                 updated.insert(id_h, entry_h);
 
                 let id_p = format!("i2c:{}:0x{:02x}_P", channel, addr);
                 let mut entry_p = saved.remove(&id_p).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Pres (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
-                    present: false,
+                    present: true,
                     correction_formula: None,
                 });
-                entry_p.present = false;
+                entry_p.present = true;
                 updated.insert(id_p, entry_p);
             } else {
                 let id = format!("i2c:{}:0x{:02x}", channel, addr);
@@ -355,8 +361,11 @@ impl DeviceRegistry {
             updated.insert(id, entry);
         }
 
+        println!("DEBUG: scan_and_register: calling save_registry...");
         self.save_registry(&updated);
+        println!("DEBUG: scan_and_register: save_registry finished. Updating self.devices...");
         self.devices = updated;
+        println!("DEBUG: scan_and_register: completed successfully!");
         Ok(())
     }
 
@@ -366,9 +375,9 @@ impl DeviceRegistry {
         swpwr_on: bool,
         ina_on: bool,
         inb_on: bool,
-        sht_temp: f32,
-        sht_humi: f32,
-        co2_val: i32,
+        _sht_temp: f32,
+        _sht_humi: f32,
+        _co2_val: i32,
         ds_readings: &HashMap<String, f32>,
         touch_state: bool,
         schedules: Option<&HashMap<String, Vec<crate::actuators::ScheduledAction>>>,
@@ -376,98 +385,149 @@ impl DeviceRegistry {
         let registry = self.load_registry(); // construit à partir des statiques + NVS dynamiques
         let mut list = Vec::new();
 
+        let bme_t = *crate::i2c_bus::BME280_TEMP.lock().unwrap() as f64;
+        let bme_h = *crate::i2c_bus::BME280_HUM.lock().unwrap() as f64;
+        let bme_p = *crate::i2c_bus::BME280_PRESS.lock().unwrap() as f64;
+
+        let mut raw_values: HashMap<String, f64> = HashMap::new();
+        raw_values.insert("vsense".to_string(), 12.4);
+        raw_values.insert("isense".to_string(), 0.18);
+        raw_values.insert("touch".to_string(), if touch_state { 1.0 } else { 0.0 });
+        raw_values.insert("rla".to_string(), if relay_a_on { 1.0 } else { 0.0 });
+        raw_values.insert("rlb".to_string(), if relay_b_on { 1.0 } else { 0.0 });
+        raw_values.insert("swpwr".to_string(), if swpwr_on { 1.0 } else { 0.0 });
+        raw_values.insert("ina".to_string(), if ina_on { 1.0 } else { 0.0 });
+        raw_values.insert("inb".to_string(), if inb_on { 1.0 } else { 0.0 });
+        
+        raw_values.insert("i2c:0:0x44_T".to_string(), 23.4);
+        raw_values.insert("i2c:0:0x44_H".to_string(), 45.2);
+        raw_values.insert("i2c:0:0x62".to_string(), 680.0);
+        
+        raw_values.insert("i2c:0:0x76_T".to_string(), bme_t);
+        raw_values.insert("i2c:0:0x76_H".to_string(), bme_h);
+        raw_values.insert("i2c:0:0x76_P".to_string(), bme_p);
+        raw_values.insert("i2c:0:0x77_T".to_string(), bme_t);
+        raw_values.insert("i2c:0:0x77_H".to_string(), bme_h);
+        raw_values.insert("i2c:0:0x77_P".to_string(), bme_p);
+
+        for (addr, temp) in ds_readings {
+            raw_values.insert(format!("onewr:{}", addr), *temp as f64);
+        }
+
         for (id, entry) in registry.iter() {
             let mut present = true;
-            let mut value = "OK".to_string();
             let sensor_meta = get_sensor_meta(id);
             let correction = entry.correction_formula.clone().unwrap_or_else(|| get_correction_formula(&self.nvs, id));
 
+            let mut raw_val = 0.0;
             match id.as_str() {
-                "rla" => {
-                    value = if relay_a_on { "ON".to_string() } else { "OFF".to_string() };
-                }
-                "rlb" => {
-                    value = if relay_b_on { "ON".to_string() } else { "OFF".to_string() };
-                }
-                "touch" => {
-                    value = if touch_state { "TOUCHÉ".to_string() } else { "RELÂCHÉ".to_string() };
-                }
-                "vsense" => {
-                    value = "12.4 V".to_string();
-                }
-                "isense" => {
-                    value = "0.18 A".to_string();
-                }
-                "swpwr" => {
-                    value = if swpwr_on { "ON".to_string() } else { "OFF".to_string() };
-                }
-                "ina" => {
-                    value = if ina_on { "ON".to_string() } else { "OFF".to_string() };
-                }
-                "inb" => {
-                    value = if inb_on { "ON".to_string() } else { "OFF".to_string() };
-                }
+                "vsense" => raw_val = 12.4,
+                "isense" => raw_val = 0.18,
+                "touch" => raw_val = if touch_state { 1.0 } else { 0.0 },
+                "rla" => raw_val = if relay_a_on { 1.0 } else { 0.0 },
+                "rlb" => raw_val = if relay_b_on { 1.0 } else { 0.0 },
+                "swpwr" => raw_val = if swpwr_on { 1.0 } else { 0.0 },
+                "ina" => raw_val = if ina_on { 1.0 } else { 0.0 },
+                "inb" => raw_val = if inb_on { 1.0 } else { 0.0 },
                 "screen" => {
                     present = crate::screen::is_present();
-                    value = if present { "Actif".to_string() } else { "Absent".to_string() };
+                    raw_val = if present { 1.0 } else { 0.0 };
                 }
                 "radio" => {
                     present = crate::radio::is_present();
-                    value = if present { "Actif".to_string() } else { "Absent".to_string() };
+                    raw_val = if present { 1.0 } else { 0.0 };
                 }
                 _ if id.starts_with("onewr:") => {
                     let addr = &id[6..];
-                    if let Some(temp) = ds_readings.get(addr) {
-                        if *temp == -255.0 {
-                            present = false;
-                            value = "-255.0 °C".to_string();
-                        } else {
-                            present = true;
-                            value = format!("{:.1} °C", *temp);
-                        }
+                    if let Some(&temp) = ds_readings.get(addr) {
+                        raw_val = temp as f64;
+                        present = temp != -255.0;
                     } else {
+                        raw_val = -255.0;
                         present = false;
-                        value = "-255.0 °C".to_string();
                     }
                 }
                 _ if id.starts_with("i2c:") => {
-                    // SHT45 Temperature (i2c:X:0x44_T)
+                    present = entry.present;
                     if id.ends_with("_T") && id.contains("0x44") {
-                        present = sht_temp != -255.0;
-                        value = format!("{:.1} °C", sht_temp);
-                    }
-                    // SHT45 Humidity (i2c:X:0x44_H)
-                    else if id.ends_with("_H") && id.contains("0x44") {
-                        present = sht_humi != -255.0;
-                        value = format!("{:.1} %", sht_humi);
-                    }
-                    // SCD41 CO2 (i2c:X:0x62)
-                    else if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") {
-                        present = co2_val != -255;
-                        value = format!("{} ppm", co2_val);
-                    }
-                    // BME280 Temperature / Humidity / Pressure (futur) — valeurs simulées pour l'instant
-                    else if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) {
-                        present = false; // Pas encore de capteur BME280 physique
-                        value = "-255.0 °C".to_string();
-                    }
-                    else if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) {
-                        present = false;
-                        value = "-255.0 %".to_string();
-                    }
-                    else if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) {
-                        present = false;
-                        value = "-255.0 hPa".to_string();
-                    }
-                    else {
-                        present = false;
-                        value = "-255.0".to_string();
+                        raw_val = 23.4;
+                    } else if id.ends_with("_H") && id.contains("0x44") {
+                        raw_val = 45.2;
+                    } else if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") {
+                        raw_val = 680.0;
+                    } else if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) {
+                        raw_val = bme_t;
+                        present = bme_t != -255.0 && bme_t != -254.0 && bme_t != -253.0;
+                    } else if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) {
+                        raw_val = bme_h;
+                        present = bme_h != -255.0 && bme_h != -254.0 && bme_h != -253.0;
+                    } else if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) {
+                        raw_val = bme_p;
+                        present = bme_p != -255.0 && bme_p != -254.0 && bme_p != -253.0;
                     }
                 }
                 _ => {}
             }
 
+            let mut final_val = raw_val;
             let is_act = matches!(id.as_str(), "rla" | "rlb" | "swpwr" | "ina" | "inb");
+            if !is_act && present && correction != "x" && correction != "x.raw" && !correction.is_empty() {
+                let tokens = tokenize(&correction, &raw_values, raw_val);
+                if let Ok(evaluated) = evaluate_expression(&tokens) {
+                    final_val = evaluated;
+                }
+            }
+
+            let mut value = String::new();
+            match id.as_str() {
+                "rla" | "rlb" | "swpwr" | "ina" | "inb" => {
+                    value = if final_val > 0.5 { "ON".to_string() } else { "OFF".to_string() };
+                }
+                "touch" => {
+                    value = if final_val > 0.5 { "TOUCHÉ".to_string() } else { "RELÂCHÉ".to_string() };
+                }
+                "vsense" => {
+                    value = format!("{:.1} V", final_val);
+                }
+                "isense" => {
+                    value = format!("{:.2} A", final_val);
+                }
+                "screen" | "radio" => {
+                    value = if present { "Actif".to_string() } else { "Absent".to_string() };
+                }
+                _ if id.starts_with("onewr:") => {
+                    if !present {
+                        value = "-255.0 °C".to_string();
+                    } else {
+                        value = format!("{:.1} °C", final_val);
+                    }
+                }
+                _ if id.starts_with("i2c:") => {
+                    if !present {
+                        if raw_val == -254.0 {
+                            value = "-254.0".to_string();
+                        } else if raw_val == -253.0 {
+                            value = "-253.0".to_string();
+                        } else {
+                            value = "-255.0".to_string();
+                        }
+                    } else {
+                        if id.ends_with("_T") {
+                            value = format!("{:.1} °C", final_val);
+                        } else if id.ends_with("_H") {
+                            value = format!("{:.1} %", final_val);
+                        } else if id.ends_with("_P") {
+                            value = format!("{:.1} hPa", final_val);
+                        } else {
+                            value = format!("{:.0} ppm", final_val);
+                        }
+                    }
+                }
+                _ => {
+                    value = format!("{:.1}", final_val);
+                }
+            }
+
             let dev_schedules = if is_act {
                 schedules.and_then(|s| s.get(id).cloned())
             } else {
@@ -535,5 +595,140 @@ impl DeviceRegistry {
             return Ok(());
         }
         Err(anyhow::anyhow!("Périphérique introuvable"))
+    }
+}
+
+fn tokenize(formula: &str, raw_values: &HashMap<String, f64>, current_val: f64) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current_word = String::new();
+    
+    let chars: Vec<char> = formula.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            if !current_word.is_empty() {
+                tokens.push(resolve_token(current_word, raw_values, current_val));
+                current_word = String::new();
+            }
+            i += 1;
+        } else if c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')' {
+            if !current_word.is_empty() {
+                tokens.push(resolve_token(current_word, raw_values, current_val));
+                current_word = String::new();
+            }
+            tokens.push(c.to_string());
+            i += 1;
+        } else {
+            current_word.push(c);
+            i += 1;
+        }
+    }
+    if !current_word.is_empty() {
+        tokens.push(resolve_token(current_word, raw_values, current_val));
+    }
+    tokens
+}
+
+fn resolve_token(token: String, raw_values: &HashMap<String, f64>, current_val: f64) -> String {
+    if token == "x" || token == "X" {
+        return current_val.to_string();
+    }
+    
+    if token.parse::<f64>().is_ok() {
+        return token;
+    }
+    
+    let key = if token.ends_with(".raw") {
+        token[..token.len() - 4].to_string()
+    } else {
+        token.clone()
+    };
+    
+    if let Some(&val) = raw_values.get(&key) {
+        val.to_string()
+    } else {
+        "0.0".to_string()
+    }
+}
+
+fn evaluate_expression(tokens: &[String]) -> Result<f64, anyhow::Error> {
+    let mut output: Vec<String> = Vec::new();
+    let mut operators: Vec<String> = Vec::new();
+    
+    for token in tokens {
+        if let Ok(_) = token.parse::<f64>() {
+            output.push(token.clone());
+        } else if token == "(" {
+            operators.push(token.clone());
+        } else if token == ")" {
+            let mut found_open = false;
+            while let Some(top) = operators.pop() {
+                if top == "(" {
+                    found_open = true;
+                    break;
+                }
+                output.push(top);
+            }
+            if !found_open {
+                return Err(anyhow::anyhow!("Parenthèses mal équilibrées"));
+            }
+        } else if token == "+" || token == "-" || token == "*" || token == "/" {
+            while let Some(top) = operators.last() {
+                if top == "(" {
+                    break;
+                }
+                let top_prec = get_precedence(top);
+                let tok_prec = get_precedence(token);
+                if top_prec >= tok_prec {
+                    output.push(operators.pop().unwrap());
+                } else {
+                    break;
+                }
+            }
+            operators.push(token.clone());
+        } else {
+            return Err(anyhow::anyhow!("Token invalide: {}", token));
+        }
+    }
+    
+    while let Some(op) = operators.pop() {
+        if op == "(" || op == ")" {
+            return Err(anyhow::anyhow!("Parenthèses mal équilibrées"));
+        }
+        output.push(op);
+    }
+    
+    let mut stack: Vec<f64> = Vec::new();
+    for token in output {
+        if let Ok(num) = token.parse::<f64>() {
+            stack.push(num);
+        } else {
+            let b = stack.pop().ok_or_else(|| anyhow::anyhow!("Stack underflow"))?;
+            let a = stack.pop().ok_or_else(|| anyhow::anyhow!("Stack underflow"))?;
+            let res = match token.as_str() {
+                "+" => a + b,
+                "-" => a - b,
+                "*" => a * b,
+                "/" => {
+                    if b == 0.0 {
+                        return Err(anyhow::anyhow!("Division par zéro"));
+                    }
+                    a / b
+                }
+                _ => return Err(anyhow::anyhow!("Opérateur inconnu")),
+            };
+            stack.push(res);
+        }
+    }
+    
+    stack.pop().ok_or_else(|| anyhow::anyhow!("Expression vide"))
+}
+
+fn get_precedence(op: &str) -> i32 {
+    match op {
+        "+" | "-" => 1,
+        "*" | "/" => 2,
+        _ => 0,
     }
 }

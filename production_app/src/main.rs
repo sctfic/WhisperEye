@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.1.3-0018";
+const FW_VERSION: &str = "1.1.3-0083";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -48,6 +48,7 @@ mod ds18b20;
 mod i2c_bus;
 mod screen;
 mod radio;
+mod touch;
 
 use wifi::{NetManager, NetState};
 use common::nvs_storage::NvsStorage;
@@ -333,12 +334,41 @@ fn main() -> Result<()> {
     unsafe {
         esp_idf_sys::esp_task_wdt_deinit();
     }
-    info!("Task Watchdog Timer désactivé.");
+    println!("DEBUG: Task Watchdog Timer deinitialized");
     
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
+    println!("DEBUG: Peripherals taken");
+    
+    // Initialiser NVS et Event Loop en premier pour éviter tout conflit avec les threads écran/RMT
+    println!("DEBUG: Taking system event loop...");
+    let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
+    println!("DEBUG: System event loop taken");
+
+    println!("DEBUG: Taking NVS partition...");
+    let nvs_default = EspDefaultNvsPartition::take().context("Failed to take NVS Partition")?;
+    println!("DEBUG: NVS partition taken. Initializing NVS Storage...");
+
+    // Initialize NVS Storage helper
+    let nvs_storage = Arc::new(Mutex::new(NvsStorage::new(nvs_default.clone())?));
+    println!("DEBUG: NVS Storage initialized");
+
+    // Initialize Static Devices from pins
+    let static_devs = Arc::new(std::sync::Mutex::new(static_devices::StaticDevices::init(
+        peripherals.pins.gpio9,
+        peripherals.pins.gpio47,
+        peripherals.pins.gpio21,
+        peripherals.pins.gpio14,
+        peripherals.pins.gpio36,
+        peripherals.pins.gpio35,
+    )?));
+    println!("DEBUG: Static devices initialized");
+
+    // Shared actuator state
+    let actuators_state = Arc::new(Mutex::new(actuators::ActuatorsState::default()));
+    println!("DEBUG: Actuators state initialized");
 
     // Initialisation de l'écran ST7789
-    info!("Initialisation de l'écran ST7789...");
+    println!("DEBUG: Initializing screen...");
     if let Err(e) = screen::init_screen(
         peripherals.spi2,
         peripherals.pins.gpio7,
@@ -347,6 +377,15 @@ fn main() -> Result<()> {
         peripherals.pins.gpio4,
         peripherals.pins.gpio5,
         peripherals.pins.gpio6,
+        peripherals.pins.gpio17,
+        peripherals.pins.gpio18,
+        peripherals.pins.gpio8,
+        peripherals.pins.gpio3,
+        peripherals.adc1,
+        peripherals.pins.gpio1,
+        peripherals.pins.gpio2,
+        Arc::clone(&static_devs),
+        Arc::clone(&actuators_state),
     ) {
         log::error!("Échec de l'initialisation de l'écran : {:?}", e);
     } else {
@@ -359,12 +398,11 @@ fn main() -> Result<()> {
         common::led::init_led(peripherals.rmt.channel0, peripherals.pins.gpio48)
             .context("Failed to init RMT LED driver")?;
     }
+    println!("DEBUG: LED RMT initialized");
 
     // La LED est gérée par le thread pattern (led.rs) via set_sta_status/set_ap_status
 
     info!("\x1b[35mWhisperEye Production Application Starting Up (Version {})...\x1b[0m", FW_VERSION);
-
-    let sys_loop = EspSystemEventLoop::take().context("Failed to take System Event Loop")?;
 
     // Log SoftAP client connection attempts (station connected/disconnected)
     let _wifi_event_sub = sys_loop.subscribe::<esp_idf_svc::wifi::WifiEvent, _>(|event| {
@@ -383,10 +421,7 @@ fn main() -> Result<()> {
             _ => {}
         }
     })?;
-    let nvs_default = EspDefaultNvsPartition::take().context("Failed to take NVS Partition")?;
-
-    // Initialize NVS Storage helper
-    let nvs_storage = Arc::new(Mutex::new(NvsStorage::new(nvs_default.clone())?));
+    println!("DEBUG: WiFi event sub created.");
     
     // Shared repository URL validation state
     let url_validation_state = Arc::new(Mutex::new(UrlValidationState::NotChecked));
@@ -394,6 +429,7 @@ fn main() -> Result<()> {
     // Set version name in NVS, update otaRetry and lastOtaSuccess on successful boot
     {
         let mut storage = nvs_storage.lock().unwrap();
+        println!("DEBUG: NVS Storage lock taken. Resetting otaRetry...");
         let saved_version = storage.get_str("fwVersion")?.unwrap_or_else(|| "empty".to_string());
         
         // If we are booting a new firmware version (either empty or upgraded)
@@ -409,7 +445,9 @@ fn main() -> Result<()> {
         // Always reset otaRetry to -1 when booting successfully on production
         let _ = storage.set_i32("otaRetry", -1);
         
+        println!("DEBUG: NVS Storage dumping logs...");
         let _ = storage.dump_to_log();
+        println!("DEBUG: NVS Storage dump complete");
     }
 
     // Unpack peripherals components to prevent borrow-checker moves
@@ -417,33 +455,31 @@ fn main() -> Result<()> {
     let boot_pin_gpio = peripherals.pins.gpio0;
     let modem = peripherals.modem;
 
-    // Initialize Static Devices from pins
-    let static_devs = Arc::new(std::sync::Mutex::new(static_devices::StaticDevices::init(
-        peripherals.pins.gpio9,
-        peripherals.pins.gpio47,
-        peripherals.pins.gpio21,
-        peripherals.pins.gpio14,
-        peripherals.pins.gpio36,
-        peripherals.pins.gpio35,
-    )?));
+    // static_devs already initialized early
 
 
     // Scan 1-Wire bus dynamically at boot
     let onewr_pin = peripherals.pins.gpio39;
+    println!("DEBUG: Starting 1-Wire bus initialization...");
     let (discovered_probes, onewire_bus) = if let Ok(mut ow) = ds18b20::OneWire::new(onewr_pin) {
+        println!("DEBUG: 1-Wire initialized. Searching ROMs...");
         let probes = ow.search_roms();
+        println!("DEBUG: 1-Wire ROM search complete");
         (probes, Some(Arc::new(Mutex::new(ow))))
     } else {
+        println!("DEBUG: 1-Wire initialization failed");
         (Vec::new(), None)
     };
     info!("Dynamic 1-Wire scan found {} DS18B20 probes.", discovered_probes.len());
     let discovered_probes = Arc::new(discovered_probes);
 
+    println!("DEBUG: Starting DeviceRegistry scan_and_register...");
     // Register all static and dynamic devices in NVS registry
     {
         let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&nvs_storage));
         let _ = registry.scan_and_register((*discovered_probes).clone());
     }
+    println!("DEBUG: DeviceRegistry scan_and_register completed!");
 
     // Read provisioning channel from NVS. The old mesh fields are kept for NVS/UI compatibility.
     let (mesh_channel, mesh_ssid, mesh_pmk) = {
@@ -592,8 +628,7 @@ fn main() -> Result<()> {
         Arc::clone(&mesh_state),
     )?;
 
-    // Shared actuator state and scheduled actions
-    let actuators_state = Arc::new(Mutex::new(actuators::ActuatorsState::default()));
+    // Scheduled actions (actuators_state already initialized early)
     let scheduled_actions = Arc::new(Mutex::new(actuators::ScheduledActions::default()));
 
     // Spawn robust periodic task scheduler
@@ -967,6 +1002,7 @@ fn main() -> Result<()> {
     let udp_act = Arc::clone(&actuators_state);
     let udp_sched = Arc::clone(&scheduled_actions);
     let udp_bus = onewire_bus.clone();
+    let udp_static_devs = Arc::clone(&static_devs);
     thread::Builder::new()
         .name("udp_discovery".to_string())
         .stack_size(16384)
@@ -986,7 +1022,7 @@ fn main() -> Result<()> {
                         let msg = std::str::from_utf8(&buf[..amt]).unwrap_or("").trim();
                         if msg == "DISCOVER_WHISPEREYE" {
                             log::info!("UDP Discovery: Received query from {}", src);
-                            match build_capacity_info(&udp_nvs, &udp_probes, &udp_act, &udp_sched, udp_bus.as_ref().map(|b| b.as_ref())) {
+                            match build_capacity_info(&udp_nvs, &udp_probes, &udp_act, &udp_sched, udp_bus.as_ref().map(|b| b.as_ref()), &udp_static_devs) {
                                 Ok(cap) => {
                                     if let Ok(resp_str) = serde_json::to_string(&cap) {
                                         if let Err(e) = socket.send_to(resp_str.as_bytes(), src) {
@@ -1016,9 +1052,10 @@ fn main() -> Result<()> {
     let cap_mesh = Arc::clone(&mesh_state);
     let cap_sched = Arc::clone(&scheduled_actions);
     let cap_bus = onewire_bus.clone();
+    let cap_static_devs = Arc::clone(&static_devs);
     server.fn_handler("/api/capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(cap_mesh);
-        match build_capacity_info(&cap_nvs, &cap_probes, &cap_act, &cap_sched, cap_bus.as_ref().map(|b| b.as_ref())) {
+        match build_capacity_info(&cap_nvs, &cap_probes, &cap_act, &cap_sched, cap_bus.as_ref().map(|b| b.as_ref()), &cap_static_devs) {
             Ok(cap_json) => {
                 let response_data = serde_json::to_string(&cap_json)?;
                 let mut response = req.into_response(200, Some("OK"), &[
@@ -1168,13 +1205,17 @@ fn main() -> Result<()> {
     let periphs_mesh = Arc::clone(&mesh_state);
     let periphs_sched = Arc::clone(&scheduled_actions);
     let periphs_bus = onewire_bus.clone();
+    let periphs_static_devs = Arc::clone(&static_devs);
     server.fn_handler("/api/peripherals", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(periphs_mesh);
         let (rla, rlb, swpwr, ina, inb) = {
             let act = periphs_act.lock().unwrap();
             (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
         };
-        let touch_state = false; // default touch status
+        let touch_state = {
+            let devs = periphs_static_devs.lock().unwrap();
+            devs.touch.is_pressed().unwrap_or(false)
+        };
         
         let readings = sensors::read_sensors(periphs_bus.as_ref().map(|b| b.as_ref()), &periphs_probes);
         let mut ds_readings = std::collections::HashMap::new();
@@ -2076,12 +2117,16 @@ fn build_capacity_info(
     cap_act: &Arc<Mutex<ActuatorsState>>,
     cap_sched: &Arc<Mutex<actuators::ScheduledActions>>,
     cap_bus: Option<&Mutex<ds18b20::OneWire>>,
+    cap_static_devs: &Arc<Mutex<static_devices::StaticDevices>>,
 ) -> Result<serde_json::Value, anyhow::Error> {
     let (rla, rlb, swpwr, ina, inb) = {
         let act = cap_act.lock().unwrap();
         (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
     };
-    let touch_state = false;
+    let touch_state = {
+        let devs = cap_static_devs.lock().unwrap();
+        devs.touch.is_pressed().unwrap_or(false)
+    };
     
     let readings = sensors::read_sensors(cap_bus, cap_probes);
     let mut ds_readings = std::collections::HashMap::new();
@@ -2300,6 +2345,96 @@ fn build_capacity_info(
         "actuators": actuators,
     }))
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

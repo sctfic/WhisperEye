@@ -18,9 +18,9 @@ impl<'d> OneWire<'d> {
             self.pin.set_low().unwrap();
             Ets::delay_us(480);
             self.pin.set_high().unwrap();
-            Ets::delay_us(70);
+            Ets::delay_us(65);
             let presence = self.pin.is_low();
-            Ets::delay_us(410);
+            Ets::delay_us(415);
             presence
         })
     }

@@ -30,7 +30,10 @@ Write-Host "[*] Configuring ESP Toolchain and Cargo environment..." -ForegroundC
 $env:CARGO_TARGET_DIR = "C:\t\we"
 $env:LDPROXY_LINKER = "xtensa-esp32s3-elf-gcc"
 $env:CARGO_TARGET_XTENSA_ESP32S3_ESPIDF_RUNNER = "espflash flash"
+$env:CARGO_WORKSPACE_DIR = $PSScriptRoot
+$env:ESP_IDF_TOOLS_INSTALL_DIR = "custom:C:\t\.embuild"
 Write-Host "    -> Target Directory set to: $env:CARGO_TARGET_DIR (bypassing Windows path limits)" -ForegroundColor DarkGray
+Write-Host "    -> Workspace Directory set to: $env:CARGO_WORKSPACE_DIR" -ForegroundColor DarkGray
 Write-Host "    -> LDProxy Linker set to: $env:LDPROXY_LINKER" -ForegroundColor DarkGray
 
 $EspExportScript = "C:\Users\Alban\export-esp.ps1"
@@ -253,20 +256,21 @@ if ($Target -eq "minimalist") {
     }
 
     $BuildProfile = if ($Debug) { "debug" } else { "release" }
-    Write-Host "[*] Compiling target package: minimalist_led ($BuildProfile)..." -ForegroundColor Cyan
-    $BuildCommand = "cargo +esp build --package minimalist_led"
+    $env:ESP_IDF_SYS_ROOT_CRATE = "minimalist_test"
+    Write-Host "[*] Compiling target package: minimalist_test ($BuildProfile)..." -ForegroundColor Cyan
+    $BuildCommand = "cargo +esp build --package minimalist_test"
     if (-not $Debug) {
         $BuildCommand += " --release"
     }
     Write-Host "    -> Invoking command: $BuildCommand" -ForegroundColor DarkGray
     Invoke-Expression $BuildCommand
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[-] Compilation of minimalist_led failed!" -ForegroundColor Red
+        Write-Host "[-] Compilation of minimalist_test failed!" -ForegroundColor Red
         exit 1
     }
     
-    Write-Host "[*] Uploading minimalist_led onto 'production' partition..." -ForegroundColor Cyan
-    $FlashCommand = "cargo +esp espflash flash --flash-size 16mb --package minimalist_led --partition-table partitions.csv --target-app-partition production --monitor"
+    Write-Host "[*] Uploading minimalist_test onto 'production' partition..." -ForegroundColor Cyan
+    $FlashCommand = "cargo +esp espflash flash --flash-size 16mb --package minimalist_test --partition-table partitions.csv --target-app-partition production --monitor"
     if (-not $Debug) {
         $FlashCommand += " --release"
     }
@@ -279,11 +283,11 @@ if ($Target -eq "minimalist") {
     } catch {}
     
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[-] Flashing of minimalist_led failed!" -ForegroundColor Red
+        Write-Host "[-] Flashing of minimalist_test failed!" -ForegroundColor Red
         exit 1
     }
     
-    Write-Host "[+] Flashing of minimalist_led completed successfully!" -ForegroundColor Green
+    Write-Host "[+] Flashing of minimalist_test completed successfully!" -ForegroundColor Green
     exit 0
 }
 
@@ -322,6 +326,7 @@ if ($Target -eq "all") {
 
     # Compilation 1/2: recovery_boot
     $BuildProfile = if ($Debug) { "debug" } else { "release" }
+    $env:ESP_IDF_SYS_ROOT_CRATE = "recovery_boot"
     Write-Host "[*] [1/2] Compiling recovery_boot ($BuildProfile)..." -ForegroundColor Cyan
     if ($Debug) {
         cargo +esp build --package recovery_boot
@@ -352,6 +357,7 @@ if ($Target -eq "all") {
     $NewVersion = Increment-ProductionVersion -StableBuild $Stable
 
     # Compilation 2/2: production_app
+    $env:ESP_IDF_SYS_ROOT_CRATE = "production_app"
     Write-Host "[*] [2/2] Compiling production_app ($BuildProfile)..." -ForegroundColor Cyan
     if ($Debug) {
         cargo +esp build --package production_app
@@ -383,7 +389,7 @@ if ($Target -eq "all") {
 
     # Flashing 1/2: recovery_boot (NO monitor, keep in bootloader)
     Write-Host "[*] [1/2] Flashing recovery_boot onto 'recovery' partition (keeping bootloader active)..." -ForegroundColor Cyan
-    $FlashRecovery = "cargo +esp espflash flash --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery --after no-reset"
+    $FlashRecovery = "cargo +esp espflash flash --baud 2000000 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery --after no-reset"
     if (-not $Debug) { $FlashRecovery += " --release" }
     if ($Port) { $FlashRecovery += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashRecovery" -ForegroundColor DarkGray
@@ -401,7 +407,7 @@ if ($Target -eq "all") {
 
     # Flashing 1.5/2: otadata (to point boot to production/ota_0)
     Write-Host "[*] [1.5/2] Flashing otadata_ota0.bin onto 'otadata' partition..." -ForegroundColor Cyan
-    $FlashOtaData = "cargo +esp espflash write-bin --before no-reset --after no-reset 0xf000 otadata_ota0.bin"
+    $FlashOtaData = "cargo +esp espflash write-bin --baud 2000000 --before no-reset --after no-reset 0xf000 otadata_ota0.bin"
     if ($Port) { $FlashOtaData += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashOtaData" -ForegroundColor DarkGray
     try {
@@ -414,7 +420,7 @@ if ($Target -eq "all") {
 
     # Flashing 2/2: production_app (WITH monitor)
     Write-Host "[*] [2/2] Flashing production_app onto 'production' partition..." -ForegroundColor Cyan
-    $FlashProd = "cargo +esp espflash flash --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production --before no-reset --monitor"
+    $FlashProd = "cargo +esp espflash flash --baud 2000000 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production --before no-reset --monitor"
     if (-not $Debug) { $FlashProd += " --release" }
     if ($Port) { $FlashProd += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashProd" -ForegroundColor DarkGray
@@ -449,6 +455,7 @@ if ($Package -eq "production_app") {
 } elseif ($Package -eq "recovery_boot") {
     $NewRecoveryVersion = Increment-RecoveryVersion
 }
+$env:ESP_IDF_SYS_ROOT_CRATE = $Package
 Write-Host "[*] Compiling target package: $Package ($BuildProfile)..." -ForegroundColor Cyan
 if ($Debug) {
     cargo +esp build --package $Package
@@ -515,7 +522,7 @@ if ($Target -eq "recovery") {
 }
 
 # Flash the firmware image
-$FlashCommand = "cargo +esp espflash flash --flash-size 16mb --package $Package --partition-table partitions.csv"
+$FlashCommand = "cargo +esp espflash flash --baud 2000000 --flash-size 16mb --package $Package --partition-table partitions.csv"
 if ($Target -eq "production") {
     $FlashCommand += " --target-app-partition production"
 }
@@ -554,7 +561,7 @@ if ($Target -eq "production") {
     Start-Sleep -Seconds 2
 
     Write-Host "[*] Flashing otadata_ota0.bin onto 'otadata' partition and starting monitor..." -ForegroundColor Cyan
-    $FlashOtaData = "cargo +esp espflash write-bin 0xf000 otadata_ota0.bin --monitor"
+    $FlashOtaData = "cargo +esp espflash write-bin --baud 2000000 0xf000 otadata_ota0.bin --monitor"
     if ($Port) { $FlashOtaData += " --port $Port" }
     Write-Host "    -> Invoking command: $FlashOtaData" -ForegroundColor DarkGray
     if (-not $NoTests) {

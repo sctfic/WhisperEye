@@ -3,7 +3,7 @@ members = [
     "common",
     "recovery_boot",
     "production_app",
-    "minimalist_led"
+    "minimalist_test"
 ]
 resolver = "2"
 

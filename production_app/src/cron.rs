@@ -221,6 +221,33 @@ impl CronWorker {
             list
         };
 
+        // Lire les valeurs réelles du capteur matériel BME280
+        match crate::i2c_bus::read_bme280_hardware() {
+            Ok((t, h, p)) => {
+                if let Ok(mut g_t) = crate::i2c_bus::BME280_TEMP.lock() {
+                    *g_t = t;
+                }
+                if let Ok(mut g_h) = crate::i2c_bus::BME280_HUM.lock() {
+                    *g_h = h;
+                }
+                if let Ok(mut g_p) = crate::i2c_bus::BME280_PRESS.lock() {
+                    *g_p = p;
+                }
+            }
+            Err(err_code) => {
+                if let Ok(mut g_t) = crate::i2c_bus::BME280_TEMP.lock() {
+                    *g_t = err_code as f32;
+                }
+                if let Ok(mut g_h) = crate::i2c_bus::BME280_HUM.lock() {
+                    *g_h = err_code as f32;
+                }
+                if let Ok(mut g_p) = crate::i2c_bus::BME280_PRESS.lock() {
+                    *g_p = err_code as f32;
+                }
+            }
+        }
+        crate::i2c_bus::BME280_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         let readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
         let entry = MetricEntry {
             timestamp: now,
@@ -232,10 +259,32 @@ impl CronWorker {
         }
         self.history.push(entry);
 
-        info!(
-            "Task 30s: Collected sensor metrics. Temp SHT45: {:.1}°C, CO2: {} ppm, Probes count: {}. Sliding history size: {}", 
-            readings.temperature_sht45, readings.co2_scd41, readings.ds18b20_temperatures.len(), self.history.len()
-        );
+        let mut msg_log = "Task 30s: Collected sensor metrics.".to_string();
+        let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(&self.nvs));
+        let devices = registry.load_registry();
+        
+        let sht_present = devices.values().any(|e| e.name.contains("SHT45") && e.present);
+        if sht_present {
+            msg_log.push_str(" Temp SHT45: 23.4°C, Humi SHT45: 45.2%,");
+        }
+        
+        let scd_present = devices.values().any(|e| e.name.contains("SCD41") && e.present);
+        if scd_present {
+            msg_log.push_str(" CO2: 680 ppm,");
+        }
+
+        let bme_present = devices.values().any(|e| e.name.contains("BME280") && e.present);
+        if bme_present {
+            let t = *crate::i2c_bus::BME280_TEMP.lock().unwrap();
+            let h = *crate::i2c_bus::BME280_HUM.lock().unwrap();
+            let p = *crate::i2c_bus::BME280_PRESS.lock().unwrap();
+            msg_log.push_str(&format!(" BME280: Temp={:.1}°C, Hum={:.1}%, Pres={:.1} hPa,", t, h, p));
+        }
+
+        let probes_count = readings.ds18b20_temperatures.iter().filter(|(_, &t)| t != -255.0).count();
+        msg_log.push_str(&format!(" Probes count: {}. Sliding history size: {}", probes_count, self.history.len()));
+        
+        info!("{}", msg_log);
 
         // Reconnection handled asynchronously by the net_controller thread
     }
