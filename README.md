@@ -162,10 +162,10 @@ Le système tourne sur une carte matérielle propriétaire basée sur la puce **
 
 | Visuel Physique | Plan Mécanique |
 |:---:|:---:|
-| ![Visuel de la carte](./production_app/carte.png) | ![Plan mécanique](./production_app/plan.png) |
+| ![Visuel de la carte](./production_app/board_top.png) | ![Plan mécanique](./production_app/plan.png) |
 
 * **Schéma Électronique** :
-  ![Schéma de principe électronique](./production_app/schema.png)
+  ![Schéma de principe électronique](./production_app/schematic_board.png)
 * **Brochage complet de la carte** (détail du fichier [S3-pin.tsv](./production_app/S3-pin.tsv)) :
 
 | Signal / Label | GPIO (ESP32-S3) | Description |
