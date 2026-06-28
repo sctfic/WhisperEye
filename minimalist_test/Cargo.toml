@@ -1,0 +1,17 @@
+[package]
+name = "minimalist_test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+log = "0.4"
+esp-idf-svc = { version = "0.52", features = ["alloc"] }
+esp-idf-hal = { version = "0.46", features = ["critical-section"] }
+esp-idf-sys = { version = "0.37", features = ["binstart"] }
+critical-section = "1.2.0"
+
+[build-dependencies]
+embuild = "0.33"
+
+
