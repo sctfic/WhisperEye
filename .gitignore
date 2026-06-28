@@ -2,6 +2,6 @@ target/
 otadata_*.bin
 Cargo.lock
 a faire.txt
-minimalist_test/
 boards/board_default/firmware-s3.json
 .embuild/
+components_esp32s3.lock

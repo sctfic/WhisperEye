@@ -4,12 +4,32 @@ use std::time::SystemTime;
 use std::sync::Mutex;
 use crate::ds18b20::OneWire;
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SensorReadings {
     pub temperature_sht45: f32,
     pub humidity_sht45: f32,
     pub co2_scd41: i32,
     pub ds18b20_temperatures: HashMap<String, f32>,
+}
+
+impl serde::Serialize for SensorReadings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(None)?;
+        
+        map.serialize_entry("i2c:0:0x44_T", &self.temperature_sht45)?;
+        map.serialize_entry("i2c:0:0x44_H", &self.humidity_sht45)?;
+        map.serialize_entry("i2c:0:0x62", &self.co2_scd41)?;
+        
+        for (addr, temp) in &self.ds18b20_temperatures {
+            map.serialize_entry(&format!("onewr:{}", addr), temp)?;
+        }
+        
+        map.end()
+    }
 }
 
 pub fn read_sensors(

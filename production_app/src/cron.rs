@@ -248,7 +248,8 @@ impl CronWorker {
         }
         crate::i2c_bus::BME280_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
+        let mut readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
+        crate::dynamic_devices::apply_sensor_corrections(&self.nvs, &mut readings);
         let entry = MetricEntry {
             timestamp: now,
             readings: readings.clone(),

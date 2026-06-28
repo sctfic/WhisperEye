@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.1.3-0083";
+const FW_VERSION: &str = "1.1.4";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -1189,9 +1189,11 @@ fn main() -> Result<()> {
     let sensors_probes_clone = Arc::clone(&discovered_probes);
     let sensors_mesh = Arc::clone(&mesh_state);
     let sensors_bus = onewire_bus.clone();
+    let sensors_nvs = Arc::clone(&nvs_storage);
     server.fn_handler("/api/sensors", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(sensors_mesh);
-        let readings = sensors::read_sensors(sensors_bus.as_ref().map(|b| b.as_ref()), &sensors_probes_clone);
+        let mut readings = sensors::read_sensors(sensors_bus.as_ref().map(|b| b.as_ref()), &sensors_probes_clone);
+        dynamic_devices::apply_sensor_corrections(&sensors_nvs, &mut readings);
         let response_data = serde_json::to_string(&readings)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
@@ -2345,6 +2347,10 @@ fn build_capacity_info(
         "actuators": actuators,
     }))
 }
+
+
+
+
 
 
 

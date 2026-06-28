@@ -45,7 +45,10 @@ pub struct DeviceDisplay {
     pub is_static: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub present: Option<bool>,
-    pub value: String,
+    pub value: serde_json::Value,
+    pub unit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<f64>,
     /// Métadonnées du capteur (incertitude, plage, unité) — None pour les actuateurs
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sensor_meta: Option<SensorMeta>,
@@ -478,53 +481,69 @@ impl DeviceRegistry {
                 }
             }
 
-            let mut value = String::new();
+            let mut value = serde_json::Value::Null;
+            let mut unit = String::new();
             match id.as_str() {
                 "rla" | "rlb" | "swpwr" | "ina" | "inb" => {
-                    value = if final_val > 0.5 { "ON".to_string() } else { "OFF".to_string() };
+                    value = serde_json::json!(if final_val > 0.5 { "ON" } else { "OFF" });
                 }
                 "touch" => {
-                    value = if final_val > 0.5 { "TOUCHÉ".to_string() } else { "RELÂCHÉ".to_string() };
+                    value = serde_json::json!(if final_val > 0.5 { "TOUCHÉ" } else { "RELÂCHÉ" });
                 }
                 "vsense" => {
-                    value = format!("{:.1} V", final_val);
+                    let val_rounded = (final_val * 10.0).round() / 10.0;
+                    value = serde_json::json!(val_rounded);
+                    unit = "V".to_string();
                 }
                 "isense" => {
-                    value = format!("{:.2} A", final_val);
+                    let val_rounded = (final_val * 100.0).round() / 100.0;
+                    value = serde_json::json!(val_rounded);
+                    unit = "A".to_string();
                 }
                 "screen" | "radio" => {
-                    value = if present { "Actif".to_string() } else { "Absent".to_string() };
+                    value = serde_json::json!(if present { "Actif" } else { "Absent" });
                 }
                 _ if id.starts_with("onewr:") => {
                     if !present {
-                        value = "-255.0 °C".to_string();
+                        value = serde_json::json!(-255.0);
                     } else {
-                        value = format!("{:.1} °C", final_val);
+                        let val_rounded = (final_val * 10.0).round() / 10.0;
+                        value = serde_json::json!(val_rounded);
                     }
+                    unit = "°C".to_string();
                 }
                 _ if id.starts_with("i2c:") => {
                     if !present {
                         if raw_val == -254.0 {
-                            value = "-254.0".to_string();
+                            value = serde_json::json!(-254.0);
                         } else if raw_val == -253.0 {
-                            value = "-253.0".to_string();
+                            value = serde_json::json!(-253.0);
                         } else {
-                            value = "-255.0".to_string();
+                            value = serde_json::json!(-255.0);
                         }
                     } else {
                         if id.ends_with("_T") {
-                            value = format!("{:.1} °C", final_val);
+                            let val_rounded = (final_val * 10.0).round() / 10.0;
+                            value = serde_json::json!(val_rounded);
+                            unit = "°C".to_string();
                         } else if id.ends_with("_H") {
-                            value = format!("{:.1} %", final_val);
+                            let val_rounded = (final_val * 10.0).round() / 10.0;
+                            value = serde_json::json!(val_rounded);
+                            unit = "%".to_string();
                         } else if id.ends_with("_P") {
-                            value = format!("{:.1} hPa", final_val);
+                            let val_rounded = (final_val * 10.0).round() / 10.0;
+                            value = serde_json::json!(val_rounded);
+                            unit = "hPa".to_string();
                         } else {
-                            value = format!("{:.0} ppm", final_val);
+                            let val_rounded = final_val.round();
+                            value = serde_json::json!(val_rounded);
+                            unit = "ppm".to_string();
                         }
                     }
                 }
                 _ => {
-                    value = format!("{:.1}", final_val);
+                    let val_rounded = (final_val * 10.0).round() / 10.0;
+                    value = serde_json::json!(val_rounded);
                 }
             }
 
@@ -533,12 +552,21 @@ impl DeviceRegistry {
             } else {
                 None
             };
+
+            let raw_field = if is_act || id == "screen" || id == "radio" {
+                None
+            } else {
+                Some(raw_val)
+            };
+
             list.push(DeviceDisplay {
                 id: id.to_string(),
                 name: entry.name.clone(),
                 is_static: entry.is_static,
                 present: if is_act { None } else { Some(present) },
                 value,
+                unit,
+                raw: raw_field,
                 sensor_meta,
                 correction_formula: if is_act { None } else { Some(correction) },
                 schedules: dev_schedules,
@@ -732,3 +760,110 @@ fn get_precedence(op: &str) -> i32 {
         _ => 0,
     }
 }
+
+/// Applique les formules de correction stockées en NVS sur les mesures réelles des capteurs.
+pub fn apply_sensor_corrections(
+    nvs: &Arc<Mutex<NvsStorage>>,
+    readings: &mut crate::sensors::SensorReadings,
+) {
+    let mut raw_values = HashMap::new();
+    
+    // Valeurs statiques/actionneurs pour l'évaluation des formules
+    raw_values.insert("vsense".to_string(), 12.4);
+    raw_values.insert("isense".to_string(), 0.18);
+    raw_values.insert("touch".to_string(), 0.0);
+    raw_values.insert("rla".to_string(), 0.0);
+    raw_values.insert("rlb".to_string(), 0.0);
+    raw_values.insert("swpwr".to_string(), 0.0);
+    raw_values.insert("ina".to_string(), 0.0);
+    raw_values.insert("inb".to_string(), 0.0);
+    
+    // Valeurs réelles des capteurs
+    raw_values.insert("i2c:0:0x44_T".to_string(), readings.temperature_sht45 as f64);
+    raw_values.insert("i2c:0:0x44_H".to_string(), readings.humidity_sht45 as f64);
+    raw_values.insert("i2c:0:0x62".to_string(), readings.co2_scd41 as f64);
+    
+    let bme_t = {
+        if let Ok(lock) = crate::i2c_bus::BME280_TEMP.lock() {
+            *lock as f64
+        } else {
+            -255.0
+        }
+    };
+    let bme_h = {
+        if let Ok(lock) = crate::i2c_bus::BME280_HUM.lock() {
+            *lock as f64
+        } else {
+            -255.0
+        }
+    };
+    let bme_p = {
+        if let Ok(lock) = crate::i2c_bus::BME280_PRESS.lock() {
+            *lock as f64
+        } else {
+            -255.0
+        }
+    };
+    
+    raw_values.insert("i2c:0:0x76_T".to_string(), bme_t);
+    raw_values.insert("i2c:0:0x76_H".to_string(), bme_h);
+    raw_values.insert("i2c:0:0x76_P".to_string(), bme_p);
+    raw_values.insert("i2c:0:0x77_T".to_string(), bme_t);
+    raw_values.insert("i2c:0:0x77_H".to_string(), bme_h);
+    raw_values.insert("i2c:0:0x77_P".to_string(), bme_p);
+    
+    for (addr, temp) in &readings.ds18b20_temperatures {
+        raw_values.insert(format!("onewr:{}", addr), *temp as f64);
+    }
+    
+    // 2. Corriger la température SHT45
+    if readings.temperature_sht45 != -255.0 {
+        let id = "i2c:0:0x44_T";
+        let correction = get_correction_formula(nvs, id);
+        if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+            let tokens = tokenize(&correction, &raw_values, readings.temperature_sht45 as f64);
+            if let Ok(evaluated) = evaluate_expression(&tokens) {
+                readings.temperature_sht45 = evaluated as f32;
+            }
+        }
+    }
+    
+    // 3. Corriger l'humidité SHT45
+    if readings.humidity_sht45 != -255.0 {
+        let id = "i2c:0:0x44_H";
+        let correction = get_correction_formula(nvs, id);
+        if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+            let tokens = tokenize(&correction, &raw_values, readings.humidity_sht45 as f64);
+            if let Ok(evaluated) = evaluate_expression(&tokens) {
+                readings.humidity_sht45 = evaluated as f32;
+            }
+        }
+    }
+    
+    // 4. Corriger le CO2 SCD41
+    if readings.co2_scd41 != -255 {
+        let id = "i2c:0:0x62";
+        let correction = get_correction_formula(nvs, id);
+        if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+            let tokens = tokenize(&correction, &raw_values, readings.co2_scd41 as f64);
+            if let Ok(evaluated) = evaluate_expression(&tokens) {
+                readings.co2_scd41 = evaluated as i32;
+            }
+        }
+    }
+    
+    // 5. Corriger les sondes DS18B20
+    for (addr, temp) in readings.ds18b20_temperatures.iter_mut() {
+        if *temp != -255.0 {
+            let id = format!("onewr:{}", addr);
+            let correction = get_correction_formula(nvs, &id);
+            if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+                let tokens = tokenize(&correction, &raw_values, *temp as f64);
+                if let Ok(evaluated) = evaluate_expression(&tokens) {
+                    *temp = evaluated as f32;
+                }
+            }
+        }
+    }
+}
+
