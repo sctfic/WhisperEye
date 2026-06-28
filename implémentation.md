@@ -255,3 +255,46 @@ if let Ok(raw) = adc1_driver.read_raw(&mut vsense_channel) {
     let vsense_raw = raw;
 }
 ```
+
+---
+
+## 7. Bus 1-Wire (DS18B20)
+
+### Brochage (Pins)
+* **Bus 1-Wire (Data)** : `GPIO39`
+* **Résistance de pull-up** : Externe physique de `1 kΩ` raccordée au 3.3V (alimentation 3 fils : VDD=3.3V, GND, Data=GPIO39).
+
+### Problème spécifique du GPIO 39 (JTAG)
+Sur l'ESP32-S3, le **GPIO 39** est configuré par défaut au démarrage comme broche JTAG (`MTCK`). Tant que la fonction JTAG est active sur cette broche, le périphérique JTAG matériel garde le contrôle exclusif de la pin, l'empêchant de descendre à 0V (elle reste bloquée à 3.3V) même si l'application appelle `.set_low()`.
+
+Pour résoudre ce conflit et libérer la broche afin de l'utiliser en GPIO standard, il est indispensable d'appeler la fonction de bas niveau d'initialisation de l'ESP-IDF `gpio_reset_pin(39)` avant d'initialiser le pilote :
+
+```rust
+use esp_idf_hal::gpio::{PinDriver, InputOutput, Gpio39, Pull};
+use esp_idf_sys as sys;
+
+pub fn init_onewire(pin: Gpio39<'static>) -> Result<PinDriver<'static, InputOutput>, anyhow::Error> {
+    // 1. Libérer le GPIO 39 du JTAG matériel
+    unsafe {
+        sys::gpio_reset_pin(39);
+    }
+    
+    // 2. Initialiser la broche en Open-Drain standard
+    let mut pin_driver = PinDriver::input_output_od(pin, Pull::Up)?;
+    pin_driver.set_high()?;
+    Ok(pin_driver)
+}
+```
+
+### Bonnes pratiques et clés de succès pour la recherche multi-capteurs (Search ROM)
+Pour que la recherche de plusieurs périphériques (Search ROM 0xF0) fonctionne de façon fiable en bit-banging pure Rust, trois facteurs critiques ont été identifiés et implémentés :
+
+1. **Mémoire du chemin de collision (`previous_rom`)** :
+   La variable mémorisant la ROM du capteur précédent doit être définie **en dehors** de la boucle `while !last_device_flag`. Si le tableau de ROM est réinitialisé à chaque itération du `while`, l'algorithme perd l'historique du chemin exploré. Lors des collisions situées avant `last_discrepancy`, il choisira toujours le bit `0` par défaut au lieu de suivre la structure de la ROM précédente, bloquant la détection en boucle sur le tout premier capteur trouvé.
+
+2. **Ajustement du timing de lecture (`read_bit`)** :
+   Pour fiabiliser la détection de collisions (lorsque le bit brut et son complément sont tous les deux lus à `0`), le timing d'échantillonnage doit se situer précisément au milieu de la fenêtre de validité (qui dure 15 µs).
+   * **Timing optimisé** : Tirer le bus à bas pendant **2 µs** (pour signaler le slot), libérer la ligne, puis attendre **8 µs** (total 10 µs du slot) avant de lire l'état de la broche. Enfin, attendre **60 µs** pour laisser le slot se terminer. Ce timing à 10 µs évite de lire le bus trop tard lorsque la ligne est déjà remontée, ce qui masquerait les collisions.
+
+3. **Garde-fou anti-doublon** :
+   Si pour une raison de bruit physique ou de glissement temporel l'algorithme lit à nouveau une adresse ROM déjà enregistrée, la recherche doit immédiatement s'interrompre (`break` ou `last_device_flag = true`) pour éviter de boucler indéfiniment.

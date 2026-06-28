@@ -20,6 +20,23 @@ pub fn calculate_crc8(data: &[u8]) -> u8 {
     crc
 }
 
+/// Structure représentant l'état de la recherche récursive.
+pub struct SearchState {
+    rom: [u8; 8],               // ROM en cours de construction
+    last_discrepancy: usize,     // Position (1..64) du dernier embranchement pris en 0
+    last_device: bool,
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        Self {
+            rom: [0u8; 8],
+            last_discrepancy: 0,
+            last_device: false,
+        }
+    }
+}
+
 pub struct OneWire<'d> {
     pin: PinDriver<'d, InputOutput>,
 }
@@ -135,50 +152,99 @@ impl<'d> OneWire<'d> {
 
     /// Scanne le bus à la recherche de capteurs DS18B20 connectés.
     /// Retourne un vecteur d'adresses ROM représentées sous forme de tableau d'octets `[u8; 8]`.
-pub fn search_roms(&mut self) -> Vec<[u8; 8]> {
-    info!("[1-Wire Search] Démarrage de la recherche des composants sur le bus (Search ROM 0xF0)...");
-    let mut devices = Vec::new();
-    let mut last_discrepancy = 0;
-    let mut last_device_flag = false;
-    let mut rom_no = [0u8; 8]; // ROM en cours de construction
 
-    while !last_device_flag {
-        if !self.reset() {
-            warn!("[1-Wire Search] Aucun périphérique n'a répondu au Reset.");
+/// Recherche récursive de tous les périphériques 1-Wire.
+pub fn search_roms(&mut self) -> Vec<[u8; 8]> {
+    info!("[1-Wire Search] Démarrage de la recherche récursive des composants...");
+    let mut devices = Vec::new();
+    let mut state = SearchState::new();
+
+    // Lancement de la première recherche
+    self.search_next(&mut state);
+
+    // Boucle principale : tant qu’on trouve un périphérique valide, on continue
+    loop {
+        let rom = state.rom;
+        let hex_addr = rom.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let calculated_crc = calculate_crc8(&rom[0..7]);
+        let is_crc_valid = calculated_crc == rom[7];
+
+        debug!(
+            "[1-Wire Search] ROM trouvée : 0x{} (CRC: {})",
+            hex_addr.to_uppercase(),
+            if is_crc_valid { "OK" } else { "ERREUR" }
+        );
+
+        if rom[0] == 0x28 && is_crc_valid {
+            if !devices.contains(&rom) {
+                info!("[1-Wire Search] DS18B20 ajouté : 0x{}", hex_addr.to_uppercase());
+                devices.push(rom);
+            } else {
+                warn!("[1-Wire Search] Doublon détecté, arrêt de la recherche.");
+                break;
+            }
+        } else if rom[0] != 0x28 {
+            info!("[1-Wire Search] Périphérique de famille 0x{:02x} ignoré.", rom[0]);
+        }
+
+        if state.last_device {
             break;
         }
 
-        self.write_byte(0xF0); // Search ROM
+        // Préparer l’état pour la recherche suivante (flip du dernier embranchement)
+        self.search_next(&mut state);
+    }
 
-        let mut last_zero = 0;
+    devices
+}
+
+/// Effectue un cycle complet de recherche 1-Wire (Reset + Search ROM + parcours des 64 bits).
+/// Après l’appel, `state.rom` contient la ROM découverte et `state.last_discrepancy`
+/// pointe sur la position de la dernière divergence (0 si plus aucune).
+fn search_next(&mut self, state: &mut SearchState) {
+    critical_section::with(|_| {
+        // 1. Reset
+        if !self.reset() {
+            warn!("[1-Wire Search] Aucune présence détectée pendant le Reset.");
+            state.last_device = true;
+            return;
+        }
+
+        // 2. Commande Search ROM
+        self.write_byte(0xF0);
+
         let mut rom_bit_number = 1;
-        let mut discrepancy_marker = 0; // Position de la dernière divergence de CETTE itération
+        let mut discrepancy_marker = 0;
 
         for byte_idx in 0..8 {
             let mut current_byte = 0u8;
             for bit_idx in 0..8 {
-                let ibit = self.read_bit();           // bit réel
-                let ibit_complement = self.read_bit(); // complément
+                // Lecture des deux bits (bit vrai et son complément)
+                let ibit = self.read_bit();
+                let ibit_complement = self.read_bit();
 
-                let direction = if ibit && ibit_complement {
-                    // 1,1 → pas de dispositif
-                    debug!("[1-Wire Search] Pas de réponse au bit {} (bus haut). Fin.", rom_bit_number);
-                    return devices;
-                } else if !ibit && !ibit_complement {
-                    // 0,0 → collision (discrepancy)
-                    if rom_bit_number == last_discrepancy {
-                        // On reprend exactement là où on s'était arrêté : prendre 1 cette fois
+                if ibit && ibit_complement {
+                    // 1,1 -> aucun dispositif sur le bus (ligne tirée à 0 par rien, reste haute)
+                    debug!("[1-Wire Search] Pas de réponse au bit {} (1,1). Fin de la branche.", rom_bit_number);
+                    state.last_device = true;
+                    return;
+                }
+
+                let direction = if !ibit && !ibit_complement {
+                    // Collision (0,0) → divergence
+                    if rom_bit_number < state.last_discrepancy {
+                        // On suit le chemin mémorisé
+                        (state.rom[byte_idx] >> bit_idx) & 0x01
+                    } else if rom_bit_number == state.last_discrepancy {
+                        // C'est la position à flipper → prendre 1 cette fois
                         1
-                    } else if rom_bit_number > last_discrepancy {
-                        // Nouvelle divergence : prendre 0, mémoriser
+                    } else {
+                        // Nouvelle divergence rencontrée au‑delà de la dernière connue
                         discrepancy_marker = rom_bit_number;
                         0
-                    } else {
-                        // Avant la dernière divergence : suivre le chemin mémorisé dans rom_no
-                        (rom_no[byte_idx] >> bit_idx) & 0x01
                     }
                 } else {
-                    // Pas de collision : bit unique
+                    // Pas de collision : un seul bit valide
                     if ibit { 1 } else { 0 }
                 };
 
@@ -186,50 +252,22 @@ pub fn search_roms(&mut self) -> Vec<[u8; 8]> {
                     current_byte |= 1 << bit_idx;
                 }
 
+                // Écriture du bit de direction
                 self.write_bit(direction != 0);
                 rom_bit_number += 1;
             }
-            rom_no[byte_idx] = current_byte;
+            state.rom[byte_idx] = current_byte;
         }
 
-        // Mise à jour de l'état pour la prochaine itération
-        last_discrepancy = discrepancy_marker;
-        if last_discrepancy == 0 {
-            last_device_flag = true; // Plus de divergence → dernier périphérique
-        }
+        // Mise à jour pour la prochaine itération
+        state.last_discrepancy = discrepancy_marker;
+        state.last_device = discrepancy_marker == 0;
 
-        let hex_addr = rom_no.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-        let calculated_crc = calculate_crc8(&rom_no[0..7]);
-        let is_crc_valid = calculated_crc == rom_no[7];
-
-        info!(
-            "[1-Wire Search] Périphérique trouvé : ROM 0x{} (Famille: 0x{:02x}, CRC: {})",
-            hex_addr.to_uppercase(),
-            rom_no[0],
-            if is_crc_valid { "VALIDE" } else { "INVALIDE" }
+        debug!(
+            "[1-Wire Search] Fin d’un parcours : last_discrepancy={}, last_device={}",
+            state.last_discrepancy, state.last_device
         );
-
-        if rom_no[0] == 0x28 {
-            if is_crc_valid {
-                if !devices.contains(&rom_no) {
-                    devices.push(rom_no);
-                } else {
-                    warn!("[1-Wire Search] ROM 0x{} déjà présente (doublon anormal).", hex_addr.to_uppercase());
-                    // Sécurité : forcer l'arrêt si doublon
-                    last_device_flag = true;
-                }
-            } else {
-                warn!(
-                    "[1-Wire Search] DS18B20 ROM 0x{} CRC invalide (calc: 0x{:02x}, rcv: 0x{:02x}). Ignoré.",
-                    hex_addr.to_uppercase(), calculated_crc, rom_no[7]
-                );
-            }
-        } else {
-            info!("[1-Wire Search] Périphérique code famille 0x{:02x} ignoré.", rom_no[0]);
-        }
-    }
-
-    devices
+    });
 }
 
     /// Lance la conversion de température globale pour tous les capteurs (Skip ROM).
