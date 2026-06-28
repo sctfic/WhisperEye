@@ -25,6 +25,7 @@ pub fn is_static_device(id: &str) -> bool {
 pub struct DeviceEntry {
     pub name: String,
     pub is_static: bool,
+    pub present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correction_formula: Option<String>,
 }
@@ -32,6 +33,7 @@ pub struct DeviceEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistEntry {
     name: String,
+    present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     correction_formula: Option<String>,
 }
@@ -157,7 +159,12 @@ pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, for
     let mut persist_map: HashMap<String, PersistEntry> = if let Ok(Some(j)) = storage.get_str("devicesKnow") {
         serde_json::from_str(&j).unwrap_or_default()
     } else { HashMap::new() };
-    persist_map.insert(device_id.to_string(), PersistEntry { name: persist_map.get(device_id).map(|p| p.name.clone()).unwrap_or_else(|| device_id.to_string()), correction_formula: Some(formula.to_string()) });
+    let (name, present) = if let Some(existing) = persist_map.get(device_id) {
+        (existing.name.clone(), existing.present)
+    } else {
+        (device_id.to_string(), true)
+    };
+    persist_map.insert(device_id.to_string(), PersistEntry { name, present, correction_formula: Some(formula.to_string()) });
     let new_str = serde_json::to_string(&persist_map)?;
     storage.set_str("devicesKnow", &new_str)?;
     Ok(())
@@ -181,7 +188,7 @@ impl DeviceRegistry {
         let mut map: HashMap<String, DeviceEntry> = HashMap::new();
         // 1. Static devices — toujours présents, en dur
         for &(id, name) in STATIC_DEVICES {
-            map.insert(id.to_string(), DeviceEntry { name: name.to_string(), is_static: true, correction_formula: None });
+            map.insert(id.to_string(), DeviceEntry { name: name.to_string(), is_static: true, present: true, correction_formula: None });
         }
         // 2. Dynamic devices from NVS
         let storage = self.nvs.lock().unwrap();
@@ -189,7 +196,7 @@ impl DeviceRegistry {
             if let Ok(saved) = serde_json::from_str::<HashMap<String, PersistEntry>>(&json_str) {
                 for (id, pe) in saved {
                     if is_static_device(&id) { continue; }
-                    map.entry(id.clone()).or_insert(DeviceEntry { name: pe.name, is_static: false, correction_formula: pe.correction_formula });
+                    map.entry(id.clone()).or_insert(DeviceEntry { name: pe.name, is_static: false, present: pe.present, correction_formula: pe.correction_formula });
                 }
             }
         }
@@ -201,7 +208,7 @@ impl DeviceRegistry {
         let mut persist_map: HashMap<String, PersistEntry> = HashMap::new();
         for (k, v) in map.iter() {
             if is_static_device(k) { continue; }
-            persist_map.insert(k.clone(), PersistEntry { name: v.name.clone(), correction_formula: v.correction_formula.clone() });
+            persist_map.insert(k.clone(), PersistEntry { name: v.name.clone(), present: v.present, correction_formula: v.correction_formula.clone() });
         }
         let mut storage = self.nvs.lock().unwrap();
         if let Ok(json_str) = serde_json::to_string(&persist_map) {
@@ -221,6 +228,7 @@ impl DeviceRegistry {
             updated.insert(id.to_string(), DeviceEntry {
                 name: default_name.to_string(),
                 is_static: true,
+                present: true,
                 correction_formula: None,
             });
         }
@@ -228,32 +236,38 @@ impl DeviceRegistry {
         // 2. Dynamic Devices: Screen and Radio
         let screen_present = crate::screen::is_present();
         if screen_present {
-            let entry = saved.remove("screen").unwrap_or_else(|| DeviceEntry {
+            let mut entry = saved.remove("screen").unwrap_or_else(|| DeviceEntry {
                 name: "Écran ST7789".to_string(),
                 is_static: false,
+                present: screen_present,
                 correction_formula: None,
             });
+            entry.present = screen_present;
             updated.insert("screen".to_string(), entry);
         }
 
         let radio_present = crate::radio::is_present();
         if radio_present {
-            let entry = saved.remove("radio").unwrap_or_else(|| DeviceEntry {
+            let mut entry = saved.remove("radio").unwrap_or_else(|| DeviceEntry {
                 name: "Transmetteur Radio RF".to_string(),
                 is_static: false,
+                present: radio_present,
                 correction_formula: None,
             });
+            entry.present = radio_present;
             updated.insert("radio".to_string(), entry);
         }
 
         // 3. Dynamic Devices: 1-Wire (DS18B20) discovered probes
         for addr in onewr_pins {
             let id = format!("onewr:{}", addr);
-            let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
+            let mut entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
                 name: format!("Sonde 1-Wire ({})", &addr[..6].to_uppercase()),
                 is_static: false,
+                present: true,
                 correction_formula: None,
             });
+            entry.present = true;
             updated.insert(id, entry);
         }
 
@@ -263,66 +277,81 @@ impl DeviceRegistry {
             if addr == 0x44 {
                 // SHT45 : séparer en deux capteurs distincts (Température et Humidité)
                 let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
-                let entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
+                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
                     name: "SHT45-Temp".to_string(),
                     is_static: false,
+                    present: true,
                     correction_formula: None,
                 });
+                entry_t.present = true;
                 updated.insert(id_t, entry_t);
 
                 let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
-                let entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
+                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
                     name: "SHT45-Hum".to_string(),
                     is_static: false,
+                    present: true,
                     correction_formula: None,
                 });
+                entry_h.present = true;
                 updated.insert(id_h, entry_h);
             } else if addr == 0x62 {
                 let id = format!("i2c:{}:0x{:02x}", channel, addr);
-                let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
+                let mut entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
                     name: "Capteur CO2 SCD41".to_string(),
                     is_static: false,
+                    present: true,
                     correction_formula: None,
                 });
+                entry.present = true;
                 updated.insert(id, entry);
             } else if addr == 0x76 || addr == 0x77 {
                 // BME280 : séparer en trois capteurs (Température, Humidité, Pression)
                 let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
-                let entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
+                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
+                    present: false,
                     correction_formula: None,
                 });
+                entry_t.present = false;
                 updated.insert(id_t, entry_t);
 
                 let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
-                let entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
+                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Hum (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
+                    present: false,
                     correction_formula: None,
                 });
+                entry_h.present = false;
                 updated.insert(id_h, entry_h);
 
                 let id_p = format!("i2c:{}:0x{:02x}_P", channel, addr);
-                let entry_p = saved.remove(&id_p).unwrap_or_else(|| DeviceEntry {
+                let mut entry_p = saved.remove(&id_p).unwrap_or_else(|| DeviceEntry {
                     name: format!("BME280-Pres (i2c:{}:0x{:02x})", channel, addr),
                     is_static: false,
+                    present: false,
                     correction_formula: None,
                 });
+                entry_p.present = false;
                 updated.insert(id_p, entry_p);
             } else {
                 let id = format!("i2c:{}:0x{:02x}", channel, addr);
-                let entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
+                let mut entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
                     name: format!("Périphérique I2C (Ch{} 0x{:02x})", channel, addr),
                     is_static: false,
+                    present: true,
                     correction_formula: None,
                 });
+                entry.present = true;
                 updated.insert(id, entry);
             }
         }
 
-        // Any leftover devices in `saved` are currently offline/absent, but we preserve their custom names
-        for (id, entry) in saved {
+        // Any leftover devices in `saved` are currently offline/absent, but we preserve their custom names and set present to false
+        for (id, mut entry) in saved {
+            entry.present = false;
             updated.insert(id, entry);
         }
 
@@ -331,7 +360,6 @@ impl DeviceRegistry {
         Ok(())
     }
 
-    /// Retrieve all devices (static + dynamic) with their current formatted display values
     pub fn get_devices_display(&self, 
         relay_a_on: bool, 
         relay_b_on: bool, 
@@ -340,7 +368,7 @@ impl DeviceRegistry {
         inb_on: bool,
         sht_temp: f32,
         sht_humi: f32,
-        co2_val: u32,
+        co2_val: i32,
         ds_readings: &HashMap<String, f32>,
         touch_state: bool,
         schedules: Option<&HashMap<String, Vec<crate::actuators::ScheduledAction>>>,
@@ -390,45 +418,50 @@ impl DeviceRegistry {
                 _ if id.starts_with("onewr:") => {
                     let addr = &id[6..];
                     if let Some(temp) = ds_readings.get(addr) {
-                        present = true;
-                        value = format!("{:.1} °C", *temp);
+                        if *temp == -255.0 {
+                            present = false;
+                            value = "-255.0 °C".to_string();
+                        } else {
+                            present = true;
+                            value = format!("{:.1} °C", *temp);
+                        }
                     } else {
                         present = false;
-                        value = "Absent".to_string();
+                        value = "-255.0 °C".to_string();
                     }
                 }
                 _ if id.starts_with("i2c:") => {
                     // SHT45 Temperature (i2c:X:0x44_T)
                     if id.ends_with("_T") && id.contains("0x44") {
-                        present = true;
+                        present = sht_temp != -255.0;
                         value = format!("{:.1} °C", sht_temp);
                     }
                     // SHT45 Humidity (i2c:X:0x44_H)
                     else if id.ends_with("_H") && id.contains("0x44") {
-                        present = true;
+                        present = sht_humi != -255.0;
                         value = format!("{:.1} %", sht_humi);
                     }
                     // SCD41 CO2 (i2c:X:0x62)
                     else if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") {
-                        present = true;
+                        present = co2_val != -255;
                         value = format!("{} ppm", co2_val);
                     }
                     // BME280 Temperature / Humidity / Pressure (futur) — valeurs simulées pour l'instant
                     else if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) {
                         present = false; // Pas encore de capteur BME280 physique
-                        value = "N/A".to_string();
+                        value = "-255.0 °C".to_string();
                     }
                     else if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) {
                         present = false;
-                        value = "N/A".to_string();
+                        value = "-255.0 %".to_string();
                     }
                     else if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) {
                         present = false;
-                        value = "N/A".to_string();
+                        value = "-255.0 hPa".to_string();
                     }
                     else {
                         present = false;
-                        value = "Absent".to_string();
+                        value = "-255.0".to_string();
                     }
                 }
                 _ => {}
@@ -494,6 +527,7 @@ impl DeviceRegistry {
                 map.insert(id.to_string(), DeviceEntry {
                     name: name_limit,
                     is_static: false,
+                    present: true,
                     correction_formula: None,
                 });
             }

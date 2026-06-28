@@ -14,37 +14,43 @@ impl<'d> OneWire<'d> {
     }
 
     pub fn reset(&mut self) -> bool {
-        self.pin.set_low().unwrap();
-        Ets::delay_us(480);
-        self.pin.set_high().unwrap();
-        Ets::delay_us(70);
-        let presence = self.pin.is_low();
-        Ets::delay_us(410);
-        presence
+        critical_section::with(|_| {
+            self.pin.set_low().unwrap();
+            Ets::delay_us(480);
+            self.pin.set_high().unwrap();
+            Ets::delay_us(70);
+            let presence = self.pin.is_low();
+            Ets::delay_us(410);
+            presence
+        })
     }
 
     pub fn write_bit(&mut self, bit: bool) {
-        if bit {
-            self.pin.set_low().unwrap();
-            Ets::delay_us(6);
-            self.pin.set_high().unwrap();
-            Ets::delay_us(64);
-        } else {
-            self.pin.set_low().unwrap();
-            Ets::delay_us(60);
-            self.pin.set_high().unwrap();
-            Ets::delay_us(10);
-        }
+        critical_section::with(|_| {
+            if bit {
+                self.pin.set_low().unwrap();
+                Ets::delay_us(6);
+                self.pin.set_high().unwrap();
+                Ets::delay_us(64);
+            } else {
+                self.pin.set_low().unwrap();
+                Ets::delay_us(60);
+                self.pin.set_high().unwrap();
+                Ets::delay_us(10);
+            }
+        });
     }
 
     pub fn read_bit(&mut self) -> bool {
-        self.pin.set_low().unwrap();
-        Ets::delay_us(6);
-        self.pin.set_high().unwrap();
-        Ets::delay_us(9);
-        let bit = self.pin.is_high();
-        Ets::delay_us(55);
-        bit
+        critical_section::with(|_| {
+            self.pin.set_low().unwrap();
+            Ets::delay_us(6);
+            self.pin.set_high().unwrap();
+            Ets::delay_us(9);
+            let bit = self.pin.is_high();
+            Ets::delay_us(55);
+            bit
+        })
     }
 
     pub fn write_byte(&mut self, mut byte: u8) {
@@ -132,13 +138,49 @@ impl<'d> OneWire<'d> {
             }
         }
 
-        // Fallback to mock probes if no physical sensors respond.
-        if devices.is_empty() {
-            info!("No physical 1-Wire sensors detected. Registering default mock probes.");
-            devices.push("28ff641e8315029c".to_string());
-            devices.push("28aa412e831501fa".to_string());
+        // Do not fallback to mock probes if no physical sensors respond, to let them be marked as absent.
+        devices
+    }
+
+    /// Lancer la conversion de température globale pour tous les capteurs (Skip ROM)
+    pub fn start_conversion(&mut self) -> Result<(), anyhow::Error> {
+        if !self.reset() {
+            anyhow::bail!("No devices responding on 1-Wire bus");
+        }
+        self.write_byte(0xCC); // Skip ROM
+        self.write_byte(0x44); // Convert T
+        Ok(())
+    }
+
+    /// Lire la température d'une sonde DS18B20 spécifique en utilisant son adresse ROM (format hex de 16 caractères)
+    pub fn read_temperature(&mut self, rom: &str) -> Result<f32, anyhow::Error> {
+        if rom.len() != 16 {
+            anyhow::bail!("Invalid ROM length: must be 16 hex characters");
+        }
+        let mut rom_bytes = [0u8; 8];
+        for i in 0..8 {
+            rom_bytes[i] = u8::from_str_radix(&rom[i * 2..i * 2 + 2], 16)
+                .map_err(|e| anyhow::anyhow!("Invalid hex byte in ROM: {:?}", e))?;
         }
 
-        devices
+        if !self.reset() {
+            anyhow::bail!("Sensor not responding on reset");
+        }
+        
+        self.write_byte(0x55); // Match ROM
+        for &byte in &rom_bytes {
+            self.write_byte(byte);
+        }
+
+        self.write_byte(0xBE); // Read Scratchpad
+        
+        let lsb = self.read_byte();
+        let msb = self.read_byte();
+
+        // Calculer la température : 12-bit, résolution 0.0625°C
+        let temp_raw = ((msb as i16) << 8) | (lsb as i16);
+        let temp_c = (temp_raw as f32) / 16.0;
+
+        Ok(temp_c)
     }
 }

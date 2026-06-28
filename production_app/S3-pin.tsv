@@ -1,12 +1,12 @@
 S3 JESPS	pin	description
 ONEWR	39	les 2x5 1-wire
 ISENSE	2	mesure courrant du pont en H
-SCR0	4	ecran SLC (ST7789)
-SCR1	5	ecran SDA (ST7789)
-SCR2	6	ecran RES (ST7789)
-SCR3	7	ecran DC (ST7789)
-SCR4	15	ecran CS (ST7789)
-SCR5	16	ecran BLK (ST7789)
+SCR0	4	ecran DC (ST7789)
+SCR1	5	ecran CS (ST7789)
+SCR2	6	ecran BLK (ST7789)
+SCR3	7	ecran SLC (ST7789)
+SCR4	15	ecran SDA (ST7789)
+SCR5	16	ecran RES (ST7789)
 BTN0	17	roue sens A (EC11)
 BTN1	18	roue sens B (EC11)
 BTN2	8	roue push (EC11)

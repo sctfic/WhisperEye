@@ -32,6 +32,7 @@ pub struct CronWorker {
     actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
     static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
+    onewire_bus: Option<Arc<Mutex<crate::ds18b20::OneWire<'static>>>>,
     last_metrics_run: Option<std::time::Instant>,
     last_telemetry_run: Option<std::time::Instant>,
     last_update_check_run: Option<std::time::Instant>,
@@ -46,6 +47,7 @@ impl CronWorker {
         actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
         static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
         scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
+        onewire_bus: Option<Arc<Mutex<crate::ds18b20::OneWire<'static>>>>,
     ) -> Self {
         Self {
             rx,
@@ -56,6 +58,7 @@ impl CronWorker {
             actuators_state,
             static_devs,
             scheduled_actions,
+            onewire_bus,
             last_metrics_run: None,
             last_telemetry_run: None,
             last_update_check_run: None,
@@ -218,7 +221,7 @@ impl CronWorker {
             list
         };
 
-        let readings = read_sensors(&onewr_probes);
+        let readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
         let entry = MetricEntry {
             timestamp: now,
             readings: readings.clone(),
@@ -564,6 +567,7 @@ pub fn spawn_cron_scheduler(
     actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
     static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
+    onewire_bus: Option<Arc<Mutex<crate::ds18b20::OneWire<'static>>>>,
 ) -> Result<CronHandle> {
     let (tx, rx) = channel();
 
@@ -574,6 +578,7 @@ pub fn spawn_cron_scheduler(
     let worker_act = Arc::clone(&actuators_state);
     let worker_devs = Arc::clone(&static_devs);
     let worker_sched = Arc::clone(&scheduled_actions);
+    let worker_bus = onewire_bus.clone();
     thread::Builder::new()
         .name("cron_worker".to_string())
         .stack_size(32768)
@@ -586,6 +591,7 @@ pub fn spawn_cron_scheduler(
                 worker_act,
                 worker_devs,
                 worker_sched,
+                worker_bus,
             );
             worker.run();
         })

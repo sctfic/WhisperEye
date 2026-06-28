@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 const WHISPEREYE_BOARD:  &str = "1.0";
 const CHIP_TYPE:  &str = "ESP32-S3";
-const FW_VERSION: &str = "1.1.3-0016";
+const FW_VERSION: &str = "1.1.3-0018";
 #[allow(dead_code)]
 const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
 
@@ -337,6 +337,22 @@ fn main() -> Result<()> {
     
     let peripherals = Peripherals::take().context("Failed to take ESP32 Peripherals")?;
 
+    // Initialisation de l'écran ST7789
+    info!("Initialisation de l'écran ST7789...");
+    if let Err(e) = screen::init_screen(
+        peripherals.spi2,
+        peripherals.pins.gpio7,
+        peripherals.pins.gpio15,
+        peripherals.pins.gpio16,
+        peripherals.pins.gpio4,
+        peripherals.pins.gpio5,
+        peripherals.pins.gpio6,
+    ) {
+        log::error!("Échec de l'initialisation de l'écran : {:?}", e);
+    } else {
+        info!("Écran ST7789 initialisé avec succès !");
+    }
+
     // Initialiser la LED RMT sur GPIO 48 (canal 0) avant tout appel à set_led_color
     #[allow(deprecated)]
     {
@@ -414,10 +430,11 @@ fn main() -> Result<()> {
 
     // Scan 1-Wire bus dynamically at boot
     let onewr_pin = peripherals.pins.gpio39;
-    let discovered_probes = if let Ok(mut ow) = ds18b20::OneWire::new(onewr_pin) {
-        ow.search_roms()
+    let (discovered_probes, onewire_bus) = if let Ok(mut ow) = ds18b20::OneWire::new(onewr_pin) {
+        let probes = ow.search_roms();
+        (probes, Some(Arc::new(Mutex::new(ow))))
     } else {
-        Vec::new()
+        (Vec::new(), None)
     };
     info!("Dynamic 1-Wire scan found {} DS18B20 probes.", discovered_probes.len());
     let discovered_probes = Arc::new(discovered_probes);
@@ -587,6 +604,7 @@ fn main() -> Result<()> {
         Arc::clone(&actuators_state),
         Arc::clone(&static_devs),
         Arc::clone(&scheduled_actions),
+        onewire_bus.clone(),
     )
     .context("Failed to spawn cron periodic task scheduler")?;
 
@@ -948,6 +966,7 @@ fn main() -> Result<()> {
     let udp_probes = Arc::clone(&discovered_probes);
     let udp_act = Arc::clone(&actuators_state);
     let udp_sched = Arc::clone(&scheduled_actions);
+    let udp_bus = onewire_bus.clone();
     thread::Builder::new()
         .name("udp_discovery".to_string())
         .stack_size(16384)
@@ -967,7 +986,7 @@ fn main() -> Result<()> {
                         let msg = std::str::from_utf8(&buf[..amt]).unwrap_or("").trim();
                         if msg == "DISCOVER_WHISPEREYE" {
                             log::info!("UDP Discovery: Received query from {}", src);
-                            match build_capacity_info(&udp_nvs, &udp_probes, &udp_act, &udp_sched) {
+                            match build_capacity_info(&udp_nvs, &udp_probes, &udp_act, &udp_sched, udp_bus.as_ref().map(|b| b.as_ref())) {
                                 Ok(cap) => {
                                     if let Ok(resp_str) = serde_json::to_string(&cap) {
                                         if let Err(e) = socket.send_to(resp_str.as_bytes(), src) {
@@ -996,9 +1015,10 @@ fn main() -> Result<()> {
     let cap_act = Arc::clone(&actuators_state);
     let cap_mesh = Arc::clone(&mesh_state);
     let cap_sched = Arc::clone(&scheduled_actions);
+    let cap_bus = onewire_bus.clone();
     server.fn_handler("/api/capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(cap_mesh);
-        match build_capacity_info(&cap_nvs, &cap_probes, &cap_act, &cap_sched) {
+        match build_capacity_info(&cap_nvs, &cap_probes, &cap_act, &cap_sched, cap_bus.as_ref().map(|b| b.as_ref())) {
             Ok(cap_json) => {
                 let response_data = serde_json::to_string(&cap_json)?;
                 let mut response = req.into_response(200, Some("OK"), &[
@@ -1131,9 +1151,10 @@ fn main() -> Result<()> {
     // GET /api/sensors
     let sensors_probes_clone = Arc::clone(&discovered_probes);
     let sensors_mesh = Arc::clone(&mesh_state);
+    let sensors_bus = onewire_bus.clone();
     server.fn_handler("/api/sensors", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(sensors_mesh);
-        let readings = sensors::read_sensors(&sensors_probes_clone);
+        let readings = sensors::read_sensors(sensors_bus.as_ref().map(|b| b.as_ref()), &sensors_probes_clone);
         let response_data = serde_json::to_string(&readings)?;
         let mut response = req.into_ok_response()?;
         response.write(response_data.as_bytes())?;
@@ -1146,6 +1167,7 @@ fn main() -> Result<()> {
     let periphs_probes = Arc::clone(&discovered_probes);
     let periphs_mesh = Arc::clone(&mesh_state);
     let periphs_sched = Arc::clone(&scheduled_actions);
+    let periphs_bus = onewire_bus.clone();
     server.fn_handler("/api/peripherals", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing!(periphs_mesh);
         let (rla, rlb, swpwr, ina, inb) = {
@@ -1154,7 +1176,7 @@ fn main() -> Result<()> {
         };
         let touch_state = false; // default touch status
         
-        let readings = sensors::read_sensors(&periphs_probes);
+        let readings = sensors::read_sensors(periphs_bus.as_ref().map(|b| b.as_ref()), &periphs_probes);
         let mut ds_readings = std::collections::HashMap::new();
         for (addr, temp) in &readings.ds18b20_temperatures {
             ds_readings.insert(addr.clone(), *temp);
@@ -2053,6 +2075,7 @@ fn build_capacity_info(
     cap_probes: &Arc<Vec<String>>,
     cap_act: &Arc<Mutex<ActuatorsState>>,
     cap_sched: &Arc<Mutex<actuators::ScheduledActions>>,
+    cap_bus: Option<&Mutex<ds18b20::OneWire>>,
 ) -> Result<serde_json::Value, anyhow::Error> {
     let (rla, rlb, swpwr, ina, inb) = {
         let act = cap_act.lock().unwrap();
@@ -2060,7 +2083,7 @@ fn build_capacity_info(
     };
     let touch_state = false;
     
-    let readings = sensors::read_sensors(cap_probes);
+    let readings = sensors::read_sensors(cap_bus, cap_probes);
     let mut ds_readings = std::collections::HashMap::new();
     for (addr, temp) in &readings.ds18b20_temperatures {
         ds_readings.insert(addr.clone(), *temp);
@@ -2277,6 +2300,10 @@ fn build_capacity_info(
         "actuators": actuators,
     }))
 }
+
+
+
+
 
 
 

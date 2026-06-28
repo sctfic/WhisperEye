@@ -172,12 +172,12 @@ Le système tourne sur une carte matérielle propriétaire basée sur la puce **
 |:---|:---:|:---|
 | **ONEWR** | 39 | Bus 1-Wire (connecteurs 2x5) |
 | **ISENSE** | 2 | Mesure de courant du pont en H |
-| **SCR0** | 4 | Écran SLC (ST7789) |
-| **SCR1** | 5 | Écran SDA (ST7789) |
-| **SCR2** | 6 | Écran RES (ST7789) |
-| **SCR3** | 7 | Écran DC (ST7789) |
-| **SCR4** | 15 | Écran CS (ST7789) |
-| **SCR5** | 16 | Écran BLK (ST7789) - Rétroéclairage |
+| **SCR0** | 4 | Écran DC (ST7789) |
+| **SCR1** | 5 | Écran CS (ST7789) |
+| **SCR2** | 6 | Écran BLK (ST7789) - Rétroéclairage |
+| **SCR3** | 7 | Écran SLC (ST7789) |
+| **SCR4** | 15 | Écran SDA (ST7789) |
+| **SCR5** | 16 | Écran RES (ST7789) |
 | **BTN0** | 17 | Codeur rotatif - Roue sens A (EC11) |
 | **BTN1** | 18 | Codeur rotatif - Roue sens B (EC11) |
 | **BTN2** | 8 | Codeur rotatif - Bouton poussoir (EC11) |
