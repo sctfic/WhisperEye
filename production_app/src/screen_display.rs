@@ -94,36 +94,49 @@ fn draw_lightning_icon<D>(display: &mut D, start_point: Point, ext_power: bool) 
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let color = if ext_power { Rgb565::GREEN } else { Rgb565::new(31, 63, 0) }; // Vert ou Jaune
+    let color = if ext_power { Rgb565::GREEN } else { Rgb565::new(31, 63, 0) }; // Vert (externe) ou Jaune (USB)
     let border_color = Rgb565::BLACK;
     let x = start_point.x;
     let y = start_point.y;
 
-    let paths = [
-        (Point::new(x + 3, y), Point::new(x, y + 5)),
-        (Point::new(x, y + 5), Point::new(x + 2, y + 5)),
-        (Point::new(x + 2, y + 5), Point::new(x + 1, y + 10)),
-        (Point::new(x + 1, y + 10), Point::new(x + 5, y + 4)),
-        (Point::new(x + 5, y + 4), Point::new(x + 3, y + 4)),
-        (Point::new(x + 3, y + 4), Point::new(x + 3, y)),
+    const OUTLINE: [(i32, i32); 29] = [
+        (6, 0),
+        (5, 1), (6, 1),
+        (5, 2), (6, 2),
+        (4, 3), (6, 3),
+        (4, 4), (6, 4),
+        (3, 5), (5, 5),
+        (1, 6), (2, 6), (5, 6), (6, 6),
+        (1, 7), (2, 7), (5, 7),
+        (3, 8), (5, 8),
+        (3, 9), (5, 9),
+        (2, 10), (4, 10),
+        (2, 11), (4, 11),
+        (2, 12), (3, 12),
+        (2, 13)
     ];
 
-    // Contour noir
-    for dx in -1..=1 {
-        for dy in -1..=1 {
-            if dx == 0 && dy == 0 { continue; }
-            for &(p1, p2) in &paths {
-                let _ = Line::new(Point::new(p1.x + dx, p1.y + dy), Point::new(p2.x + dx, p2.y + dy))
-                    .into_styled(PrimitiveStyle::with_stroke(border_color, 1))
-                    .draw(display);
-            }
-        }
+    const FILL: [(i32, i32); 11] = [
+        (5, 3),
+        (5, 4),
+        (4, 5),
+        (3, 6), (4, 6),
+        (3, 7), (4, 7),
+        (4, 8),
+        (4, 9),
+        (3, 10),
+        (3, 11)
+    ];
+
+    // Dessiner le contour noir
+    for &(px, py) in &OUTLINE {
+        let _ = embedded_graphics::Pixel(Point::new(x + px, y + py), border_color)
+            .draw(display);
     }
 
-    // Éclair de couleur
-    for &(p1, p2) in &paths {
-        let _ = Line::new(p1, p2)
-            .into_styled(PrimitiveStyle::with_stroke(color, 1))
+    // Remplir l'éclair de couleur
+    for &(px, py) in &FILL {
+        let _ = embedded_graphics::Pixel(Point::new(x + px, y + py), color)
             .draw(display);
     }
 
@@ -154,6 +167,7 @@ pub fn run_ihm(
     let mut last_rendered_ssid = String::new();
     let mut last_rendered_ip = String::new();
     let mut raw_update_ticks = 0;
+    let mut sensor_refresh_ticks: u32 = 0;
 
     let mut last_wifi_icon_state: Option<bool> = None;
     let mut last_lightning_icon_state: Option<bool> = None;
@@ -300,7 +314,12 @@ pub fn run_ihm(
 
         // Lecture des valeurs analogiques et de touch de Board
         raw_update_ticks += 1;
+        sensor_refresh_ticks += 1;
         let should_update_raw = raw_update_ticks >= 10;
+        let should_refresh_sensors = sensor_refresh_ticks >= 500; // ~5s à 10ms/tick
+        if should_refresh_sensors {
+            sensor_refresh_ticks = 0;
+        }
         
         let readings = {
             let mut b = board.lock().unwrap();
@@ -360,7 +379,8 @@ pub fn run_ihm(
 
         let middle_changed = current_brightness != last_rendered_brightness
             || current_touch != last_touch_state
-            || current_ver != last_rendered_ver;
+            || current_ver != last_rendered_ver
+            || should_refresh_sensors;
 
         // ── 3. RENDU DE LA BARRE DE STATUT (HAUT : Y=0..12) ──
         if status_changed {
@@ -411,33 +431,33 @@ pub fn run_ihm(
                 let _ = draw_bluetooth_icon(&mut display, Point::new(242, 1), false);
             }
 
-            // Rendu icône WiFi (X=260, Y=1)
+            // Rendu icône WiFi (X=258, Y=1)
             if Some(current_wifi) != last_wifi_icon_state {
                 last_wifi_icon_state = Some(current_wifi);
-                let _ = Rectangle::new(Point::new(258, 0), Size::new(18, 12))
+                let _ = Rectangle::new(Point::new(256, 0), Size::new(18, 12))
                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                     .draw(&mut display);
-                let _ = draw_wifi_icon(&mut display, Point::new(260, 1), current_wifi);
+                let _ = draw_wifi_icon(&mut display, Point::new(258, 1), current_wifi);
             }
 
-            // Rendu icône Alimentation / Éclair (X=280, Y=1)
+            // Rendu icône Alimentation / Éclair (X=275, Y=1)
             let is_external = vsense_volts_val >= 1.0;
             if Some(is_external) != last_lightning_icon_state {
                 last_lightning_icon_state = Some(is_external);
-                let _ = Rectangle::new(Point::new(278, 0), Size::new(12, 12))
+                let _ = Rectangle::new(Point::new(273, 0), Size::new(12, 15))
                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                     .draw(&mut display);
-                let _ = draw_lightning_icon(&mut display, Point::new(280, 1), is_external);
+                let _ = draw_lightning_icon(&mut display, Point::new(275, 1), is_external);
             }
 
-            // Annotation Alimentation (X=290, Y=9)
+            // Annotation Alimentation (X=285, Y=9)
             let alim_str = if is_external {
                 format!("{:<5}", format!("{:.1}V", vsense_volts_val))
             } else {
                 "USB  ".to_string()
             };
             let alim_style = if is_external { status_style_white } else { status_style_green };
-            let _ = Text::new(&alim_str, Point::new(290, 9), alim_style)
+            let _ = Text::new(&alim_str, Point::new(285, 9), alim_style)
                 .draw(&mut display);
         }
 

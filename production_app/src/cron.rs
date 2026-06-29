@@ -176,6 +176,7 @@ impl CronWorker {
     }
 
     fn collect_sensor_metrics(&mut self) {
+        info!("[CRON] collect_sensor_metrics() starting...");
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -222,6 +223,9 @@ impl CronWorker {
         }
 
         let mut readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
+        if let Ok(mut global_temps) = crate::one_wire::ONEWIRE_TEMPERATURES.lock() {
+            *global_temps = readings.ds18b20_temperatures.clone();
+        }
         if let Some(ref sht) = sht4_opt {
             readings.temperature_sht45 = sht.temperature;
             readings.humidity_sht45 = sht.humidity;
@@ -263,7 +267,11 @@ impl CronWorker {
         }
 
         let probes_count = readings.ds18b20_temperatures.iter().filter(|(_, &t)| t != -255.0).count();
-        msg_log.push_str(&format!(" Probes count: {}. Sliding history size: {}", probes_count, self.history.len()));
+        msg_log.push_str(&format!(" Probes count: {}.", probes_count));
+        for (addr, temp) in &readings.ds18b20_temperatures {
+            msg_log.push_str(&format!(" [0x{}]: {:.2}°C,", addr.to_uppercase(), temp));
+        }
+        msg_log.push_str(&format!(" Sliding history size: {}", self.history.len()));
         
         info!("{}", msg_log);
 
@@ -613,7 +621,7 @@ pub fn spawn_cron_scheduler(
     let worker_i2c = Arc::clone(&i2c);
     thread::Builder::new()
         .name("cron_worker".to_string())
-        .stack_size(32768)
+        .stack_size(65536)
         .spawn(move || {
             let worker = CronWorker::new(
                 rx,

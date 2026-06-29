@@ -6,6 +6,7 @@ use esp_idf_sys as sys;
 use log::{info, warn, error, debug};
 
 pub static ONEWIRE_DEVICES_COUNT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub static ONEWIRE_TEMPERATURES: std::sync::Mutex<std::collections::HashMap<String, f32>> = std::sync::Mutex::new(std::collections::HashMap::new());
 
 // CRC8 Dallas/Maxim : X^8 + X^5 + X^4 + 1 (0x8C)
 pub fn calculate_crc8(data: &[u8]) -> u8 {
@@ -178,7 +179,7 @@ impl<'d> OneWire<'d> {
             let calculated_crc = calculate_crc8(&rom[0..7]);
             let is_crc_valid = calculated_crc == rom[7];
 
-            debug!(
+            info!(
                 "[1-Wire Search] ROM trouvée : 0x{} (CRC: {})",
                 hex_addr.to_uppercase(),
                 if is_crc_valid { "OK" } else { "ERREUR" }
@@ -204,6 +205,7 @@ impl<'d> OneWire<'d> {
             self.search_next(&mut state);
         }
 
+        info!("[1-Wire Search] Recherche terminée. {} DS18B20 trouvé(s).", devices.len());
         devices
     }
 

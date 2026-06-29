@@ -810,9 +810,11 @@ pub fn handle_api_peripherals(
     };
 
     let ds_readings = {
+        let global_temps = crate::one_wire::ONEWIRE_TEMPERATURES.lock().map(|g| g.clone()).unwrap_or_default();
         let mut map = std::collections::HashMap::new();
         for probe in periphs_probes.iter() {
-            map.insert(probe.clone(), 23.5f32);
+            let temp = global_temps.get(probe).cloned().unwrap_or(-255.0);
+            map.insert(probe.clone(), temp);
         }
         map
     };

@@ -99,7 +99,7 @@ struct CustomLogger;
 
 impl log::Log for CustomLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Info
+        metadata.level() <= log::Level::Debug
     }
 
     fn log(&self, record: &log::Record) {
@@ -123,7 +123,7 @@ static LOGGER: CustomLogger = CustomLogger;
 
 fn main() -> Result<()> {
     log::set_logger(&LOGGER)
-        .map(|()| log::set_max_level(log::LevelFilter::Info))
+        .map(|()| log::set_max_level(log::LevelFilter::Debug))
         .expect("Failed to initialize custom logger");
     
     unsafe {
@@ -141,17 +141,17 @@ fn main() -> Result<()> {
     let nvs_storage = Arc::new(Mutex::new(NvsStorage::new(nvs_default.clone())?));
     println!("DEBUG: NVS Storage initialized");
 
-    // Affichage en JSON multi-ligne de wifiKnown et deviceRenamable
+    // Affichage en JSON multi-ligne de wifiKnown et devicesKnow
     {
         let mut storage = nvs_storage.lock().unwrap();
         let wifi_known = storage.get_str("wifiKnown").unwrap_or(None).unwrap_or_else(|| "{}".to_string());
-        let device_renamable = storage.get_i32("deviceRenamable").unwrap_or(None).unwrap_or(1);
+        let device_renamable = storage.get_i32("devicesKnow").unwrap_or(None).unwrap_or(1);
         
         let wifi_known_json: serde_json::Value = serde_json::from_str(&wifi_known).unwrap_or(serde_json::Value::Null);
         
         let mut log_obj = serde_json::Map::new();
         log_obj.insert("wifiKnown".to_string(), wifi_known_json);
-        log_obj.insert("deviceRenamable".to_string(), serde_json::Value::Number(device_renamable.into()));
+        log_obj.insert("devicesKnow".to_string(), serde_json::Value::Number(device_renamable.into()));
         
         let log_json = serde_json::Value::Object(log_obj);
         if let Ok(pretty_log) = serde_json::to_string_pretty(&log_json) {
@@ -184,7 +184,9 @@ fn main() -> Result<()> {
     let i2c = Arc::new(Mutex::new(I2c::init()?));
     println!("DEBUG: I2C initialized");
 
-    // 4. Initialisation et démarrage de l'IHM / Écran ST7789
+    // 4. [DÉSACTIVÉ POUR TEST] Initialisation et démarrage de l'IHM / Écran ST7789
+    println!("DEBUG: Screen SKIPPED (test mode)");
+    /*
     println!("DEBUG: Initializing screen...");
     match screen::Screen::init(
         peripherals.spi2,
@@ -205,29 +207,30 @@ fn main() -> Result<()> {
             let actuators_clone = Arc::clone(&actuators);
             let state_clone = Arc::clone(&actuators_state);
             println!("DEBUG: Spawning screen_ihm thread (32KB stack)...");
-            thread::Builder::new()
+            match thread::Builder::new()
                 .name("screen_ihm".to_string())
                 .stack_size(32768)
                 .spawn(move || {
                     if let Err(e) = screen_display::run_ihm(screen, display, board_clone, actuators_clone, state_clone) {
                         log::error!("Erreur fatale dans le thread IHM : {:?}", e);
                     }
-                })?;
-            println!("DEBUG: screen_ihm thread spawned successfully.");
-            info!("Écran et thread IHM démarrés avec succès !");
+                })
+            {
+                Ok(_handle) => {
+                    println!("DEBUG: screen_ihm thread spawned successfully.");
+                    info!("Écran et thread IHM démarrés avec succès !");
+                }
+                Err(e) => {
+                    log::error!("Échec du spawn du thread IHM : {:?}. Main continue.", e);
+                }
+            }
         }
         Err(e) => {
             log::error!("Échec de l'initialisation de l'écran : {:?}", e);
         }
     }
+    */
 
-    // Initialiser la LED RMT
-    #[allow(deprecated)]
-    {
-        common::led::init_led(peripherals.rmt.channel0, peripherals.pins.gpio48)
-            .context("Failed to init RMT LED driver")?;
-    }
-    println!("DEBUG: LED RMT initialized");
 
     info!("\x1b[35mWhisperEye Production Application Starting Up (Version {})...\x1b[0m", FW_VERSION);
 
@@ -269,6 +272,12 @@ fn main() -> Result<()> {
     };
     let discovered_probes = Arc::new(discovered_probes);
     one_wire::ONEWIRE_DEVICES_COUNT.store(discovered_probes.len() as u8, std::sync::atomic::Ordering::Relaxed);
+    info!("[1-Wire] Scan terminé : {} sonde(s) DS18B20 détectée(s). Bus initialisé: {}", discovered_probes.len(), onewire_bus.is_some());
+    if !discovered_probes.is_empty() {
+        for (i, addr) in discovered_probes.iter().enumerate() {
+            info!("[1-Wire]   Sonde #{}: 0x{}", i + 1, addr.to_uppercase());
+        }
+    }
 
     // Enregistrer les périphériques détectés
     {
@@ -399,6 +408,19 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

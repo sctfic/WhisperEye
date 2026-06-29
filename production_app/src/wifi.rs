@@ -339,7 +339,7 @@ impl NetManager {
     ) -> Result<()> {
         thread::Builder::new()
             .name("net_controller".to_string())
-            .stack_size(8192)
+            .stack_size(16384)
             .spawn(move || {
                 info!("Network Controller Thread started (direct Wi-Fi + provisioning mode).");
                 let mut last_wifi_cycle = Instant::now() - WIFI_RETRY_DELAY;
