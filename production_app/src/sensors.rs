@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use std::sync::Mutex;
-use crate::ds18b20::OneWire;
+use crate::one_wire::OneWire;
 
 #[derive(Debug, Clone)]
 pub struct SensorReadings {

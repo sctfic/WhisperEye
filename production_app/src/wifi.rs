@@ -347,6 +347,33 @@ impl NetManager {
                 loop {
                     thread::sleep(Duration::from_millis(200));
                     let now = Instant::now();
+
+                    let (connected, current_ssid_val, current_ip_val) = {
+                        if let Ok(net) = this.lock() {
+                            let conn = net.wifi.is_connected().unwrap_or(false);
+                            let mut ssid_str = String::new();
+                            let mut ip_str = String::new();
+                            if conn {
+                                if let Some(ref s) = net.current_sta_ssid {
+                                    ssid_str = s.clone();
+                                }
+                                if let Ok(ip_info) = net.wifi.wifi().sta_netif().get_ip_info() {
+                                    ip_str = format!("{}/{}", ip_info.ip, ip_info.subnet.mask.0);
+                                }
+                            }
+                            (conn, ssid_str, ip_str)
+                        } else {
+                            (false, String::new(), String::new())
+                        }
+                    };
+                    WIFI_CONNECTED.store(connected, std::sync::atomic::Ordering::Relaxed);
+                    if let Ok(mut g_ssid) = CURRENT_SSID.lock() {
+                        *g_ssid = current_ssid_val;
+                    }
+                    if let Ok(mut g_ip) = CURRENT_IP.lock() {
+                        *g_ip = current_ip_val;
+                    }
+
                     let state = { this.lock().unwrap().state };
 
                     if state == NetState::ApPairing {
@@ -554,7 +581,7 @@ fn try_provisioning_peer(
             .unwrap_or(std::net::Ipv4Addr::new(192, 168, PROVISIONING_SUBNET, 1))
     };
 
-    match crate::perform_mesh_sync(nvs, gateway_ip) {
+    match crate::web_handlers::perform_mesh_sync(nvs, gateway_ip) {
         Ok((_distance, had_new_wifi)) => {
             info!(
                 "Provisioning sync completed from {}. New/updated Wi-Fi: {}",
@@ -645,3 +672,10 @@ fn run_captive_dns_server() -> Result<()> {
 /// Flag signalé par main.rs quand un client se connecte à l'AP (ApStaConnected)
 pub static AP_CLIENT_CONNECTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Statut de la connexion WiFi cliente
+pub static WIFI_CONNECTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub static CURRENT_SSID: Mutex<String> = Mutex::new(String::new());
+pub static CURRENT_IP: Mutex<String> = Mutex::new(String::new());
