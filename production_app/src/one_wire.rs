@@ -6,7 +6,7 @@ use esp_idf_sys as sys;
 use log::{info, warn, error, debug};
 
 pub static ONEWIRE_DEVICES_COUNT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-pub static ONEWIRE_TEMPERATURES: std::sync::Mutex<std::collections::HashMap<String, f32>> = std::sync::Mutex::new(std::collections::HashMap::new());
+pub static ONEWIRE_TEMPERATURES: std::sync::Mutex<Option<std::collections::HashMap<String, f32>>> = std::sync::Mutex::new(None);
 
 // CRC8 Dallas/Maxim : X^8 + X^5 + X^4 + 1 (0x8C)
 pub fn calculate_crc8(data: &[u8]) -> u8 {

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.1.5-0047";
+pub const FW_VERSION: &str = "1.1.6";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -184,9 +184,7 @@ fn main() -> Result<()> {
     let i2c = Arc::new(Mutex::new(I2c::init()?));
     println!("DEBUG: I2C initialized");
 
-    // 4. [DÉSACTIVÉ POUR TEST] Initialisation et démarrage de l'IHM / Écran ST7789
-    println!("DEBUG: Screen SKIPPED (test mode)");
-    /*
+    // 4. Initialisation et démarrage de l'IHM / Écran ST7789
     println!("DEBUG: Initializing screen...");
     match screen::Screen::init(
         peripherals.spi2,
@@ -229,7 +227,6 @@ fn main() -> Result<()> {
             log::error!("Échec de l'initialisation de l'écran : {:?}", e);
         }
     }
-    */
 
 
     info!("\x1b[35mWhisperEye Production Application Starting Up (Version {})...\x1b[0m", FW_VERSION);
@@ -408,6 +405,19 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

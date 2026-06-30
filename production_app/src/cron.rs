@@ -223,8 +223,13 @@ impl CronWorker {
         }
 
         let mut readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
-        if let Ok(mut global_temps) = crate::one_wire::ONEWIRE_TEMPERATURES.lock() {
-            *global_temps = readings.ds18b20_temperatures.clone();
+        if let Ok(mut opt_temps) = crate::one_wire::ONEWIRE_TEMPERATURES.lock() {
+            if opt_temps.is_none() {
+                *opt_temps = Some(std::collections::HashMap::new());
+            }
+            if let Some(ref mut global_temps) = *opt_temps {
+                *global_temps = readings.ds18b20_temperatures.clone();
+            }
         }
         if let Some(ref sht) = sht4_opt {
             readings.temperature_sht45 = sht.temperature;
