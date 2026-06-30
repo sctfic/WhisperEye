@@ -72,32 +72,37 @@ let max_duty = blk_pwm.get_max_duty();
 blk_pwm.set_duty(max_duty * duty_pct / 100)?;
 ```
 
-#### B. Décodage de la roue codeuse (Quadrature)
-La rotation est échantillonnée à 1 ms à l'aide d'une table d'état à quadrature complète :
+#### B. Décodage matériel de la roue codeuse (Pulse Counter - PCNT)
+Pour éliminer la surcharge CPU induite par un échantillonnage logiciel rapide (polling à 1 ms) qui entrait en conflit avec les timings critiques du 1-Wire et la réactivité du WiFi, le décodeur matériel PCNT de l'ESP32-S3 est utilisé :
+
+* **Principe** : Le PCNT surveille de manière autonome les transitions (edges) et les états (levels) sur les broches GPIO17 et GPIO18.
+* **Fonctionnement** : Il est configuré en mode décodage de quadrature complet (multiplication x4). Il incrémente ou décrémente un compteur physique 16 bits sans intervention du CPU.
+* **Consommation CPU** : Réduite à presque 0 %, un thread se réveille simplement toutes les 10 ms (ou 100 ms) pour lire le compteur matériel accumulé et ajuster la luminosité.
+
 ```rust
-// Table de décodage Gray code (Index : état_précédent << 2 | état_actuel)
-const ENCODER_STATES: [i8; 16] = [
-    0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0
-];
+// Configuration PCNT simplifiée via l'API FFI esp-idf-sys
+let mut unit: pcnt_unit_handle_t = std::ptr::null_mut();
+let unit_config = pcnt_unit_config_t {
+    low_limit: -32768,
+    high_limit: 32767,
+    flags: Default::default(),
+    intr_priority: 0,
+};
+pcnt_new_unit(&unit_config, &mut unit);
 
-// Boucle de lecture
-let a = btn0_driver.is_high();
-let b = btn1_driver.is_high();
-let current_state = ((a as u8) << 1) | (b as u8);
+// Ajout d'un filtre anti-rebond matériel (ex: 10µs)
+let filter_config = pcnt_glitch_filter_config_t { max_glitch_ns: 10000 };
+pcnt_unit_set_glitch_filter(unit, &filter_config);
 
-if current_state != last_state {
-    let change = ENCODER_STATES[((last_state << 2) | current_state) as usize];
-    acc_steps += change;
-    
-    if acc_steps >= 4 {
-        // Incrémenter la luminosité de +5%
-        acc_steps -= 4;
-    } else if acc_steps <= -4 {
-        // Décrémenter la luminosité de -5%
-        acc_steps += 4;
-    }
-    last_state = current_state;
-}
+// Association des canaux (A -> Signal=A, Control=B ; B -> Signal=B, Control=A)
+pcnt_new_channel(unit, &chan_a_config, &mut chan_a);
+pcnt_new_channel(unit, &chan_b_config, &mut chan_b);
+
+// Configuration des actions de comptage (Edge & Level)
+pcnt_channel_set_edge_action(chan_a, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE);
+pcnt_channel_set_level_action(chan_a, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE);
+// ... idem pour le canal B de manière croisée
+```
 ```
 
 #### C. Gestion des Boutons (BTN2 et BTN3)
