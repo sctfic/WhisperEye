@@ -340,16 +340,9 @@ fn search_next(&mut self, state: &mut SearchState) {
 fn main() -> Result<(), anyhow::Error> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
-    
+
     // Forcer le framework log de Rust à laisser passer les messages de debug
     log::set_max_level(log::LevelFilter::Debug);
-
-    unsafe {
-        esp_idf_sys::esp_log_level_set(
-            b"minimalist_test\0".as_ptr() as *const std::os::raw::c_char,
-            esp_idf_sys::esp_log_level_t_ESP_LOG_DEBUG,
-        );
-    }
 
     info!("==================================================================");
     info!("   WhisperEye - Firmware de diagnostic DS18B20 (GPIO 39)          ");

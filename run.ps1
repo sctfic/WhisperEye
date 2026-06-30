@@ -14,10 +14,16 @@ param (
     [switch]$NoTests,
 
     [Parameter(Mandatory = $false)]
-    [switch]$Stable
+    [switch]$Stable,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$NoVersion
 )
 
 $ErrorActionPreference = "Stop"
+
+# ── Baud rate maximum pour les transferts ──
+$BAUD = 2000000
 
 # Clear host and print a premium welcome header
 Clear-Host
@@ -45,10 +51,16 @@ else {
     Write-Host "    [!] Warning: Espressif environment script not found at standard path. Relying on PATH variables." -ForegroundColor Yellow
 }
 
+# ── Port argument helper ──
+function Get-PortArgs {
+    if ($Port) { return " --port $Port" } else { return "" }
+}
+
 # Helper functions for versioning and catalog update
 function Increment-ProductionVersion {
     param(
-        [bool]$StableBuild = $false
+        [bool]$StableBuild = $false,
+        [bool]$NoVersionBuild = $false
     )
     # Versioning rules:
     #   - Stable  = even patch, no build suffix  (e.g. 1.0.2)
@@ -96,6 +108,17 @@ function Increment-ProductionVersion {
             # Already stable, increment to next stable (e.g. 1.0.4 -> 1.0.6)
             $NewPatch = $LatestPatch + 2
             $NewVersion = "{0}.{1}.{2}" -f $LatestMajor, $LatestMinor, $NewPatch
+        }
+    } elseif ($NoVersionBuild) {
+        # Do not increment version, reuse latest detected version
+        if ($LatestIsStable) {
+            $NewVersion = "{0}.{1}.{2}" -f $LatestMajor, $LatestMinor, $LatestPatch
+        } else {
+            if ($LatestBuild -eq -1) {
+                $NewVersion = "1.0.1-0001"
+            } else {
+                $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $LatestPatch, $LatestBuild
+            }
         }
     } else {
         if ($LatestIsStable) {
@@ -185,11 +208,11 @@ function Update-FullFlashFolder {
     [System.IO.File]::WriteAllBytes("$FullFlashDir\phy_init.bin", $PhyBytes)
     Write-Host "    [+] Generated phy_init.bin" -ForegroundColor DarkGray
 
-    # 4. Export merged recovery image to extract bootloader and partitions
+    # 4. Export merged recovery image to extract bootloader and partitions (--skip-build: déjà compilé)
     Write-Host "    [*] Exporting merged recovery image to extract bootloader & partitions..." -ForegroundColor DarkGray
     $MergedFile = Join-Path $FullFlashDir "merged_temp.bin"
-    $SaveMergedCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery --merge $MergedFile"
-    if ($BuildProfile -eq "release") { $SaveMergedCmd += " --release" }
+    $ReleaseFlag = if ($BuildProfile -eq "release") { " --release" } else { "" }
+    $SaveMergedCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery --merge $MergedFile$ReleaseFlag"
     
     $OldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -216,11 +239,10 @@ function Update-FullFlashFolder {
         Remove-Item $MergedFile -Force
     }
 
-    # 5. Export individual recovery_boot binary
+    # 5. Export individual recovery_boot binary (--skip-build)
     Write-Host "    [*] Exporting recovery_boot application binary..." -ForegroundColor DarkGray
     $TempRecFile = Join-Path $FullFlashDir "recovery.bin"
-    $SaveRecCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery $TempRecFile"
-    if ($BuildProfile -eq "release") { $SaveRecCmd += " --release" }
+    $SaveRecCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery $TempRecFile$ReleaseFlag"
     
     $OldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -228,11 +250,10 @@ function Update-FullFlashFolder {
     $ErrorActionPreference = $OldErrorAction
     Write-Host "    [+] Saved recovery.bin" -ForegroundColor DarkGray
 
-    # 6. Export individual production_app binary
+    # 6. Export individual production_app binary (--skip-build)
     Write-Host "    [*] Exporting production_app application binary..." -ForegroundColor DarkGray
     $TempProdFile = Join-Path $FullFlashDir "production.bin"
-    $SaveProdCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production $TempProdFile"
-    if ($BuildProfile -eq "release") { $SaveProdCmd += " --release" }
+    $SaveProdCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production $TempProdFile$ReleaseFlag"
     
     $OldErrorAction = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -244,9 +265,9 @@ function Update-FullFlashFolder {
 }
 
 
-
-
-# 2. Setup targets
+# ══════════════════════════════════════════════════════════════
+#  TARGET: minimalist
+# ══════════════════════════════════════════════════════════════
 if ($Target -eq "minimalist") {
     Write-Host "[*] Initiating build and flash for minimalist WS2812 RMT firmware..." -ForegroundColor Cyan
     
@@ -270,13 +291,11 @@ if ($Target -eq "minimalist") {
     }
     
     Write-Host "[*] Uploading minimalist_test onto 'production' partition..." -ForegroundColor Cyan
-    $FlashCommand = "cargo +esp espflash flash --flash-size 16mb --package minimalist_test --partition-table partitions.csv --target-app-partition production --monitor"
+    $FlashCommand = "cargo +esp espflash flash --baud $BAUD --flash-size 16mb --package minimalist_test --partition-table partitions.csv --target-app-partition production --monitor"
     if (-not $Debug) {
         $FlashCommand += " --release"
     }
-    if ($Port) {
-        $FlashCommand += " --port $Port"
-    }
+    $FlashCommand += (Get-PortArgs)
     Write-Host "    -> Invoking command: $FlashCommand" -ForegroundColor DarkGray
     try {
         Invoke-Expression $FlashCommand
@@ -291,12 +310,13 @@ if ($Target -eq "minimalist") {
     exit 0
 }
 
+# ══════════════════════════════════════════════════════════════
+#  TARGET: nvs
+# ══════════════════════════════════════════════════════════════
 if ($Target -eq "nvs") {
     Write-Host "[*] Initiating NVS erase process..." -ForegroundColor Cyan
     $FlashCommand = "cargo +esp espflash erase-parts --package recovery_boot --partition-table partitions.csv nvs"
-    if ($Port) {
-        $FlashCommand += " --port $Port"
-    }
+    $FlashCommand += (Get-PortArgs)
     Write-Host "    -> Invoking command: $FlashCommand" -ForegroundColor DarkGray
     try {
         Invoke-Expression $FlashCommand
@@ -312,10 +332,13 @@ if ($Target -eq "nvs") {
     exit 0
 }
 
+# ══════════════════════════════════════════════════════════════
+#  TARGET: all (recovery + production)
+# ══════════════════════════════════════════════════════════════
 if ($Target -eq "all") {
     Write-Host "[*] Initiating build and flash for ALL targets (recovery & production)..." -ForegroundColor Cyan
     
-    # 3. Clean Cache (if requested)
+    # Clean Cache (if requested)
     if ($Clean) {
         Write-Host "[*] Cleaning Cargo cache..." -ForegroundColor Gray
         cargo +esp clean
@@ -324,28 +347,21 @@ if ($Target -eq "all") {
     # Increment recovery version before compile
     $NewRecoveryVersion = Increment-RecoveryVersion
 
-    # Compilation 1/2: recovery_boot
+    # ── Compilation 1/2: recovery_boot ──
     $BuildProfile = if ($Debug) { "debug" } else { "release" }
+    $ReleaseFlag = if ($Debug) { "" } else { " --release" }
     $env:ESP_IDF_SYS_ROOT_CRATE = "recovery_boot"
     Write-Host "[*] [1/2] Compiling recovery_boot ($BuildProfile)..." -ForegroundColor Cyan
-    if ($Debug) {
-        cargo +esp build --package recovery_boot
-    } else {
-        cargo +esp build --package recovery_boot --release
-    }
+    Invoke-Expression "cargo +esp build --package recovery_boot$ReleaseFlag"
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[-] Compilation of recovery_boot failed!" -ForegroundColor Red
         exit 1
     }
 
-    # Export recovery boot bin image (without build number, named recovery_boot.bin)
+    # Export recovery boot bin image (--skip-build: on vient de compiler)
     $RecoveryBinPath = "recovery_boot\recovery_boot.bin"
     Write-Host "[*] Exporting recovery binary image to $RecoveryBinPath..." -ForegroundColor Cyan
-    $SaveRecoveryCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery"
-    if ($BuildProfile -eq "release") {
-        $SaveRecoveryCmd += " --release"
-    }
-    $SaveRecoveryCmd += " $RecoveryBinPath"
+    $SaveRecoveryCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery$ReleaseFlag $RecoveryBinPath"
     Write-Host "    -> Invoking command: $SaveRecoveryCmd" -ForegroundColor DarkGray
     Invoke-Expression $SaveRecoveryCmd
     if ($LASTEXITCODE -ne 0) {
@@ -353,29 +369,21 @@ if ($Target -eq "all") {
         exit 1
     }
 
-    # Automated version incrementation and packaging pipeline
-    $NewVersion = Increment-ProductionVersion -StableBuild $Stable
+    # ── Compilation 2/2: production_app ──
+    $NewVersion = Increment-ProductionVersion -StableBuild $Stable -NoVersionBuild $NoVersion
 
-    # Compilation 2/2: production_app
     $env:ESP_IDF_SYS_ROOT_CRATE = "production_app"
     Write-Host "[*] [2/2] Compiling production_app ($BuildProfile)..." -ForegroundColor Cyan
-    if ($Debug) {
-        cargo +esp build --package production_app
-    } else {
-        cargo +esp build --package production_app --release
-    }
+    Invoke-Expression "cargo +esp build --package production_app$ReleaseFlag"
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[-] Compilation of production_app failed!" -ForegroundColor Red
         exit 1
     }
     
+    # Export production bin image (--skip-build)
     $BinPath = "boards\board_default\firmware-s3-$NewVersion.bin"
     Write-Host "[*] Exporting flashable binary image to $BinPath..." -ForegroundColor Cyan
-    $SaveCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production"
-    if ($BuildProfile -eq "release") {
-        $SaveCmd += " --release"
-    }
-    $SaveCmd += " $BinPath"
+    $SaveCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production$ReleaseFlag $BinPath"
     Write-Host "    -> Invoking command: $SaveCmd" -ForegroundColor DarkGray
     Invoke-Expression $SaveCmd
     if ($LASTEXITCODE -ne 0) {
@@ -387,11 +395,9 @@ if ($Target -eq "all") {
 
     Write-Host "[+] All target packages compiled successfully. Ready to flash." -ForegroundColor Green
 
-    # Flashing 1/2: recovery_boot (NO monitor, keep in bootloader)
+    # ── Flashing 1/2: recovery_boot (NO monitor, keep in bootloader) ──
     Write-Host "[*] [1/2] Flashing recovery_boot onto 'recovery' partition (keeping bootloader active)..." -ForegroundColor Cyan
-    $FlashRecovery = "cargo +esp espflash flash --baud 2000000 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery --after no-reset"
-    if (-not $Debug) { $FlashRecovery += " --release" }
-    if ($Port) { $FlashRecovery += " --port $Port" }
+    $FlashRecovery = "cargo +esp espflash flash --baud $BAUD --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery --after no-reset$ReleaseFlag$(Get-PortArgs)"
     Write-Host "    -> Invoking command: $FlashRecovery" -ForegroundColor DarkGray
     try {
         Invoke-Expression $FlashRecovery
@@ -402,13 +408,12 @@ if ($Target -eq "all") {
     }
 
     # Short delay to allow serial port driver to settle under Windows
-    Write-Host "[*] Waiting 2 seconds for serial port driver to settle..." -ForegroundColor Gray
-    Start-Sleep -Seconds 2
+    Write-Host "[*] Waiting 1 second for serial port driver to settle..." -ForegroundColor Gray
+    Start-Sleep -Seconds 1
 
-    # Flashing 1.5/2: otadata (to point boot to production/ota_0)
+    # ── Flashing 1.5/2: otadata (to point boot to production/ota_0) ──
     Write-Host "[*] [1.5/2] Flashing otadata_ota0.bin onto 'otadata' partition..." -ForegroundColor Cyan
-    $FlashOtaData = "cargo +esp espflash write-bin --baud 2000000 --before no-reset --after no-reset 0xf000 otadata_ota0.bin"
-    if ($Port) { $FlashOtaData += " --port $Port" }
+    $FlashOtaData = "cargo +esp espflash write-bin --baud $BAUD --before no-reset --after no-reset 0xf000 otadata_ota0.bin$(Get-PortArgs)"
     Write-Host "    -> Invoking command: $FlashOtaData" -ForegroundColor DarkGray
     try {
         Invoke-Expression $FlashOtaData
@@ -418,11 +423,9 @@ if ($Target -eq "all") {
         exit 1
     }
 
-    # Flashing 2/2: production_app (WITH monitor)
+    # ── Flashing 2/2: production_app (WITH monitor) ──
     Write-Host "[*] [2/2] Flashing production_app onto 'production' partition..." -ForegroundColor Cyan
-    $FlashProd = "cargo +esp espflash flash --baud 2000000 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production --before no-reset --monitor"
-    if (-not $Debug) { $FlashProd += " --release" }
-    if ($Port) { $FlashProd += " --port $Port" }
+    $FlashProd = "cargo +esp espflash flash --baud $BAUD --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production --before no-reset --monitor$ReleaseFlag$(Get-PortArgs)"
     Write-Host "    -> Invoking command: $FlashProd" -ForegroundColor DarkGray
     if (-not $NoTests) {
         Write-Host "[*] Launching API tests in a separate window (waiting 10s)..." -ForegroundColor Yellow
@@ -439,30 +442,28 @@ if ($Target -eq "all") {
     exit 0
 }
 
+# ══════════════════════════════════════════════════════════════
+#  TARGET: single (recovery ou production)
+# ══════════════════════════════════════════════════════════════
 $Package = if ($Target -eq "recovery") { "recovery_boot" } else { "production_app" }
 $BuildProfile = if ($Debug) { "debug" } else { "release" }
-$ProfileFlag = if ($Debug) { "" } else { "--release" }
+$ReleaseFlag = if ($Debug) { "" } else { " --release" }
 
-# 3. Clean Cache
+# Clean Cache
 if ($Clean) {
     Write-Host "[*] Cleaning Cargo cache..." -ForegroundColor Gray
     cargo +esp clean
 }
 
-# 4. Compile
+# ── Compile (unique compilation, pas de doublon) ──
 if ($Package -eq "production_app") {
-    $NewVersion = Increment-ProductionVersion -StableBuild $Stable
+    $NewVersion = Increment-ProductionVersion -StableBuild $Stable -NoVersionBuild $NoVersion
 } elseif ($Package -eq "recovery_boot") {
     $NewRecoveryVersion = Increment-RecoveryVersion
 }
 $env:ESP_IDF_SYS_ROOT_CRATE = $Package
 Write-Host "[*] Compiling target package: $Package ($BuildProfile)..." -ForegroundColor Cyan
-if ($Debug) {
-    cargo +esp build --package $Package
-}
-else {
-    cargo +esp build --package $Package --release
-}
+Invoke-Expression "cargo +esp build --package $Package$ReleaseFlag"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[-] Compilation failed!" -ForegroundColor Red
@@ -470,29 +471,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "[+] Compilation successful!" -ForegroundColor Green
 
+# ── Export binary (--skip-build : la compilation est déjà faite) ──
 if ($Package -eq "production_app") {
     $BinPath = "boards\board_default\firmware-s3-$NewVersion.bin"
     Write-Host "[*] Exporting flashable binary image to $BinPath..." -ForegroundColor Cyan
-    $SaveCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production"
-    if ($BuildProfile -eq "release") {
-        $SaveCmd += " --release"
-    }
-    $SaveCmd += " $BinPath"
+    $SaveCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package production_app --partition-table partitions.csv --target-app-partition production$ReleaseFlag $BinPath"
     Write-Host "    -> Invoking command: $SaveCmd" -ForegroundColor DarkGray
     Invoke-Expression $SaveCmd
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[-] Failed to save ESP32-S3 binary image!" -ForegroundColor Red
         exit 1
     }
+    Write-Host "    [+] Saved production.bin" -ForegroundColor DarkGray
 
 } elseif ($Package -eq "recovery_boot") {
     $RecoveryBinPath = "recovery_boot\recovery_boot.bin"
     Write-Host "[*] Exporting recovery binary image to $RecoveryBinPath..." -ForegroundColor Cyan
-    $SaveRecoveryCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery"
-    if ($BuildProfile -eq "release") {
-        $SaveRecoveryCmd += " --release"
-    }
-    $SaveRecoveryCmd += " $RecoveryBinPath"
+    $SaveRecoveryCmd = "cargo +esp espflash save-image --chip esp32s3 --flash-size 16mb --package recovery_boot --partition-table partitions.csv --target-app-partition recovery$ReleaseFlag $RecoveryBinPath"
     Write-Host "    -> Invoking command: $SaveRecoveryCmd" -ForegroundColor DarkGray
     Invoke-Expression $SaveRecoveryCmd
     if ($LASTEXITCODE -ne 0) {
@@ -503,14 +498,13 @@ if ($Package -eq "production_app") {
 
 Update-FullFlashFolder -BuildProfile $BuildProfile
 
-# 5. Flash Upload
+# ── Flash Upload ──
 Write-Host "[*] Initiating upload process for $Package..." -ForegroundColor Cyan
 
 if ($Target -eq "recovery") {
     # Erase otadata so bootloader defaults to recovery boot
     Write-Host "[*] Erasing 'otadata' partition to default to recovery boot..." -ForegroundColor Cyan
-    $EraseOtaData = "cargo +esp espflash erase-parts --partition-table partitions.csv --after no-reset otadata"
-    if ($Port) { $EraseOtaData += " --port $Port" }
+    $EraseOtaData = "cargo +esp espflash erase-parts --partition-table partitions.csv --after no-reset otadata$(Get-PortArgs)"
     Write-Host "    -> Invoking command: $EraseOtaData" -ForegroundColor DarkGray
     try {
         Invoke-Expression $EraseOtaData
@@ -521,20 +515,16 @@ if ($Target -eq "recovery") {
     }
 }
 
-# Flash the firmware image
-$FlashCommand = "cargo +esp espflash flash --baud 2000000 --flash-size 16mb --package $Package --partition-table partitions.csv"
+# Flash the firmware image (--skip-build : déjà compilé, pas de recompilation !)
+$FlashCommand = "cargo +esp espflash flash --baud $BAUD --flash-size 16mb --package $Package --partition-table partitions.csv"
 if ($Target -eq "production") {
     $FlashCommand += " --target-app-partition production"
 }
 else {
     $FlashCommand += " --target-app-partition recovery --before no-reset"
 }
-if (-not $Debug) {
-    $FlashCommand += " --release"
-}
-if ($Port) {
-    $FlashCommand += " --port $Port"
-}
+$FlashCommand += $ReleaseFlag
+$FlashCommand += (Get-PortArgs)
 # For production: no --monitor here, we still need to flash otadata after
 # For recovery: attach monitor directly
 if ($Target -ne "production") {
@@ -557,12 +547,11 @@ if ($LASTEXITCODE -ne 0) {
 
 if ($Target -eq "production") {
     # Flash otadata AFTER the production firmware to point boot to ota_0
-    Write-Host "[*] Waiting 2 seconds for serial port driver to settle..." -ForegroundColor Gray
-    Start-Sleep -Seconds 2
+    Write-Host "[*] Waiting 1 second for serial port driver to settle..." -ForegroundColor Gray
+    Start-Sleep -Seconds 1
 
     Write-Host "[*] Flashing otadata_ota0.bin onto 'otadata' partition and starting monitor..." -ForegroundColor Cyan
-    $FlashOtaData = "cargo +esp espflash write-bin --baud 2000000 0xf000 otadata_ota0.bin --monitor"
-    if ($Port) { $FlashOtaData += " --port $Port" }
+    $FlashOtaData = "cargo +esp espflash write-bin --baud $BAUD 0xf000 otadata_ota0.bin --monitor$(Get-PortArgs)"
     Write-Host "    -> Invoking command: $FlashOtaData" -ForegroundColor DarkGray
     if (-not $NoTests) {
         Write-Host "[*] Launching API tests in a separate window (waiting 10s)..." -ForegroundColor Yellow
@@ -598,7 +587,7 @@ if ($LASTEXITCODE -ne 0) {
     else {
         Write-Host "• Port Série Spécifié   : Automatique (Détection espflash)" -ForegroundColor Gray
     }
-    Write-Host "• Vitesse de Flash      : 460800 bauds (Standard)" -ForegroundColor Gray
+    Write-Host "• Vitesse de Flash      : $BAUD bauds (Maximum)" -ForegroundColor Gray
     Write-Host "• Terminal Moniteur     : Actif (--monitor)" -ForegroundColor Gray
     Write-Host ""
 

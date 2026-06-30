@@ -281,7 +281,7 @@ impl DeviceRegistry {
         }
 
         // 4. Dynamic Devices: I2C (SHT45 and SCD41) channel probes
-        let i2c_scans = crate::i2c_bus::scan_i2c_devices();
+        let i2c_scans = crate::i2c::scan_i2c_devices();
         for (channel, addr) in i2c_scans {
             if addr == 0x44 {
                 // SHT45 : séparer en deux capteurs distincts (Température et Humidité)
@@ -388,9 +388,9 @@ impl DeviceRegistry {
         let registry = self.load_registry(); // construit à partir des statiques + NVS dynamiques
         let mut list = Vec::new();
 
-        let bme_t = *crate::i2c_bus::BME280_TEMP.lock().unwrap() as f64;
-        let bme_h = *crate::i2c_bus::BME280_HUM.lock().unwrap() as f64;
-        let bme_p = *crate::i2c_bus::BME280_PRESS.lock().unwrap() as f64;
+        let bme_t = *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap() as f64;
+        let bme_h = *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap() as f64;
+        let bme_p = *crate::i2c::i2c_bme280::BME280_PRESS.lock().unwrap() as f64;
 
         let mut raw_values: HashMap<String, f64> = HashMap::new();
         raw_values.insert("vsense".to_string(), 12.4);
@@ -784,21 +784,21 @@ pub fn apply_sensor_corrections(
     raw_values.insert("i2c:0:0x62".to_string(), readings.co2_scd41 as f64);
     
     let bme_t = {
-        if let Ok(lock) = crate::i2c_bus::BME280_TEMP.lock() {
+        if let Ok(lock) = crate::i2c::i2c_bme280::BME280_TEMP.lock() {
             *lock as f64
         } else {
             -255.0
         }
     };
     let bme_h = {
-        if let Ok(lock) = crate::i2c_bus::BME280_HUM.lock() {
+        if let Ok(lock) = crate::i2c::i2c_bme280::BME280_HUM.lock() {
             *lock as f64
         } else {
             -255.0
         }
     };
     let bme_p = {
-        if let Ok(lock) = crate::i2c_bus::BME280_PRESS.lock() {
+        if let Ok(lock) = crate::i2c::i2c_bme280::BME280_PRESS.lock() {
             *lock as f64
         } else {
             -255.0

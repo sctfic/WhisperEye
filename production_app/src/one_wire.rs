@@ -1,7 +1,12 @@
+pub mod one_wire_ds18b20;
+
 use esp_idf_hal::gpio::{PinDriver, InputOutput, Gpio39, Pull};
 use esp_idf_hal::delay::Ets;
 use esp_idf_sys as sys;
 use log::{info, warn, error, debug};
+
+pub static ONEWIRE_DEVICES_COUNT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub static ONEWIRE_TEMPERATURES: std::sync::Mutex<Option<std::collections::HashMap<String, f32>>> = std::sync::Mutex::new(None);
 
 // CRC8 Dallas/Maxim : X^8 + X^5 + X^4 + 1 (0x8C)
 pub fn calculate_crc8(data: &[u8]) -> u8 {
@@ -160,14 +165,21 @@ impl<'d> OneWire<'d> {
         // Lancement de la première recherche
         self.search_next(&mut state);
 
+        let mut iterations = 0;
         // Boucle principale : tant qu’on trouve un périphérique valide, on continue
         loop {
+            iterations += 1;
+            if iterations > 10 {
+                warn!("[1-Wire Search] Nombre maximum d'itérations (10) atteint. Arrêt de sécurité.");
+                break;
+            }
+
             let rom = state.rom;
             let hex_addr = rom.iter().map(|b| format!("{:02x}", b)).collect::<String>();
             let calculated_crc = calculate_crc8(&rom[0..7]);
             let is_crc_valid = calculated_crc == rom[7];
 
-            debug!(
+            info!(
                 "[1-Wire Search] ROM trouvée : 0x{} (CRC: {})",
                 hex_addr.to_uppercase(),
                 if is_crc_valid { "OK" } else { "ERREUR" }
@@ -193,6 +205,7 @@ impl<'d> OneWire<'d> {
             self.search_next(&mut state);
         }
 
+        info!("[1-Wire Search] Recherche terminée. {} DS18B20 trouvé(s).", devices.len());
         devices
     }
 

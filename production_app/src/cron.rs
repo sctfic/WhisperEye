@@ -30,9 +30,10 @@ pub struct CronWorker {
     #[allow(dead_code)]
     mesh_state: Arc<Mutex<MeshState>>,
     actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
-    static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
+    static_devs: Arc<Mutex<crate::actuators::Actuators>>,
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
-    onewire_bus: Option<Arc<Mutex<crate::ds18b20::OneWire<'static>>>>,
+    onewire_bus: Option<Arc<Mutex<crate::one_wire::OneWire<'static>>>>,
+    i2c: Arc<Mutex<crate::i2c::I2c>>,
     last_metrics_run: Option<std::time::Instant>,
     last_telemetry_run: Option<std::time::Instant>,
     last_update_check_run: Option<std::time::Instant>,
@@ -45,9 +46,10 @@ impl CronWorker {
         wifi: Arc<Mutex<NetManager>>,
         mesh_state: Arc<Mutex<MeshState>>,
         actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
-        static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
+        static_devs: Arc<Mutex<crate::actuators::Actuators>>,
         scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
-        onewire_bus: Option<Arc<Mutex<crate::ds18b20::OneWire<'static>>>>,
+        onewire_bus: Option<Arc<Mutex<crate::one_wire::OneWire<'static>>>>,
+        i2c: Arc<Mutex<crate::i2c::I2c>>,
     ) -> Self {
         Self {
             rx,
@@ -59,6 +61,7 @@ impl CronWorker {
             static_devs,
             scheduled_actions,
             onewire_bus,
+            i2c,
             last_metrics_run: None,
             last_telemetry_run: None,
             last_update_check_run: None,
@@ -131,7 +134,7 @@ impl CronWorker {
                     }
 
                     // Task 4: Check and execute scheduled actions
-                    let now_str = crate::get_formatted_time();
+                    let now_str = crate::web_handlers::get_formatted_time();
                     if now_str != "1970-01-01T00:00:00Z" { // Only check if NTP is synchronized
                         let mut scheds = self.scheduled_actions.lock().unwrap();
                         let mut acts = self.actuators_state.lock().unwrap();
@@ -143,30 +146,16 @@ impl CronWorker {
                                 let action = list.remove(0);
                                 info!("Executing scheduled action for actuator {}: setting state to {}", id, action.state);
                                 match id.as_str() {
-                                    "rla" => {
-                                        acts.rla = action.state;
-                                        let _ = devs.relay_a.set_level(action.state.into());
-                                    }
-                                    "rlb" => {
-                                        acts.rlb = action.state;
-                                        let _ = devs.relay_b.set_level(action.state.into());
-                                    }
-                                    "swpwr" => {
-                                        acts.swpwr = action.state;
-                                        let _ = devs.sw_pwr.set_level(action.state.into());
-                                    }
-                                    "ina" => {
-                                        acts.ina = action.state;
-                                        let _ = devs.ina.set_level(action.state.into());
-                                    }
-                                    "inb" => {
-                                        acts.inb = action.state;
-                                        let _ = devs.inb.set_level(action.state.into());
-                                    }
+                                    "rla" => { acts.rla = action.state; }
+                                    "rlb" => { acts.rlb = action.state; }
+                                    "swpwr" => { acts.swpwr = action.state; }
+                                    "ina" => { acts.ina = action.state; }
+                                    "inb" => { acts.inb = action.state; }
                                     _ => {
                                         warn!("Unknown actuator id in schedule: {}", id);
                                     }
                                 }
+                                let _ = devs.write(id.as_str(), action.state);
                                 changed = true;
                             }
                         }
@@ -187,6 +176,7 @@ impl CronWorker {
     }
 
     fn collect_sensor_metrics(&mut self) {
+        info!("[CRON] collect_sensor_metrics() starting...");
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -221,34 +211,33 @@ impl CronWorker {
             list
         };
 
-        // Lire les valeurs réelles du capteur matériel BME280
-        match crate::i2c_bus::read_bme280_hardware() {
-            Ok((t, h, p)) => {
-                if let Ok(mut g_t) = crate::i2c_bus::BME280_TEMP.lock() {
-                    *g_t = t;
-                }
-                if let Ok(mut g_h) = crate::i2c_bus::BME280_HUM.lock() {
-                    *g_h = h;
-                }
-                if let Ok(mut g_p) = crate::i2c_bus::BME280_PRESS.lock() {
-                    *g_p = p;
-                }
-            }
-            Err(err_code) => {
-                if let Ok(mut g_t) = crate::i2c_bus::BME280_TEMP.lock() {
-                    *g_t = err_code as f32;
-                }
-                if let Ok(mut g_h) = crate::i2c_bus::BME280_HUM.lock() {
-                    *g_h = err_code as f32;
-                }
-                if let Ok(mut g_p) = crate::i2c_bus::BME280_PRESS.lock() {
-                    *g_p = err_code as f32;
-                }
-            }
+        // Lire les valeurs réelles du capteur matériel I2C
+        let (bme_opt, scd_opt, _sht3_opt, sht4_opt) = {
+            let mut i2c_lock = self.i2c.lock().unwrap();
+            i2c_lock.read_value()
+        };
+        if let Some(ref bme) = bme_opt {
+            if let Ok(mut g_t) = crate::i2c::i2c_bme280::BME280_TEMP.lock() { *g_t = bme.temperature; }
+            if let Ok(mut g_h) = crate::i2c::i2c_bme280::BME280_HUM.lock() { *g_h = bme.humidity; }
+            if let Ok(mut g_p) = crate::i2c::i2c_bme280::BME280_PRESS.lock() { *g_p = bme.pressure; }
         }
-        crate::i2c_bus::BME280_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let mut readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
+        if let Ok(mut opt_temps) = crate::one_wire::ONEWIRE_TEMPERATURES.lock() {
+            if opt_temps.is_none() {
+                *opt_temps = Some(std::collections::HashMap::new());
+            }
+            if let Some(ref mut global_temps) = *opt_temps {
+                *global_temps = readings.ds18b20_temperatures.clone();
+            }
+        }
+        if let Some(ref sht) = sht4_opt {
+            readings.temperature_sht45 = sht.temperature;
+            readings.humidity_sht45 = sht.humidity;
+        }
+        if let Some(ref scd) = scd_opt {
+            readings.co2_scd41 = scd.co2;
+        }
         crate::dynamic_devices::apply_sensor_corrections(&self.nvs, &mut readings);
         let entry = MetricEntry {
             timestamp: now,
@@ -276,14 +265,18 @@ impl CronWorker {
 
         let bme_present = devices.values().any(|e| e.name.contains("BME280") && e.present);
         if bme_present {
-            let t = *crate::i2c_bus::BME280_TEMP.lock().unwrap();
-            let h = *crate::i2c_bus::BME280_HUM.lock().unwrap();
-            let p = *crate::i2c_bus::BME280_PRESS.lock().unwrap();
+            let t = *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap();
+            let h = *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap();
+            let p = *crate::i2c::i2c_bme280::BME280_PRESS.lock().unwrap();
             msg_log.push_str(&format!(" BME280: Temp={:.1}°C, Hum={:.1}%, Pres={:.1} hPa,", t, h, p));
         }
 
         let probes_count = readings.ds18b20_temperatures.iter().filter(|(_, &t)| t != -255.0).count();
-        msg_log.push_str(&format!(" Probes count: {}. Sliding history size: {}", probes_count, self.history.len()));
+        msg_log.push_str(&format!(" Probes count: {}.", probes_count));
+        for (addr, temp) in &readings.ds18b20_temperatures {
+            msg_log.push_str(&format!(" [0x{}]: {:.2}°C,", addr.to_uppercase(), temp));
+        }
+        msg_log.push_str(&format!(" Sliding history size: {}", self.history.len()));
         
         info!("{}", msg_log);
 
@@ -499,7 +492,7 @@ impl CronWorker {
             storage.set_i32("otaRetry", 3)?;
 
             thread::sleep(Duration::from_secs(2));
-            crate::set_boot_to_recovery();
+            crate::web_handlers::set_boot_to_recovery();
             unsafe {
                 esp_idf_sys::esp_restart();
             }
@@ -615,9 +608,10 @@ pub fn spawn_cron_scheduler(
     wifi: Arc<Mutex<NetManager>>,
     mesh_state: Arc<Mutex<MeshState>>,
     actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
-    static_devs: Arc<Mutex<crate::static_devices::StaticDevices>>,
+    static_devs: Arc<Mutex<crate::actuators::Actuators>>,
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
-    onewire_bus: Option<Arc<Mutex<crate::ds18b20::OneWire<'static>>>>,
+    onewire_bus: Option<Arc<Mutex<crate::one_wire::OneWire<'static>>>>,
+    i2c: Arc<Mutex<crate::i2c::I2c>>,
 ) -> Result<CronHandle> {
     let (tx, rx) = channel();
 
@@ -629,9 +623,10 @@ pub fn spawn_cron_scheduler(
     let worker_devs = Arc::clone(&static_devs);
     let worker_sched = Arc::clone(&scheduled_actions);
     let worker_bus = onewire_bus.clone();
+    let worker_i2c = Arc::clone(&i2c);
     thread::Builder::new()
         .name("cron_worker".to_string())
-        .stack_size(32768)
+        .stack_size(65536)
         .spawn(move || {
             let worker = CronWorker::new(
                 rx,
@@ -642,6 +637,7 @@ pub fn spawn_cron_scheduler(
                 worker_devs,
                 worker_sched,
                 worker_bus,
+                worker_i2c,
             );
             worker.run();
         })
