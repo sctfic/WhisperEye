@@ -14,6 +14,18 @@ use crate::actuators::{Actuators, ActuatorsState};
 
 // ── 1. FONCTIONS DE DESSIN POUR LES ICÔNES DE STATUT ──
 
+// ─── Icône WiFi ──────────────────────────────────────────────────────────────
+// Taille : 16 x 12 px (4 barres croissantes, contour noir)
+//
+// Barres (gauche→droite) :
+//   Barre 0 : col 0-1, hauteur 3  → rangées 9-11
+//   Barre 1 : col 4-5, hauteur 5  → rangées 7-11
+//   Barre 2 : col 8-9, hauteur 7  → rangées 5-11
+//   Barre 3 : col 12-13, hauteur 9 → rangées 3-11
+//
+//  Col : 0000 1111 2222 3333
+//  Row : 0-1-2-3-4-5-6-7-8-9-10-11
+//
 /// Dessine une icône WiFi avec 4 barres de signal croissantes et contour noir
 fn draw_wifi_icon<D>(display: &mut D, start_point: Point, connected: bool) -> Result<(), D::Error>
 where
@@ -42,104 +54,193 @@ where
     Ok(())
 }
 
-/// Dessine le symbole Bluetooth classique avec le pixel-art exact fourni par l'utilisateur
+// ─── Icône Bluetooth ─────────────────────────────────────────────────────────
+// Taille : 7 x 13 px  (bitmap en binaire, MSB = colonne gauche)
+//
+// Colonne : 0123456
+// Bit 6 = col 0 (gauche), Bit 0 = col 6 (droite)
+//
+// Row  0 : 0001000  = 0x08
+// Row  1 : 0001100  = 0x0C
+// Row  2 : 0001010  = 0x0A
+// Row  3 : 1001001  = 0x49
+// Row  4 : 0101010  = 0x2A
+// Row  5 : 0011100  = 0x1C
+// Row  6 : 0001000  = 0x08
+// Row  7 : 0011100  = 0x1C
+// Row  8 : 0101010  = 0x2A
+// Row  9 : 1001001  = 0x49
+// Row 10 : 0001010  = 0x0A
+// Row 11 : 0001100  = 0x0C
+// Row 12 : 0001000  = 0x08
+
+const BT_ROWS: usize = 13;
+const BT_COLS: usize = 7;
+const BT_BITMAP: [u8; BT_ROWS] = [
+    0b0001000, // Row 0
+    0b0001100, // Row 1
+    0b0001010, // Row 2
+    0b1001001, // Row 3
+    0b0101010, // Row 4
+    0b0011100, // Row 5
+    0b0001000, // Row 6
+    0b0011100, // Row 7
+    0b0101010, // Row 8
+    0b1001001, // Row 9
+    0b0001010, // Row 10
+    0b0001100, // Row 11
+    0b0001000, // Row 12
+];
+
 fn draw_bluetooth_icon<D>(display: &mut D, start_point: Point, active: bool) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let color = if active { Rgb565::GREEN } else { Rgb565::new(15, 30, 15) }; // Vert ou Gris
-    let border_color = Rgb565::BLACK;
+    let color = if active { Rgb565::GREEN } else { Rgb565::new(15, 30, 15) };
     let x = start_point.x;
     let y = start_point.y;
 
-    const BT_PIXELS: [(i32, i32); 29] = [
-        (3, 0),
-        (3, 1), (4, 1),
-        (3, 2), (5, 2),
-        (0, 3), (3, 3), (6, 3),
-        (1, 4), (3, 4), (5, 4),
-        (2, 5), (3, 5), (4, 5),
-        (3, 6),
-        (2, 7), (3, 7), (4, 7),
-        (1, 8), (3, 8), (5, 8),
-        (0, 9), (3, 9), (6, 9),
-        (3, 10), (5, 10),
-        (3, 11), (4, 11),
-        (3, 12)
-    ];
-
-    // 1. Dessiner le contour noir autour de chaque pixel du logo
-    for &(px, py) in &BT_PIXELS {
-        for ox in -1..=1 {
-            for oy in -1..=1 {
-                let target_x = x + px + ox;
-                let target_y = y + py + oy;
-                let _ = embedded_graphics::Pixel(Point::new(target_x, target_y), border_color)
-                    .draw(display);
+    for row in 0..BT_ROWS {
+        for col in 0..BT_COLS {
+            let bit = (BT_BITMAP[row] >> (BT_COLS - 1 - col)) & 1;
+            if bit == 1 {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    color,
+                ).draw(display);
             }
         }
     }
-
-    // 2. Dessiner les pixels de l'icône de couleur par-dessus
-    for &(px, py) in &BT_PIXELS {
-        let _ = embedded_graphics::Pixel(Point::new(x + px, y + py), color)
-            .draw(display);
-    }
-
     Ok(())
 }
 
-/// Dessine un éclair de couleur jaune (si USB) ou vert (si tension externe) avec contour noir
+// ─── Icône I2C ───────────────────────────────────────────────────────────────
+// Taille : 14 x 14 px  (bitmap en binaire, 14 bits utiles par ligne)
+
+const I2C_ROWS: usize = 14;
+const I2C_COLS: usize = 14;
+const I2C_BITMAP: [u16; I2C_ROWS] = [
+    // Reconstitué depuis les pixels originaux (col 0..13 de gauche à droite)
+    0b11111111111111, // Row 0
+    0b10000000000001, // Row 1
+    0b00001110000000, // Row 2
+    0b11100010111111, // Row 3
+    0b10101110100001, // Row 4
+    0b10101000101111, // Row 5
+    0b10101110101000, // Row 6
+    0b10100000101000, // Row 7
+    0b10100000101000, // Row 8
+    0b10100000101111, // Row 9
+    0b10100000100001, // Row 10
+    0b11100000111111, // Row 11
+    0b00000000000000, // Row 12
+    0b11111111111111, // Row 13
+];
+
+fn draw_i2c_icon<D>(display: &mut D, start_point: Point, active: bool) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let color = if active { Rgb565::GREEN } else { Rgb565::new(15, 30, 15) };
+    let x = start_point.x;
+    let y = start_point.y;
+
+    for row in 0..I2C_ROWS {
+        for col in 0..I2C_COLS {
+            let bit = (I2C_BITMAP[row] >> (I2C_COLS - 1 - col)) & 1;
+            if bit == 1 {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    color,
+                ).draw(display);
+            }
+        }
+    }
+    Ok(())
+}
+
+// ─── Icône 1-Wire ─────────────────────────────────────────────────────────────
+// Taille : 14 x 7 px  (symbole « 1W » stylisé)
+
+const OW_ROWS: usize = 7;
+const OW_COLS: usize = 14;
+const OW_BITMAP: [u16; OW_ROWS] = [
+    // Reconstitué depuis les pixels originaux (col 0..12 de gauche à droite)
+    0b011001000000010, // Row 0  (cols 0,1,4,12)
+    0b111001000000010, // Row 1  (cols 0,1,4,12)
+    0b011000100100100, // Row 2  (cols 0,1,5,8,11)
+    0b011000010101000, // Row 3  (cols 0,1,6,8,10)
+    0b111111101010111, // Row 4  (cols 0,1,2,3,4,6,8,10,11)
+    0b000000000000000, // Row 5  (vide)
+    0b111111111111111, // Row 6  (cols 0..12)
+];
+
+fn draw_onewire_icon<D>(display: &mut D, start_point: Point, active: bool) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let color = if active { Rgb565::GREEN } else { Rgb565::new(15, 30, 15) };
+    let x = start_point.x;
+    let y = start_point.y;
+
+    for row in 0..OW_ROWS {
+        for col in 0..OW_COLS {
+            let bit = (OW_BITMAP[row] >> (OW_COLS - 1 - col)) & 1;
+            if bit == 1 {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    color,
+                ).draw(display);
+            }
+        }
+    }
+    Ok(())
+}
+
+// ─── Icône Éclair ─────────────────────────────────────────────────────────────
+// Taille : 7 x 15 px
+
+
+const LIGHTNING_ROWS: usize = 15;
+const LIGHTNING_COLS: usize = 7;
+const LIGHTNING_BITMAP: [u8; LIGHTNING_ROWS] = [
+    0b0000011, // Row 0
+    0b0000101, // Row 1
+    0b0001010, // Row 2
+    0b0001010, // Row 3
+    0b0010010, // Row 4
+    0b0100100, // Row 5
+    0b0101111, // Row 6
+    0b1000001, // Row 7
+    0b1111010, // Row 8
+    0b0010010, // Row 9
+    0b0100100, // Row 10
+    0b0101000, // Row 11
+    0b0101000, // Row 12
+    0b1010000, // Row 13
+    0b1100000, // Row 14
+];
+
+/// Dessine un éclair (vert si tension externe, jaune si USB)
 fn draw_lightning_icon<D>(display: &mut D, start_point: Point, ext_power: bool) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let color = if ext_power { Rgb565::GREEN } else { Rgb565::new(31, 63, 0) }; // Vert (externe) ou Jaune (USB)
-    let border_color = Rgb565::BLACK;
+    let color = if ext_power { Rgb565::GREEN } else { Rgb565::new(31, 63, 0) };
     let x = start_point.x;
     let y = start_point.y;
 
-    const OUTLINE: [(i32, i32); 29] = [
-        (6, 0),
-        (5, 1), (6, 1),
-        (5, 2), (6, 2),
-        (4, 3), (6, 3),
-        (4, 4), (6, 4),
-        (3, 5), (5, 5),
-        (1, 6), (2, 6), (5, 6), (6, 6),
-        (1, 7), (2, 7), (5, 7),
-        (3, 8), (5, 8),
-        (3, 9), (5, 9),
-        (2, 10), (4, 10),
-        (2, 11), (4, 11),
-        (2, 12), (3, 12),
-        (2, 13)
-    ];
-
-    const FILL: [(i32, i32); 11] = [
-        (5, 3),
-        (5, 4),
-        (4, 5),
-        (3, 6), (4, 6),
-        (3, 7), (4, 7),
-        (4, 8),
-        (4, 9),
-        (3, 10),
-        (3, 11)
-    ];
-
-    // Dessiner le contour noir
-    for &(px, py) in &OUTLINE {
-        let _ = embedded_graphics::Pixel(Point::new(x + px, y + py), border_color)
-            .draw(display);
+    for row in 0..LIGHTNING_ROWS {
+        for col in 0..LIGHTNING_COLS {
+            let bit = (LIGHTNING_BITMAP[row] >> (LIGHTNING_COLS - 1 - col)) & 1;
+            if bit == 1 {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    color,
+                ).draw(display);
+            }
+        }
     }
-
-    // Remplir l'éclair de couleur
-    for &(px, py) in &FILL {
-        let _ = embedded_graphics::Pixel(Point::new(x + px, y + py), color)
-            .draw(display);
-    }
-
     Ok(())
 }
 
@@ -172,6 +273,8 @@ pub fn run_ihm(
     let mut last_wifi_icon_state: Option<bool> = None;
     let mut last_lightning_icon_state: Option<bool> = None;
     let mut last_bt_icon_state: Option<bool> = None;
+    let mut last_ntp_state: Option<bool> = None;
+    let mut last_time_str = String::new();
 
     let mut vsense_volts_val = 0.0f32;
     let mut isense_amps_val = 0.0f32;
@@ -179,13 +282,13 @@ pub fn run_ihm(
     display.clear(Rgb565::BLACK)
         .map_err(|e| anyhow::anyhow!("Clear display error: {:?}", e))?;
 
-    // Ligne séparatrice sous la barre de statut (Y=13)
-    let _ = Rectangle::new(Point::new(0, 13), Size::new(320, 1))
+    // Ligne séparatrice sous la barre de statut (Y=16)
+    let _ = Rectangle::new(Point::new(0, 16), Size::new(320, 1))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::new(10, 20, 10)))
         .draw(&mut display);
 
-    // Ligne séparatrice au-dessus de la barre d'état (Y=212)
-    let _ = Rectangle::new(Point::new(0, 212), Size::new(320, 1))
+    // Ligne séparatrice au-dessus de la barre du bas (Y=221)
+    let _ = Rectangle::new(Point::new(0, 221), Size::new(320, 1))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::new(10, 20, 10)))
         .draw(&mut display);
 
@@ -238,10 +341,44 @@ pub fn run_ihm(
         .background_color(Rgb565::new(0, 0, 31)) // Fond bleu, texte blanc
         .build();
 
+    // Style barre du bas : texte noir sur fond blanc
+    let taskbar_title_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(Rgb565::BLACK)
+        .background_color(Rgb565::WHITE)
+        .build();
+
+    let taskbar_ver_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(Rgb565::new(10, 20, 10)) // gris sur fond noir
+        .background_color(Rgb565::BLACK)
+        .build();
+
     let mut last_btn2 = true;
     let mut last_btn3 = true;
     let mut btn3_pressed_ticks = 0u32;
     let mut last_brightness = 20i32;
+
+    // ── Dessiner la barre du bas une fois (statique) ──
+    // Fond blanc pour la ligne du haut (Y=223..232)
+    let _ = Rectangle::new(Point::new(128, 218), Size::new(64, 10))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+        .draw(&mut display);
+    // Fond noir pour la ligne du bas (Y=233..240)
+    // let _ = Rectangle::new(Point::new(0, 232), Size::new(320, 10))
+    //     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+    //     .draw(&mut display);
+
+    // Centrer "WhisperEye" (10 chars × 6px = 60px) → X = (320-60)/2 = 130, Y=231 (baseline FONT_6X10)
+    let _ = Text::new("WhisperEye", Point::new(130, 220), taskbar_title_style)
+        .draw(&mut display);
+
+    // Numéro de version (police 6x10) centré dessous, Y=241 (baseline)
+    let ver_str = format!("v{}", crate::FW_VERSION);
+    let ver_w = ver_str.len() as i32 * 6;
+    let ver_x = (320 - ver_w) / 2;
+    let _ = Text::new(&ver_str, Point::new(ver_x, 241), taskbar_ver_style)
+        .draw(&mut display);
 
     loop {
         let btn2_val = screen.btn2_driver.is_high();
@@ -362,12 +499,40 @@ pub fn run_ihm(
             (ssid, ip)
         };
 
+        // ── NTP : synchronisé si l'heure système est post-2020 ──
+        let ntp_synced = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            // 2020-01-01 = 1577836800 secondes
+            const YEAR_2020: u64 = 1_577_836_800;
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs() > YEAR_2020)
+                .unwrap_or(false)
+        };
+
+        // ── Heure courante hh:mm ──
+        let current_time_str = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let total_mins = secs / 60;
+            let hh = (total_mins / 60) % 24;
+            let mm = total_mins % 60;
+            format!("{:02}:{:02}", hh, mm)
+        };
+
         // Déterminer les zones à redessiner
+        let time_changed = current_time_str != last_time_str
+            || Some(ntp_synced) != last_ntp_state;
+
         let status_changed = current_i2c != last_i2c_count
             || current_onewire != last_onewire_count
             || current_wifi != last_wifi_connected
             || current_touch != last_touch_state
-            || should_update_raw;
+            || should_update_raw
+            || time_changed;
 
         let bottom_changed = current_ina != last_rendered_ina
             || current_inb != last_rendered_inb
@@ -382,86 +547,95 @@ pub fn run_ihm(
             || current_ver != last_rendered_ver
             || should_refresh_sensors;
 
-        // ── 3. RENDU DE LA BARRE DE STATUT (HAUT : Y=0..12) ──
+        // ── 3. RENDU DE LA BARRE DE STATUT (HAUT : Y=0..15) ──
+        //
+        // Disposition (X) :
+        //   0  → Heure "hh:mm" (5 chars × 6px = 30px) → X=1..30
+        //   31 → "NTP" 3 chars × 6px = 18px → X=31..48  (vert/rouge)
+        //   52 → Icône I2C 14px → X=52..65
+        //   67 → Nb I2C (2 chars) → X=66..77
+        //   80 → Icône 1-Wire 9px → X=80..88
+        //   90 → Nb 1-Wire (2 chars) → X=89..100
+        //
+        //   Droite (positions à partir de X=220) :
+        //   220 → BT  7px → X=220..226
+        //   231 → Wifi 16px → X=231..246
+        //   251 → Éclair 7px → X=251..257
+        //   261 → "USB" ou tension → X=261..
+        //
         if status_changed {
             last_i2c_count = current_i2c;
             last_onewire_count = current_onewire;
             last_wifi_connected = current_wifi;
             last_touch_state = current_touch;
 
-            // Texte à gauche : I2C et 1-Wire (Y=9) avec le petit "2" dessiné à la main
-            let _ = Text::new(" I", Point::new(5, 9), status_style_white).draw(&mut display);
-            
-            // Effacer la petite zone du "2" avant dessin (décalée de 1px à gauche : X=16)
-            let _ = Rectangle::new(Point::new(16, 0), Size::new(3, 12))
-                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                .draw(&mut display);
-                
-            // Dessiner le petit "2" de 5px de haut et 3px de large (décalé de 1px à gauche)
-            let pixel_color = status_style_white.text_color.unwrap_or(Rgb565::WHITE);
-            let _ = embedded_graphics::Pixel(Point::new(17, 1), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(18, 1), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(16, 2), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(18, 2), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(17, 3), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(16, 4), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(16, 5), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(17, 5), pixel_color).draw(&mut display);
-            let _ = embedded_graphics::Pixel(Point::new(18, 5), pixel_color).draw(&mut display);
+            // ── A. Heure et NTP ──
+            if time_changed {
+                last_time_str = current_time_str.clone();
+                last_ntp_state = Some(ntp_synced);
 
-            let _ = Text::new("C", Point::new(20, 9), status_style_white).draw(&mut display);
-            let val_text = format!(" {:<2} ", current_i2c);
-            let _ = Text::new(&val_text, Point::new(26, 9), status_style_white).draw(&mut display);
+                // Heure en blanc
+                let _ = Text::new(&current_time_str, Point::new(1, 11), status_style_white)
+                    .draw(&mut display);
 
-            let ow_text = format!(" 1-Wire {:<2} ", current_onewire);
-            let _ = Text::new(&ow_text, Point::new(55, 9), status_style_white)
+                // "NTP" en vert si synchro, rouge sinon
+                let ntp_style = if ntp_synced { status_style_green } else { status_style_red };
+                let _ = Text::new("NTP", Point::new(32, 11), ntp_style)
+                    .draw(&mut display);
+            }
+
+            // ── B. Icône I2C + compteur ──
+            let _ = draw_i2c_icon(&mut display, Point::new(56, 1), current_i2c > 0);
+            let i2c_str = format!("{:>2}", current_i2c);
+            let _ = Text::new(&i2c_str, Point::new(70, 11), status_style_white)
                 .draw(&mut display);
 
-            // TOUCH en texte police 6x10 (Blanc sur fond bleu si actif, sinon gris sur fond noir)
-            let touch_style = if current_touch { touch_style_active } else { status_style_gray };
-            let _ = Text::new("TOUCH", Point::new(125, 9), touch_style)
+            // ── C. Icône 1-Wire + compteur ──
+            let _ = draw_onewire_icon(&mut display, Point::new(90, 1), current_onewire > 0);
+            let ow_str = format!("{:>2}", current_onewire);
+            let _ = Text::new(&ow_str, Point::new(102, 11), status_style_white)
                 .draw(&mut display);
 
-            // Rendu icône Bluetooth (10px avant le wifi : X=242, Y=1)
+            // ── D. Bluetooth (fixe, inactif) ──
             if last_bt_icon_state.is_none() {
                 last_bt_icon_state = Some(false);
-                let _ = Rectangle::new(Point::new(240, 0), Size::new(12, 12))
+                let _ = Rectangle::new(Point::new(218, 0), Size::new(9, 15))
                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                     .draw(&mut display);
-                let _ = draw_bluetooth_icon(&mut display, Point::new(242, 1), false);
+                let _ = draw_bluetooth_icon(&mut display, Point::new(219, 1), false);
             }
 
-            // Rendu icône WiFi (X=258, Y=1)
+            // ── E. WiFi ──
             if Some(current_wifi) != last_wifi_icon_state {
                 last_wifi_icon_state = Some(current_wifi);
-                let _ = Rectangle::new(Point::new(256, 0), Size::new(18, 12))
+                let _ = Rectangle::new(Point::new(231, 0), Size::new(18, 14))
                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                     .draw(&mut display);
-                let _ = draw_wifi_icon(&mut display, Point::new(258, 1), current_wifi);
+                let _ = draw_wifi_icon(&mut display, Point::new(233, 2), current_wifi);
             }
 
-            // Rendu icône Alimentation / Éclair (X=275, Y=1)
+            // ── F. Éclair ──
             let is_external = vsense_volts_val >= 1.0;
             if Some(is_external) != last_lightning_icon_state {
                 last_lightning_icon_state = Some(is_external);
-                let _ = Rectangle::new(Point::new(273, 0), Size::new(12, 15))
+                let _ = Rectangle::new(Point::new(253, 0), Size::new(9, 16))
                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                     .draw(&mut display);
-                let _ = draw_lightning_icon(&mut display, Point::new(275, 1), is_external);
+                let _ = draw_lightning_icon(&mut display, Point::new(254, 0), is_external);
             }
 
-            // Annotation Alimentation (X=285, Y=9)
+            // ── G. Tension USB ou valeur ──
             let alim_str = if is_external {
                 format!("{:<5}", format!("{:.1}V", vsense_volts_val))
             } else {
                 "USB  ".to_string()
             };
             let alim_style = if is_external { status_style_white } else { status_style_green };
-            let _ = Text::new(&alim_str, Point::new(285, 9), alim_style)
+            let _ = Text::new(&alim_str, Point::new(264, 11), alim_style)
                 .draw(&mut display);
         }
 
-        // ── 4. RENDU DE LA BARRE D'ÉTAT (BAS : Y=215..235) ──
+        // ── 4. RENDU DE LA BARRE D'ÉTAT (BAS : Y=215..240) ──
         if bottom_changed {
             last_rendered_ina = current_ina;
             last_rendered_inb = current_inb;
@@ -518,7 +692,7 @@ pub fn run_ihm(
             let _ = Text::new(&ip_padded, Point::new(220, 233), status_style_white).draw(&mut display);
         }
 
-        // ── 5. RENDU DE LA ZONE CENTRALE (MILIEU : Y=18..211) ──
+        // ── 5. RENDU DE LA ZONE CENTRALE (MILIEU : Y=20..220) ──
         if middle_changed {
             last_rendered_brightness = current_brightness;
             last_rendered_ver = current_ver;
