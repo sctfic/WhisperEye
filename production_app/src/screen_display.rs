@@ -376,7 +376,8 @@ pub fn run_ihm(
         last_btn3_val = btn3_val;
 
         // Détecter l'activité utilisateur
-        let activity = btn2_clicked || btn3_clicked || (encoder_count != last_encoder_val) || current_touch;
+        let encoder_delta = encoder_count - last_encoder_val;
+        let activity = btn2_clicked || btn3_clicked || (encoder_delta != 0) || current_touch;
         let mut current_encoder_delta_val = encoder_count;
         if encoder_count != last_encoder_val {
             last_encoder_val = encoder_count;
@@ -399,10 +400,16 @@ pub fn run_ihm(
                 // Ignorer l'entrée de réveil en remettant à zéro les clics et le delta encodeur
                 btn2_clicked = false;
                 btn3_clicked = false;
-                // Vider l'encodeur pour ne pas avoir de saut
+                
                 screen.clear_encoder();
-                last_encoder_val = screen.get_encoder_count();
-                current_encoder_delta_val = last_encoder_val;
+                let fresh_encoder = screen.get_encoder_count();
+                last_encoder_val = fresh_encoder;
+                current_encoder_delta_val = fresh_encoder;
+                
+                // Synchroniser le contrôleur de navigation pour éviter tout saut
+                controller.last_encoder_raw = fresh_encoder;
+                controller.encoder_acc = 0;
+                
                 thread::sleep(std::time::Duration::from_millis(200));
                 continue;
             }

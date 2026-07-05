@@ -84,18 +84,30 @@ impl Board {
             Some(volts)
         };
 
-        // Lecture de ISENSE (Courant)
-        let mut isense_mv = 0;
-        let mut isense_raw = 0;
-        if let Ok(mv) = self.adc_driver.read(&mut self.isense_channel) {
-            isense_mv = mv;
+        // Lecture de ISENSE (Courant) avec intégration sur 128 échantillons (10 cycles PWM 10kHz complets)
+        let mut total_mv = 0u32;
+        let mut total_raw = 0u32;
+        let samples = 128;
+        for _ in 0..samples {
+            if let Ok(mv) = self.adc_driver.read(&mut self.isense_channel) {
+                total_mv += mv as u32;
+            }
+            if let Ok(raw) = self.adc_driver.read_raw(&mut self.isense_channel) {
+                total_raw += raw as u32;
+            }
         }
-        if let Ok(raw) = self.adc_driver.read_raw(&mut self.isense_channel) {
-            isense_raw = raw;
-        }
+        let isense_mv = total_mv / samples;
+        let isense_raw = total_raw / samples;
 
         // Calcul de l'intensité en Ampères
-        let amps = ((isense_mv as f32) * 3.08 / 1000.0) - 0.21;
+        let raw_amps = ((isense_mv as f32) * 3.08 / 1000.0) - 0.21;
+        let amps = if !ina_active && !inb_active {
+            0.0
+        } else if raw_amps < 0.0 {
+            0.0
+        } else {
+            raw_amps
+        };
         let mut isense_amps = Some(amps);
 
         // Application des règles métier :

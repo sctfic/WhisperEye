@@ -245,8 +245,6 @@ impl DeviceRegistry {
         println!("DEBUG: Entering save_registry...");
         let mut persist_map: HashMap<String, PersistEntry> = HashMap::new();
         for (k, v) in map.iter() {
-            let is_supported_static = matches!(k.as_str(), "ina" | "inb" | "rla" | "rlb");
-            if is_static_device(k) && !is_supported_static { continue; }
             if !v.present { continue; }
             persist_map.insert(k.clone(), PersistEntry {
                 name: v.name.clone(),
@@ -268,16 +266,16 @@ impl DeviceRegistry {
     }
 
     /// Scan dynamic and static devices, merge with custom names from NVS.
-    /// Les devices statiques sont en dur (const STATIC_DEVICES), jamais sauvés en NVS.
     pub fn scan_and_register(&mut self, onewr_pins: Vec<String>) -> Result<(), anyhow::Error> {
-        let mut saved = self.load_registry(); // contient statiques (dur) + dynamiques (NVS)
+        let mut saved = self.load_registry(); // contient statiques (avec nom NVS si existant) + dynamiques (NVS)
         let mut updated = HashMap::new();
 
-        // 1. Static Devices (Always present, hardcoded) — retire de saved pour ne pas les dupliquer
+        // 1. Static Devices (Always present, avec conservation des noms NVS personnalisés)
         for &(id, default_name) in STATIC_DEVICES {
-            saved.remove(id); // ignore toute entrée NVS résiduelle pour les statiques
+            let existing_entry = saved.remove(id);
+            let name = existing_entry.map(|e| e.name).unwrap_or_else(|| default_name.to_string());
             updated.insert(id.to_string(), DeviceEntry {
-                name: default_name.to_string(),
+                name,
                 is_static: true,
                 present: true,
                 correction_formula: None,
@@ -695,38 +693,39 @@ impl DeviceRegistry {
 
     /// Rename device (statiques : session uniquement ; dynamiques : persistés en NVS via devicesKnow)
     pub fn rename_device(&mut self, id: &str, new_name: &str) -> Result<(), anyhow::Error> {
-        // Update in-session cache
-        if let Some(entry) = self.devices.get_mut(id) {
-            let trimmed = new_name.trim();
-            let name_limit = if trimmed.len() > 64 {
-                trimmed[..64].to_string()
-            } else {
-                trimmed.to_string()
-            };
-            if name_limit.is_empty() {
-                return Err(anyhow::anyhow!("Le nom ne peut pas être vide"));
-            }
+        let trimmed = new_name.trim();
+        let name_limit = if trimmed.len() > 64 {
+            trimmed[..64].to_string()
+        } else {
+            trimmed.to_string()
+        };
+        if name_limit.is_empty() {
+            return Err(anyhow::anyhow!("Le nom ne peut pas être vide"));
+        }
+
+        let mut map = self.load_registry();
+        let is_static = is_static_device(id);
+        if let Some(entry) = map.get_mut(id) {
             info!("Renaming device '{}' to '{}'", id, name_limit);
             entry.name = name_limit.clone();
-
-            // Persist in NVS (only dynamic devices will actually be saved)
-            let mut map = self.load_registry();
-            if let Some(e) = map.get_mut(id) {
-                e.name = name_limit;
-            } else {
-                map.insert(id.to_string(), DeviceEntry {
-                    name: name_limit,
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
-            }
-            self.save_registry(&map);
-            return Ok(());
+        } else {
+            info!("Creating custom name for device '{}': '{}'", id, name_limit);
+            map.insert(id.to_string(), DeviceEntry {
+                name: name_limit.clone(),
+                is_static,
+                present: true,
+                correction_formula: None,
+                step: None,
+                pwm_val: None,
+            });
         }
-        Err(anyhow::anyhow!("Périphérique introuvable"))
+
+        if let Some(entry) = self.devices.get_mut(id) {
+            entry.name = name_limit;
+        }
+
+        self.save_registry(&map);
+        Ok(())
     }
 }
 

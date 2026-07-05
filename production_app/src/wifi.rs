@@ -56,6 +56,7 @@ pub struct NetManager {
     pub last_state_change: Instant,
     pub retry_count: u32,
     pub scan_cache: Vec<String>,
+    pub scan_results: HashMap<String, i32>,
     pub provisioning_channel: u8,
     pub current_sta_ssid: Option<String>,
     pub current_ap_ssid: Option<String>,
@@ -88,6 +89,7 @@ impl NetManager {
             last_state_change: Instant::now(),
             retry_count: 0,
             scan_cache: Vec::new(),
+            scan_results: HashMap::new(),
             provisioning_channel: mesh_channel,
             current_sta_ssid: None,
             current_ap_ssid: None,
@@ -301,8 +303,9 @@ impl NetManager {
                         .and_modify(|rssi| *rssi = (*rssi).max(ap.signal_strength as i32))
                         .or_insert(ap.signal_strength as i32);
                 }
-                let mut networks: Vec<(String, i32)> = best.into_iter().collect();
+                let mut networks: Vec<(String, i32)> = best.clone().into_iter().collect();
                 networks.sort_by(|a, b| b.1.cmp(&a.1));
+                self.scan_results = best;
                 self.scan_cache = networks.iter().map(|(ssid, _)| ssid.clone()).collect();
                 info!("Scan found visible SSIDs: {:?}", self.scan_cache);
                 return Ok(networks);

@@ -106,6 +106,7 @@ pub struct BrowseController {
     pub selected_ver_idx: usize,
     pub selected_wifi_idx: usize,
     pub value_changed: bool,
+    pub last_ap_active: Option<bool>,
 }
 
 fn has_layout_changed(s1: Option<AppState>, s2: AppState) -> bool {
@@ -142,6 +143,7 @@ impl BrowseController {
             last_focus: None,
             selected_ver_idx: 1, // index 1 (version actuelle v1.2.13-0008)
             selected_wifi_idx: 0,
+            last_ap_active: None,
         }
     }
 
@@ -448,21 +450,11 @@ impl BrowseController {
                             self.value_changed = true;
                         }
                         if btn2_clicked {
-                            let (ssid, psk, is_present) = &all_known[self.selected_wifi_idx];
-                            if *is_present {
-                                log::info!("Manuel Wi-Fi connection trigger to: {}", ssid);
-                                let mut net = wifi_manager.lock().unwrap();
-                                if net.try_sta_connect(ssid, psk, false, 0).unwrap_or(false) {
-                                    net.state = crate::wifi::NetState::WifiOk;
-                                    net.retry_count = 0;
-                                    let _ = net.stop_provisioning_ap_if_not_pairing();
-                                    common::led::set_sta_status(common::led::LedStaStatus::WifiOk);
-                                    common::led::set_ap_status(common::led::LedApStatus::Off);
-                                    if let Ok(mut storage) = nvs.lock() {
-                                        let _ = storage.set_default_network_by_ssid(ssid);
-                                        let _ = storage.update_wifi_last_seen(ssid);
-                                    }
-                                }
+                            if self.selected_wifi_idx < all_known.len() {
+                                self.state = AppState::ConfirmerAction {
+                                    action_type: ConfirmActionType::ConnexionWifi,
+                                    choice: false,
+                                };
                             }
                         }
                     }
@@ -998,8 +990,8 @@ impl BrowseController {
                             _ => {
                                 let acts = actuators.lock().unwrap();
                                 let v = match current_sub {
-                                    0 => acts.ina.get_speed() as u8,
-                                    1 => acts.inb.get_speed() as u8,
+                                    0 => if acts.ina.is_active() { acts.ina.get_speed() as u8 } else { 0 },
+                                    1 => if acts.inb.is_active() { acts.inb.get_speed() as u8 } else { 0 },
                                     2 => if acts.relay_a.is_active() { 100 } else { 0 },
                                     3 => if acts.relay_b.is_active() { 100 } else { 0 },
                                     _ => 0,
@@ -1013,7 +1005,12 @@ impl BrowseController {
                             let _ = Text::new(desc, Point::new(right_x, 62), font_small_white).draw(display);
                         }
 
-                        let vsense_v = board.lock().unwrap().read_value(false, false).vsense_volts;
+                        let (ina_act, inb_act) = {
+                            let state = actuators_state.lock().unwrap();
+                            (state.ina, state.inb)
+                        };
+
+                        let vsense_v = board.lock().unwrap().read_value(ina_act, inb_act).vsense_volts;
                         let has_power = vsense_v.map_or(false, |v| v > 6.0);
                         let is_ina_inb = current_sub == 0 || current_sub == 1;
                         let is_warning = !has_power && is_ina_inb;
@@ -1071,6 +1068,17 @@ impl BrowseController {
                         let _ = Text::new(mode_str, Point::new(right_x, 145), font_small_gray).draw(display);
                         let _ = Text::new(&format!("Step (BTN3): {}%   ", step_val), Point::new(right_x, 160), font_small_gray).draw(display);
                     }
+
+                    // Affichage dynamique et rafraîchissement ciblé du courant ISENSE pour INA (sub=0) et INB (sub=1)
+                    if current_sub == 0 || current_sub == 1 {
+                        let (ina_act, inb_act) = {
+                            let state = actuators_state.lock().unwrap();
+                            (state.ina, state.inb)
+                        };
+                        let isense_a = board.lock().unwrap().read_value(ina_act, inb_act).isense_amps;
+                        let isense_str = isense_a.map_or("--".to_string(), |a| format!("{:.1}", a));
+                        let _ = Text::new(&format!("I={}A ", isense_str), Point::new(right_x + 130, 210), font_small_white).draw(display);
+                    }
                 }
             }
             2 => {
@@ -1106,32 +1114,35 @@ impl BrowseController {
                                 let current_psk = known_wifis.get(&ssid).map(|entry| entry.psk.clone()).unwrap_or_else(|| "--".to_string());
 
                                 let ssid_str = if ssid.is_empty() { "--" } else { &ssid };
-                                let _ = Text::new(&format!("{}                    ", ssid_str), Point::new(right_x + 55, 54), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", ssid_str), Point::new(right_x + 56, 54), font_small_white).draw(display);
 
                                 let ip_str = if ip.is_empty() { "--" } else { &ip };
-                                let _ = Text::new(&format!("{}                    ", ip_str), Point::new(right_x + 55, 66), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", ip_str), Point::new(right_x + 56, 66), font_small_white).draw(display);
 
-                                let _ = Text::new(&format!("{}                    ", gateway), Point::new(right_x + 55, 78), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", gateway), Point::new(right_x + 56, 78), font_small_white).draw(display);
 
                                 let rssi_str = rssi_val.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "--".to_string());
-                                let _ = Text::new(&format!("{}                    ", rssi_str), Point::new(right_x + 55, 90), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", rssi_str), Point::new(right_x + 56, 90), font_small_white).draw(display);
 
-                                let _ = Text::new(&format!("{}                    ", current_psk), Point::new(right_x + 55, 102), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", current_psk), Point::new(right_x + 56, 102), font_small_white).draw(display);
                             }
 
                             // Réseaux connus en dessous (toujours redessinés si val_changed ou sub_changed)
-                            let scan_cache = wifi_manager.lock().unwrap().scan_cache.clone();
+                            let scan_results = wifi_manager.lock().unwrap().scan_results.clone();
                             let mut all_known = Vec::new();
                             for (known_ssid, entry) in known_wifis.iter() {
-                                let is_avail = scan_cache.contains(known_ssid);
-                                all_known.push((known_ssid.clone(), entry.psk.clone(), is_avail));
+                                let rssi_opt = scan_results.get(known_ssid).copied();
+                                all_known.push((known_ssid.clone(), entry.psk.clone(), rssi_opt));
                             }
                             all_known.sort_by(|a, b| a.0.cmp(&b.0));
 
                             let mut idx = 0;
-                            for (i, (known_ssid, _, is_avail)) in all_known.iter().enumerate() {
+                            for (i, (known_ssid, _, rssi_opt)) in all_known.iter().enumerate() {
                                 if idx >= 4 { break; }
-                                let suffix = if *is_avail { " *" } else { "" };
+                                let suffix = match rssi_opt {
+                                    Some(rssi) => format!(" {}dBm", rssi),
+                                    None => " --".to_string(),
+                                };
                                 let is_selected = i == self.selected_wifi_idx && current_focus == 2;
                                 let style = if is_selected { font_small_green } else { font_small_gray };
                                 let prefix = if is_selected { ">" } else { " " };
@@ -1143,6 +1154,13 @@ impl BrowseController {
                         }
                     }
                     1 => {
+                        let ap_until = wifi_manager.lock().unwrap().pairing_until;
+                        let is_ap_active = ap_until.is_some();
+                        if self.last_ap_active != Some(is_ap_active) {
+                            self.last_ap_active = Some(is_ap_active);
+                            self.needs_redraw = true;
+                        }
+
                         if !periodic_update && !val_changed {
                             if sub_changed {
                                 let _ = Text::new("WIFI ACCESS POINT", Point::new(right_x, 42), font_small_green).draw(display);
@@ -1154,21 +1172,26 @@ impl BrowseController {
                                 let ap_ssid = "AP-Configuration";
                                 let subnet = crate::wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
                                 let ap_cidr = format!("192.168.{}.1/24", subnet);
-                                let ap_psk = "Mesh-IoT@Espressif!";
                                 let num_clients = crate::wifi::get_ap_num_clients();
 
-                                let _ = Text::new(&format!("{}                    ", ap_ssid), Point::new(right_x + 57, 56), font_small_white).draw(display);
-                                let _ = Text::new(&format!("{}                    ", ap_cidr), Point::new(right_x + 57, 68), font_small_white).draw(display);
-                                let _ = Text::new(&format!("{}                    ", ap_psk), Point::new(right_x + 57, 80), font_small_white).draw(display);
-                                let _ = Text::new(&format!("{}                    ", num_clients), Point::new(right_x + 57, 92), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", ap_ssid), Point::new(right_x + 57, 56), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", ap_cidr), Point::new(right_x + 57, 68), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}       ", num_clients), Point::new(right_x + 57, 92), font_small_white).draw(display);
+                            }
+                        }
 
-                                // QR code 3x3 en bas, juste au-dessus de la barre de progression
+                        // Dessin dynamique de la PSK et du QR Code (qui change selon l'état actif/inactif)
+                        if !periodic_update || val_changed || sub_changed {
+                            let ap_psk = if is_ap_active { "Mesh-IoT@Espressif!" } else { "--" };
+                            let _ = Text::new(&format!("{}                    ", ap_psk), Point::new(right_x + 57, 80), font_small_white).draw(display);
+
+                            let start_x = 215;
+                            let start_y = 100;
+                            if is_ap_active {
                                 let qr_str = "WIFI:T:WPA;S:AP-Configuration;P:Mesh-IoT@Espressif!;;";
                                 if let Ok(qr) = QrCode::encode_text(qr_str, QrCodeEcc::Medium) {
                                     let qr_size = qr.size(); // 29 pour Version 3
                                     let module_size = 3;
-                                    let start_x = 320 - (qr_size * module_size) - 6; // 320 - 87 - 6 = 227
-                                    let start_y = 102;
                                     
                                     // Draw white quiet zone (background)
                                     let _ = Rectangle::new(Point::new(start_x - 2, start_y - 2), Size::new((qr_size * module_size + 4) as u32, (qr_size * module_size + 4) as u32))
@@ -1187,6 +1210,11 @@ impl BrowseController {
                                         }
                                     }
                                 }
+                            } else {
+                                // Efface la zone du QR Code en noir si le mode AP est inactif
+                                let _ = Rectangle::new(Point::new(start_x - 2, start_y - 2), Size::new(93, 93))
+                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                    .draw(display);
                             }
                         }
 
@@ -1351,41 +1379,43 @@ impl BrowseController {
                             }
                         }
 
-                        let versions_snapshot: Vec<(String, bool, String)> = OTA_VERSIONS.lock()
-                            .ok()
-                            .and_then(|g| g.clone())
-                            .unwrap_or_default();
+                        if !periodic_update || val_changed || sub_changed {
+                            let versions_snapshot: Vec<(String, bool, String)> = OTA_VERSIONS.lock()
+                                .ok()
+                                .and_then(|g| g.clone())
+                                .unwrap_or_default();
 
-                        if versions_snapshot.is_empty() {
-                            let status = if OTA_FETCH_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
-                                "Chargement..."
+                            if versions_snapshot.is_empty() {
+                                let status = if OTA_FETCH_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+                                    "Chargement..."
+                                } else {
+                                    "URL non configuree"
+                                };
+                                let _ = Text::new(status, Point::new(right_x, 74), font_small_gray).draw(display);
                             } else {
-                                "URL non configuree"
-                            };
-                            let _ = Text::new(status, Point::new(right_x, 80), font_small_gray).draw(display);
-                        } else {
-                            let _ = Text::new("Versions disponibles:", Point::new(right_x, 74), font_small_green).draw(display);
-                            let clamp = versions_snapshot.len().min(4);
-                            for (i, (ver, recommended, _)) in versions_snapshot[..clamp].iter().enumerate() {
-                                let y = 88 + (i as i32 * 14);
-                                  let is_selected = i == self.selected_ver_idx && current_focus == 2;
-                                  let prefix = if is_selected { ">" } else { " " };
-                                  let style = if is_selected { font_small_green } else { font_small_white };
-                                  let suffix = if *recommended { " (recommandee)" } else { "" };
-                                  let label = format!("{:<30}", format!("{}{}{}", prefix, ver, suffix));
-                                  let _ = Text::new(&label, Point::new(right_x, y), style).draw(display);
+                                let _ = Text::new("Versions disponibles:", Point::new(right_x, 74), font_small_green).draw(display);
+                                let clamp = versions_snapshot.len().min(4);
+                                for (i, (ver, recommended, _)) in versions_snapshot[..clamp].iter().enumerate() {
+                                    let y = 88 + (i as i32 * 14);
+                                    let is_selected = i == self.selected_ver_idx && current_focus == 2;
+                                    let prefix = if is_selected { ">" } else { " " };
+                                    let style = if is_selected { font_small_green } else { font_small_white };
+                                    let suffix = if *recommended { " (recommandee)" } else { "" };
+                                    let label = format!("{:<30}", format!("{}{}{}", prefix, ver, suffix));
+                                    let _ = Text::new(&label, Point::new(right_x, y), style).draw(display);
+                                }
+
+                                // Ajuster la borne de sélection dans process_inputs
+                                if self.selected_ver_idx >= clamp {
+                                    self.selected_ver_idx = clamp.saturating_sub(1);
+                                }
                             }
 
-                            // Ajuster la borne de sélection dans process_inputs
-                            if self.selected_ver_idx >= clamp {
-                                self.selected_ver_idx = clamp.saturating_sub(1);
+                            if current_focus == 2 {
+                                let _ = Text::new("[BTN2] Installer [BTN3] Retour", Point::new(right_x, 205), font_small_green).draw(display);
+                            } else {
+                                let _ = Text::new("[BTN2] Selectionner ver.", Point::new(right_x, 205), font_small_gray).draw(display);
                             }
-                        }
-
-                        if current_focus == 2 {
-                            let _ = Text::new("[BTN2] Installer [BTN3] Retour", Point::new(right_x, 155), font_small_green).draw(display);
-                        } else {
-                            let _ = Text::new("[BTN2] Selectionner ver.", Point::new(right_x, 155), font_small_gray).draw(display);
                         }
                     }
                     5 => {
@@ -1400,9 +1430,9 @@ impl BrowseController {
 
                         if !periodic_update {
                             if current_focus == 2 {
-                                let _ = Text::new("[BTN2] Demarrer Reset", Point::new(right_x, 155), font_small_red).draw(display);
+                                let _ = Text::new("[BTN2] Demarrer Reset", Point::new(right_x, 205), font_small_red).draw(display);
                             } else {
-                                let _ = Text::new("[BTN2] Selectionner Reset", Point::new(right_x, 155), font_small_gray).draw(display);
+                                let _ = Text::new("[BTN2] Selectionner Reset", Point::new(right_x, 205), font_small_gray).draw(display);
                             }
                         }
                     }
