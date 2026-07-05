@@ -545,14 +545,71 @@
             box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
         }
 
-        @keyframes ota-spin {
-            0% {
-                transform: rotate(0deg);
-            }
+        /* Style personnalisé pour les input range */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            outline: none;
+        }
 
-            100% {
-                transform: rotate(360deg);
-            }
+        input[type="range"]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: #334155;
+            border-radius: 3px;
+            border: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -5px;
+            /* (6px - 16px) / 2 */
+            transition: transform 0.1s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        input[type="range"]::-moz-range-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: #334155;
+            border-radius: 3px;
+            border: none;
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            cursor: pointer;
+            border: none;
+            transition: transform 0.1s;
+        }
+
+        input[type="range"]::-moz-range-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        input[type="range"].slider-danger::-webkit-slider-thumb {
+            background-color: #ef4444 !important;
+        }
+
+        input[type="range"].slider-danger::-moz-range-thumb {
+            background-color: #ef4444 !important;
         }
 
         #update_status,
@@ -1711,22 +1768,46 @@
                             if (dev.id === 'rla') window.actuatorStates.rla = (dev.value === 'ON');
                             if (dev.id === 'rlb') window.actuatorStates.rlb = (dev.value === 'ON');
                             if (dev.id === 'swpwr') window.actuatorStates.swpwr = (dev.value === 'ON');
-                            if (dev.id === 'ina') window.actuatorStates.ina = (dev.value === 'ON');
-                            if (dev.id === 'inb') window.actuatorStates.inb = (dev.value === 'ON');
+                            if (dev.id === 'ina') {
+                                window.actuatorStates.ina = (dev.value === 'ON');
+                                window.actuatorStates.ina_speed = dev.pwm_val;
+                            }
+                            if (dev.id === 'inb') {
+                                window.actuatorStates.inb = (dev.value === 'ON');
+                                window.actuatorStates.inb_speed = dev.pwm_val;
+                            }
+                            if (dev.id === 'screen') {
+                                window.actuatorStates.screen_brightness = dev.pwm_val;
+                            }
 
                             const valEl = document.getElementById(`val_${dev.id}`);
                             if (valEl) valEl.innerText = dev.value;
 
                             const switchEl = document.getElementById(`switch_${dev.id}`);
                             if (switchEl) switchEl.checked = (dev.value === 'ON');
+
+                            const sliderEl = document.getElementById(`range_${dev.id}`);
+                            if (sliderEl) {
+                                sliderEl.value = dev.pwm_val || 0;
+                                const lblEl = document.getElementById(`range_val_${dev.id}`);
+                                if (lblEl) lblEl.innerText = (dev.pwm_val || 0) + '%';
+                            }
                         });
 
                         // Only redraw the full list if the user is not actively editing any device name
                         if (editingDeviceId === null) {
                             let html = '';
+                            // Récupérer vsense pour vérifier si l'alimentation est manquante (< 6V)
+                            const vsenseDev = data.find(d => d.id === 'vsense');
+                            const vsenseVal = vsenseDev ? parseFloat(vsenseDev.value) : 12.4;
+                            const isPowerMissing = vsenseVal < 6.0;
+
                             actuators.forEach(dev => {
                                 let valueHtml = '';
-                                if (dev.id === 'rla' || dev.id === 'rlb' || dev.id === 'swpwr') {
+                                if (dev.id === 'radio') {
+                                    const isRadioPresent = dev.present;
+                                    valueHtml = `<span class="badge ${isRadioPresent ? 'badge-green' : 'badge-error'}" style="font-size: 0.7rem;">${isRadioPresent ? 'Actif' : 'Absent'}</span>`;
+                                } else if (dev.step === 100) {
                                     const checkedAttr = dev.value === 'ON' ? 'checked' : '';
                                     valueHtml = `
                                         <label class="switch">
@@ -1734,7 +1815,19 @@
                                             <span class="slider"></span>
                                         </label>`;
                                 } else {
-                                    valueHtml = `<span id="val_${dev.id}" style="font-weight: 700; color: var(--accent-color); font-size: 1.05rem;">${dev.value}</span>`;
+                                    const valPct = dev.pwm_val !== undefined && dev.pwm_val !== null ? dev.pwm_val : 0;
+                                    const isPwmError = isPowerMissing && (dev.id === 'ina' || dev.id === 'inb');
+                                    const inputClass = isPwmError ? 'class="slider-danger"' : '';
+                                    const inputStyle = isPwmError ? 'accent-color: #ef4444; filter: drop-shadow(0 0 2px rgba(239,68,68,0.5));' : '';
+                                    const labelStyle = isPwmError ? 'color: #ef4444 !important;' : 'color: var(--accent-color);';
+                                    const warningTitle = isPwmError ? 'title="Power Supply Missing !"' : '';
+
+                                    valueHtml = `
+                                        <div style="display: flex; align-items: center; gap: 0.5rem; width: 150px;" ${warningTitle}>
+                                            <input type="range" id="range_${dev.id}" min="0" max="100" step="${dev.step || 10}" value="${valPct}" 
+                                                style="flex: 1; ${inputStyle}" ${inputClass} oninput="updateRangeLabel('${dev.id}', this.value)" onchange="sendRangeValue('${dev.id}', this.value)">
+                                            <span id="range_val_${dev.id}" style="font-weight: 700; ${labelStyle} font-size: 0.95rem; min-width: 38px; text-align: right;">${valPct}%</span>
+                                        </div>`;
                                 }
 
                                 // Render active schedules for this actuator
@@ -2132,6 +2225,37 @@
                     console.error(err);
                     checkbox.checked = !checkbox.checked;
                     window.actuatorStates[id] = checkbox.checked;
+                });
+        }
+
+        function updateRangeLabel(id, val) {
+            const valEl = document.getElementById(`range_val_${id}`);
+            if (valEl) valEl.innerText = val + '%';
+        }
+
+        function sendRangeValue(id, val) {
+            const valNum = parseInt(val);
+            if (id === 'screen') {
+                window.actuatorStates.screen_brightness = valNum;
+            } else {
+                window.actuatorStates[id] = (valNum > 0);
+                window.actuatorStates[id + '_speed'] = valNum;
+            }
+
+            fetch('/api/actuators', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(window.actuatorStates)
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        alert('Erreur lors de la modification de la vitesse');
+                    }
+                    fetchDevices();
+                })
+                .catch(err => {
+                    console.error(err);
+                    fetchDevices();
                 });
         }
 

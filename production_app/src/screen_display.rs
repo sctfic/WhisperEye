@@ -564,14 +564,14 @@ pub fn run_ihm(
         let (ina_text, ina_style) = if has_power {
             if current_ina { (format!("INA: {}%  ", ina_speed), status_style_green) } else { ("INA: 0%   ".to_string(), status_style_red) }
         } else {
-            ("INA: --   ".to_string(), status_style_gray)
+            ("INA: ERR  ".to_string(), status_style_red)
         };
         let _ = Text::new(&format!("{:<9}", ina_text), Point::new(2, 227), ina_style).draw(&mut display);
 
         let (inb_text, inb_style) = if has_power {
             if current_inb { (format!("INB: {}%  ", inb_speed), status_style_green) } else { ("INB: 0%   ".to_string(), status_style_red) }
         } else {
-            ("INB: --   ".to_string(), status_style_gray)
+            ("INB: ERR  ".to_string(), status_style_red)
         };
         let _ = Text::new(&format!("{:<9}", inb_text), Point::new(2, 237), inb_style).draw(&mut display);
 

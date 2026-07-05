@@ -258,6 +258,8 @@ pub fn build_capacity_info(
             &ds_readings,
             board_readings.touch,
             Some(&sched_lock.schedules),
+            board_readings.vsense_volts,
+            board_readings.isense_amps,
         )
     };
 
@@ -858,6 +860,8 @@ pub fn handle_api_peripherals(
             &ds_readings,
             board_readings.touch,
             Some(&sched_lock.schedules),
+            board_readings.vsense_volts,
+            board_readings.isense_amps,
         )
     };
 
@@ -949,6 +953,7 @@ pub fn handle_post_actuators(
     mut req: Request<&mut EspHttpConnection<'_>>,
     act_clone: Arc<Mutex<ActuatorsState>>,
     actuators: Arc<Mutex<Actuators>>,
+    nvs: Arc<Mutex<NvsStorage>>,
 ) -> Result<()> {
     let mut buf = vec![0u8; 256];
     let bytes_read = req.read(&mut buf)?;
@@ -960,7 +965,7 @@ pub fn handle_post_actuators(
         *state = payload.clone();
     }
 
-    // Appliquer physiquement
+    // Appliquer physiquement et sauvegarder en NVS
     {
         let mut acts = actuators.lock().unwrap();
         let _ = acts.write("rla", payload.rla);
@@ -968,6 +973,39 @@ pub fn handle_post_actuators(
         let _ = acts.write("swpwr", payload.swpwr);
         let _ = acts.write("ina", payload.ina);
         let _ = acts.write("inb", payload.inb);
+
+        let speed_a = if payload.ina { payload.ina_speed.unwrap_or(100) } else { 0 };
+        let _ = acts.ina.set_speed(speed_a as i32);
+
+        let speed_b = if payload.inb { payload.inb_speed.unwrap_or(100) } else { 0 };
+        let _ = acts.inb.set_speed(speed_b as i32);
+
+        if let Some(brightness) = payload.screen_brightness {
+            let mut storage = nvs.lock().unwrap();
+            let _ = storage.set_i32("scrBrightness", brightness as i32);
+        }
+
+        // Sauvegarder dans devicesKnow de la NVS
+        let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&nvs));
+        let mut map = registry.load_registry();
+
+        if let Some(entry) = map.get_mut("rla") {
+            entry.pwm_val = Some(if payload.rla { 100 } else { 0 });
+        }
+        if let Some(entry) = map.get_mut("rlb") {
+            entry.pwm_val = Some(if payload.rlb { 100 } else { 0 });
+        }
+        if let Some(entry) = map.get_mut("swpwr") {
+            entry.pwm_val = Some(if payload.swpwr { 100 } else { 0 });
+        }
+        if let Some(entry) = map.get_mut("ina") {
+            entry.pwm_val = Some(speed_a);
+        }
+        if let Some(entry) = map.get_mut("inb") {
+            entry.pwm_val = Some(speed_b);
+        }
+
+        registry.save_registry(&map);
     }
 
     let response_data = serde_json::to_string(&payload)?;

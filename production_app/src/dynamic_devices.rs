@@ -65,6 +65,10 @@ pub struct DeviceDisplay {
     /// Planifications actives (uniquement pour les actionneurs)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pwm_val: Option<u8>,
 }
 
 /// Métadonnées techniques d'un capteur (issues des documentations officielles)
@@ -444,6 +448,8 @@ impl DeviceRegistry {
         ds_readings: &HashMap<String, f32>,
         touch_state: bool,
         schedules: Option<&HashMap<String, Vec<crate::actuators::ScheduledAction>>>,
+        vsense_volts: Option<f32>,
+        isense_amps: Option<f32>,
     ) -> Vec<DeviceDisplay> {
         let registry = self.load_registry(); // construit à partir des statiques + NVS dynamiques
         let mut list = Vec::new();
@@ -453,8 +459,8 @@ impl DeviceRegistry {
         let bme_p = *crate::i2c::i2c_bme280::BME280_PRESS.lock().unwrap() as f64;
 
         let mut raw_values: HashMap<String, f64> = HashMap::new();
-        raw_values.insert("vsense".to_string(), 12.4);
-        raw_values.insert("isense".to_string(), 0.18);
+        raw_values.insert("vsense".to_string(), vsense_volts.unwrap_or(0.0) as f64);
+        raw_values.insert("isense".to_string(), isense_amps.unwrap_or(0.0) as f64);
         raw_values.insert("touch".to_string(), if touch_state { 1.0 } else { 0.0 });
         raw_values.insert("rla".to_string(), if relay_a_on { 1.0 } else { 0.0 });
         raw_values.insert("rlb".to_string(), if relay_b_on { 1.0 } else { 0.0 });
@@ -484,8 +490,14 @@ impl DeviceRegistry {
 
             let mut raw_val = 0.0;
             match id.as_str() {
-                "vsense" => raw_val = 12.4,
-                "isense" => raw_val = 0.18,
+                "vsense" => {
+                    raw_val = vsense_volts.unwrap_or(0.0) as f64;
+                    present = vsense_volts.is_some();
+                }
+                "isense" => {
+                    raw_val = isense_amps.unwrap_or(0.0) as f64;
+                    present = isense_amps.is_some();
+                }
                 "touch" => raw_val = if touch_state { 1.0 } else { 0.0 },
                 "rla" => raw_val = if relay_a_on { 1.0 } else { 0.0 },
                 "rlb" => raw_val = if relay_b_on { 1.0 } else { 0.0 },
@@ -619,6 +631,34 @@ impl DeviceRegistry {
                 Some(raw_val)
             };
 
+            let display_step = entry.step.or(if is_act {
+                if matches!(id.as_str(), "rla" | "rlb" | "swpwr") {
+                    Some(100)
+                } else {
+                    Some(10)
+                }
+            } else {
+                None
+            });
+
+            let display_pwm = entry.pwm_val.or(if is_act {
+                let is_on = match id.as_str() {
+                    "rla" => relay_a_on,
+                    "rlb" => relay_b_on,
+                    "swpwr" => swpwr_on,
+                    "ina" => ina_on,
+                    "inb" => inb_on,
+                    _ => false,
+                };
+                if is_on { Some(100) } else { Some(0) }
+            } else if id == "screen" {
+                let storage = self.nvs.lock().unwrap();
+                let b = storage.get_i32("scrBrightness").ok().flatten().unwrap_or(20) as u8;
+                Some(b)
+            } else {
+                None
+            });
+
             list.push(DeviceDisplay {
                 id: id.to_string(),
                 name: entry.name.clone(),
@@ -630,6 +670,8 @@ impl DeviceRegistry {
                 sensor_meta,
                 correction_formula: if is_act { None } else { Some(correction) },
                 schedules: dev_schedules,
+                step: display_step,
+                pwm_val: display_pwm,
             });
         }
 

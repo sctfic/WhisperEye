@@ -221,6 +221,7 @@ pub fn register_routes(
     // POST /api/actuators
     let act_state_post = Arc::clone(&actuators_state);
     let act_post = Arc::clone(&actuators);
+    let act_nvs = Arc::clone(&nvs_storage);
     let act_mesh = Arc::clone(&mesh_state);
     server.api_handler("/api/actuators", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = act_mesh.lock().unwrap();
@@ -228,7 +229,7 @@ pub fn register_routes(
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
         }
         drop(state);
-        web_handlers::handle_post_actuators(req, Arc::clone(&act_state_post), Arc::clone(&act_post))
+        web_handlers::handle_post_actuators(req, Arc::clone(&act_state_post), Arc::clone(&act_post), Arc::clone(&act_nvs))
     })?;
 
     // POST /api/actuators/control

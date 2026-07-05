@@ -280,4 +280,11 @@ impl NvsStorage {
         info!("========================");
         Ok(())
     }
+
+    pub fn factory_reset(&mut self) -> Result<()> {
+        unsafe {
+            esp_idf_sys::nvs_flash_erase();
+        }
+        Ok(())
+    }
 }

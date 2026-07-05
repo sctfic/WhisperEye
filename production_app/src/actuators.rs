@@ -11,6 +11,12 @@ pub struct ActuatorsState {
     pub swpwr: bool,
     pub ina: bool,
     pub inb: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ina_speed: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inb_speed: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screen_brightness: Option<u8>,
 }
 
 impl Default for ActuatorsState {
@@ -21,6 +27,9 @@ impl Default for ActuatorsState {
             swpwr: true, // Keep system 5V/3V powered by default
             ina: false,
             inb: false,
+            ina_speed: None,
+            inb_speed: None,
+            screen_brightness: None,
         }
     }
 }
@@ -110,8 +119,8 @@ impl MotorPwmPin {
 }
 
 pub struct Actuators {
-    pub relay_a: PinDriver<'static, Output>,
-    pub relay_b: PinDriver<'static, Output>,
+    pub relay_a: MotorPwmPin,
+    pub relay_b: MotorPwmPin,
     pub sw_pwr: PinDriver<'static, Output>,
     pub ina: MotorPwmPin,
     pub inb: MotorPwmPin,
@@ -128,7 +137,7 @@ pub struct ActuatorsPresence {
 
 impl Actuators {
     pub fn init(
-        gpio9: Gpio9<'static>,
+        gpio48: Gpio48<'static>,
         gpio47: Gpio47<'static>,
         gpio21: Gpio21<'static>,
         gpio36: Gpio36<'static>,
@@ -136,33 +145,37 @@ impl Actuators {
     ) -> Result<Self, anyhow::Error> {
         log::info!("Initializing actuators (RLA, RLB, INA, INB, SWPWR)...");
 
-        let mut relay_a = PinDriver::output(gpio9)?;
-        relay_a.set_low()?;
-
-        let mut relay_b = PinDriver::output(gpio47)?;
-        relay_b.set_low()?;
-
         let mut sw_pwr = PinDriver::output(gpio21)?;
         sw_pwr.set_high()?; // Garder le système alimenté par défaut
 
-        // Configurer le PWM à 10 kHz pour les moteurs
+        // Configurer le PWM à 10 kHz pour les moteurs et les relais
         let timer1 = unsafe { TIMER1::steal() };
         let timer2 = unsafe { TIMER2::steal() };
+        let timer3 = unsafe { TIMER3::steal() };
         let channel1 = unsafe { CHANNEL1::steal() };
         let channel2 = unsafe { CHANNEL2::steal() };
+        let channel3 = unsafe { CHANNEL3::steal() };
+        let channel4 = unsafe { CHANNEL4::steal() };
 
         let timer_config = config::TimerConfig::new().frequency(10.kHz().into());
         let timer_driver1 = LedcTimerDriver::new(timer1, &timer_config)?;
         let timer_driver2 = LedcTimerDriver::new(timer2, &timer_config)?;
+        let timer_driver3 = Box::leak(Box::new(LedcTimerDriver::new(timer3, &timer_config)?));
 
         let ledc_ina = LedcDriver::new(channel1, timer_driver1, gpio36)?;
         let ledc_inb = LedcDriver::new(channel2, timer_driver2, gpio35)?;
+        let ledc_rla = LedcDriver::new(channel3, &*timer_driver3, gpio48)?;
+        let ledc_rlb = LedcDriver::new(channel4, &*timer_driver3, gpio47)?;
 
         let mut ina = MotorPwmPin::new(ledc_ina);
         let mut inb = MotorPwmPin::new(ledc_inb);
+        let mut relay_a = MotorPwmPin::new(ledc_rla);
+        let mut relay_b = MotorPwmPin::new(ledc_rlb);
 
         ina.set_level(Level::Low)?;
         inb.set_level(Level::Low)?;
+        relay_a.set_level(Level::Low)?;
+        relay_b.set_level(Level::Low)?;
 
         Ok(Self {
             relay_a,

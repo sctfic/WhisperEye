@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.15-0021";
+pub const FW_VERSION: &str = "1.2.15-0028";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -155,7 +155,7 @@ fn main() -> Result<()> {
 
     // 2. Initialiser les Actuators (RLA, RLB, INA, INB, SWPWR)
     let actuators = Arc::new(Mutex::new(Actuators::init(
-        peripherals.pins.gpio9,
+        peripherals.pins.gpio48,
         peripherals.pins.gpio47,
         peripherals.pins.gpio21,
         peripherals.pins.gpio36,
@@ -438,6 +438,13 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
 
 
 

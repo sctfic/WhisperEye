@@ -28,6 +28,8 @@ pub static OTA_FETCH_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic:
 pub enum ConfirmActionType {
     MiseEnVeille,
     MiseAJour,
+    ConnexionWifi,
+    ResetConfiguration,
 }
 
 /// Machine à états (AppState) pour la navigation exclusive et l'ajustement d'IHM.
@@ -103,6 +105,7 @@ pub struct BrowseController {
     pub last_focus: Option<usize>,
     pub selected_ver_idx: usize,
     pub selected_wifi_idx: usize,
+    pub value_changed: bool,
 }
 
 fn has_layout_changed(s1: Option<AppState>, s2: AppState) -> bool {
@@ -131,6 +134,7 @@ impl BrowseController {
             ota_cancel_choice: false,
             slider_step_idx: 4, // Step par défaut 10% (index 4 dans [1, 2, 4, 5, 10, 20, 25, 50, 100])
             needs_redraw: true,
+            value_changed: false,
             refresh_ticks: 0,
             last_rendered_state: None,
             last_main_index: None,
@@ -265,11 +269,7 @@ impl BrowseController {
         actuators_state: &Arc<Mutex<ActuatorsState>>,
         wifi_manager: &Arc<Mutex<NetManager>>,
     ) {
-        self.refresh_ticks += 1;
-        if self.refresh_ticks >= 25 {
-            self.refresh_ticks = 0;
-            self.needs_redraw = true;
-        }
+        self.value_changed = false;
 
         let diff = encoder_raw - self.last_encoder_raw;
         self.last_encoder_raw = encoder_raw;
@@ -291,20 +291,21 @@ impl BrowseController {
             self.needs_redraw = true;
         }
 
-        let main_menu_count = 3;
+        let main_menu_count = 4;
 
         match self.state {
             AppState::NaviguerSousMenu { main_index, sub_index } => {
-                // 1. Bouton 3 : Changement instantané de menu principal (0 -> 1 -> 2 -> 0)
+                // 1. Bouton 3 : Changement instantané de menu principal (0 -> 1 -> 2 -> 3 -> 0)
                 if btn3_clicked {
                     let next_main = (main_index + 1) % main_menu_count;
                     let next_sub_len = match next_main {
                         0 => {
                             let sensors = Self::get_sensors_list(nvs, board, actuators_state);
-                            sensors.len() + 2
+                            sensors.len() + 1
                         }
                         1 => 5, // INA, INB, RLA, RLB, SWPWR
-                        2 => 5, // Wifi Client, Wifi AP, TOTP, Ecran, Update
+                        2 => 1, // Schema
+                        3 => 6, // Wifi Client, Wifi AP, TOTP, Ecran, Update, Reset
                         _ => 1,
                     };
                     let next_sub = sub_index.min(next_sub_len - 1);
@@ -318,10 +319,11 @@ impl BrowseController {
                 let sub_len = match main_index {
                     0 => {
                         let sensors = Self::get_sensors_list(nvs, board, actuators_state);
-                        sensors.len() + 2
+                        sensors.len() + 1
                     }
                     1 => 5, // INA, INB, RLA, RLB, SWPWR
-                    2 => 5, // Wifi Client, Wifi AP, TOTP, Ecran, Update
+                    2 => 1, // Schema
+                    3 => 6, // Wifi Client, Wifi AP, TOTP, Ecran, Update, Reset
                     _ => 1,
                 };
 
@@ -359,8 +361,8 @@ impl BrowseController {
                                     let val = match new_sub {
                                         0 => acts.ina.get_speed() as u8,
                                         1 => acts.inb.get_speed() as u8,
-                                        2 => if acts.relay_a.is_set_high() { 100 } else { 0 },
-                                        3 => if acts.relay_b.is_set_high() { 100 } else { 0 },
+                                        2 => if acts.relay_a.is_active() { 100 } else { 0 },
+                                        3 => if acts.relay_b.is_active() { 100 } else { 0 },
                                         _ => 0,
                                     };
                                     let actuator_id = match new_sub {
@@ -391,6 +393,12 @@ impl BrowseController {
                             }
                         }
                         2 => {
+                            self.state = AppState::AfficherProprietes {
+                                main_index,
+                                sub_index: 0,
+                            };
+                        }
+                        3 => {
                             if new_sub == 1 {
                                 let mut net = wifi_manager.lock().unwrap();
                                 net.state = crate::wifi::NetState::ApPairing;
@@ -419,7 +427,7 @@ impl BrowseController {
             }
 
             AppState::AfficherProprietes { main_index, sub_index } => {
-                if main_index == 2 && sub_index == 0 {
+                if main_index == 3 && sub_index == 0 {
                     let known_wifis = nvs.lock().unwrap().get_known_networks().unwrap_or_default();
                     let mut all_known = Vec::new();
                     for (ssid, entry) in known_wifis.iter() {
@@ -434,7 +442,8 @@ impl BrowseController {
                             if new_idx < 0 { new_idx = 0; }
                             if new_idx >= all_known.len() as i32 { new_idx = all_known.len() as i32 - 1; }
                             self.selected_wifi_idx = new_idx as usize;
-                            self.needs_redraw = true;
+                            self.needs_redraw = false;
+                            self.value_changed = true;
                         }
                         if btn2_clicked {
                             let (ssid, psk, is_present) = &all_known[self.selected_wifi_idx];
@@ -458,13 +467,14 @@ impl BrowseController {
                     if btn3_clicked {
                         self.state = AppState::NaviguerSousMenu { main_index, sub_index };
                     }
-                } else if main_index == 2 && sub_index == 4 {
+                } else if main_index == 3 && sub_index == 4 {
                     if ticks_delta != 0 {
                         let mut new_ver = self.selected_ver_idx as i32 + ticks_delta;
                         if new_ver < 0 { new_ver = 0; }
                         if new_ver >= 4 { new_ver = 3; }
                         self.selected_ver_idx = new_ver as usize;
-                        self.needs_redraw = true;
+                        self.needs_redraw = false;
+                        self.value_changed = true;
                     }
                     if btn2_clicked {
                         self.state = AppState::ConfirmerAction { action_type: ConfirmActionType::MiseAJour, choice: false };
@@ -482,7 +492,7 @@ impl BrowseController {
             AppState::AjusterSlider { main_index, sub_index, value, step_idx } => {
                 let mut current_step_idx = step_idx;
                 if btn3_clicked {
-                    if main_index == 2 && sub_index == 3 {
+                    if main_index == 3 && sub_index == 3 {
                         let current_timeout = nvs.lock().unwrap().get_i32("scrTimeout").ok().flatten().unwrap_or(5);
                         let next_timeout = match current_timeout {
                             1 => 5,
@@ -513,6 +523,8 @@ impl BrowseController {
                                 registry.save_registry(&map);
                             }
                         }
+                        self.needs_redraw = false;
+                        self.value_changed = true;
                     }
                 }
 
@@ -521,11 +533,13 @@ impl BrowseController {
                 let mut val = value as i32;
                 if ticks_delta != 0 {
                     val += ticks_delta * step_val;
-                    let min_val = if main_index == 2 && sub_index == 3 { 5 } else { 0 };
+                    let min_val = if main_index == 3 && sub_index == 3 { 5 } else { 0 };
                     if val < min_val { val = min_val; }
                     if val > 100 { val = 100; }
+                    self.needs_redraw = false;
+                    self.value_changed = true;
 
-                    if main_index == 2 && sub_index == 3 {
+                    if main_index == 3 && sub_index == 3 {
                         let _ = nvs.lock().unwrap().set_i32("scrBrightness", val);
                     } else {
                         let is_active = val > 0;
@@ -569,7 +583,7 @@ impl BrowseController {
                 }
 
                 if btn2_clicked {
-                    if main_index == 2 && sub_index == 3 {
+                    if main_index == 3 && sub_index == 3 {
                         // Just exit
                     } else {
                         let is_active = val > 0;
@@ -651,7 +665,54 @@ impl BrowseController {
                                 let _ = st.set_i32("otaTrigger", 1);
                                 unsafe { esp_idf_sys::esp_restart(); }
                             }
-                            self.state = AppState::AfficherProprietes { main_index: 2, sub_index: 3 };
+                            self.state = AppState::AfficherProprietes { main_index: 3, sub_index: 4 };
+                        }
+                        ConfirmActionType::ConnexionWifi => {
+                            if choice {
+                                {
+                                    *crate::wifi::CURRENT_SSID.lock().unwrap() = String::new();
+                                    *crate::wifi::CURRENT_IP.lock().unwrap() = String::new();
+                                }
+                                self.needs_redraw = true;
+
+                                let known_wifis = nvs.lock().unwrap().get_known_networks().unwrap_or_default();
+                                let mut all_known = Vec::new();
+                                for (ssid, entry) in known_wifis.iter() {
+                                    let is_present = wifi_manager.lock().unwrap().scan_cache.contains(ssid);
+                                    all_known.push((ssid.clone(), entry.psk.clone(), is_present));
+                                }
+                                all_known.sort_by(|a, b| a.0.cmp(&b.0));
+
+                                if self.selected_wifi_idx < all_known.len() {
+                                    let (ssid, psk, _) = &all_known[self.selected_wifi_idx];
+                                    let ssid = ssid.clone();
+                                    let psk = psk.clone();
+
+                                    log::info!("Manuel Wi-Fi connection trigger to: {}", ssid);
+                                    let wifi_manager_clone = Arc::clone(&wifi_manager);
+                                    let nvs_clone = Arc::clone(nvs);
+                                    let _ = std::thread::Builder::new()
+                                        .name("wifi_manual_connect".to_string())
+                                        .stack_size(8192)
+                                        .spawn(move || {
+                                            let mut net = wifi_manager_clone.lock().unwrap();
+                                            if net.try_sta_connect(&ssid, &psk, false, 0).unwrap_or(false) {
+                                                net.state = crate::wifi::NetState::WifiOk;
+                                                net.retry_count = 0;
+                                                let _ = net.stop_provisioning_ap_if_not_pairing();
+                                                common::led::set_sta_status(common::led::LedStaStatus::WifiOk);
+                                                common::led::set_ap_status(common::led::LedApStatus::Off);
+                                                if let Ok(mut storage) = nvs_clone.lock() {
+                                                    let _ = storage.set_default_network_by_ssid(&ssid);
+                                                    let _ = storage.update_wifi_last_seen(&ssid);
+                                                }
+                                            } else {
+                                                net.state = crate::wifi::NetState::WifiPreferred;
+                                            }
+                                        });
+                                }
+                            }
+                            self.state = AppState::AfficherProprietes { main_index: 3, sub_index: 0 };
                         }
                     }
                 }
@@ -662,7 +723,10 @@ impl BrowseController {
                             self.state = AppState::NaviguerSousMenu { main_index: 1, sub_index: 4 };
                         }
                         ConfirmActionType::MiseAJour => {
-                            self.state = AppState::AfficherProprietes { main_index: 2, sub_index: 3 };
+                            self.state = AppState::AfficherProprietes { main_index: 3, sub_index: 4 };
+                        }
+                        ConfirmActionType::ConnexionWifi => {
+                            self.state = AppState::AfficherProprietes { main_index: 3, sub_index: 0 };
                         }
                     }
                 }
@@ -679,14 +743,19 @@ impl BrowseController {
         actuators: &Arc<Mutex<Actuators>>,
         actuators_state: &Arc<Mutex<ActuatorsState>>,
         wifi_manager: &Arc<Mutex<NetManager>>,
+        periodic_update: bool,
     ) -> Result<(), D::Error>
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        if !self.needs_redraw {
+        if !self.needs_redraw && !self.value_changed && !periodic_update {
             return Ok(());
         }
+
+        let needs_redraw_full = self.needs_redraw;
         self.needs_redraw = false;
+        let val_changed = self.value_changed;
+        self.value_changed = false;
 
         let layout_changed = has_layout_changed(self.last_rendered_state, self.state);
 
@@ -696,7 +765,8 @@ impl BrowseController {
             AppState::AjusterSlider { main_index, sub_index, .. } => (main_index, sub_index),
             AppState::ConfirmerAction { action_type, .. } => match action_type {
                 ConfirmActionType::MiseEnVeille => (1, 4),
-                ConfirmActionType::MiseAJour => (2, 3),
+                ConfirmActionType::MiseAJour => (3, 4),
+                ConfirmActionType::ConnexionWifi => (3, 0),
             },
         };
 
@@ -713,26 +783,36 @@ impl BrowseController {
         let main_changed = self.last_main_index != Some(current_main) || exited_modal;
         let sub_changed = self.last_sub_index != Some(current_sub) || main_changed || layout_changed;
 
-        if !in_modal {
-            // Zone 2: Sous-menus de gauche (X=0..100, Y=33..218) -> Effacée seulement au changement de main menu ou à la sortie de la modale
-            if main_changed {
-                let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186))
-                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                    .draw(display);
-                self.last_main_index = Some(current_main);
-            }
+        if !in_modal && !periodic_update && !val_changed {
+            if current_main == 2 {
+                if main_changed {
+                    let _ = Rectangle::new(Point::new(0, 33), Size::new(320, 186))
+                        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                        .draw(display);
+                    self.last_main_index = Some(current_main);
+                    self.last_sub_index = Some(current_sub);
+                }
+            } else {
+                // Zone 2: Sous-menus de gauche (X=0..100, Y=33..218) -> Effacée seulement au changement de main menu ou à la sortie de la modale
+                if main_changed {
+                    let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186))
+                        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                        .draw(display);
+                    self.last_main_index = Some(current_main);
+                }
 
-            // Zone 3: Zone de détail à droite (X=102..320, Y=33..218) -> Effacée au changement de menu ou d'état/mode
-            if sub_changed {
-                let _ = Rectangle::new(Point::new(102, 33), Size::new(218, 186))
-                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                    .draw(display);
-                self.last_sub_index = Some(current_sub);
+                // Zone 3: Zone de détail à droite (X=102..320, Y=33..218) -> Effacée au changement de menu ou d'état/mode
+                if sub_changed {
+                    let _ = Rectangle::new(Point::new(102, 33), Size::new(218, 186))
+                        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                        .draw(display);
+                    self.last_sub_index = Some(current_sub);
+                }
             }
         }
 
-        // Zone 4: Dessin du cadre actif (skip pendant la modale)
-        if !in_modal {
+        // Zone 4: Dessin du cadre actif (skip pendant la modale, skip en mode Schéma, skip si periodic_update ou val_changed)
+        if !in_modal && current_main != 2 && !periodic_update && !val_changed {
             // Effacer les anciens cadres en dessinant en noir
             let clear_style = PrimitiveStyle::with_stroke(Rgb565::BLACK, 1);
             let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186)).into_styled(clear_style).draw(display);
@@ -751,6 +831,7 @@ impl BrowseController {
         let font_small_white = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::WHITE).background_color(Rgb565::BLACK).build();
         let font_small_green = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::GREEN).background_color(Rgb565::BLACK).build();
         let font_small_gray  = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::new(15, 30, 15)).background_color(Rgb565::BLACK).build();
+        let font_small_red   = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::RED).background_color(Rgb565::BLACK).build();
         let font_big_white   = MonoTextStyleBuilder::new().font(&FONT_10X20).text_color(Rgb565::WHITE).background_color(Rgb565::BLACK).build();
         let font_big_green   = MonoTextStyleBuilder::new().font(&FONT_10X20).text_color(Rgb565::GREEN).background_color(Rgb565::BLACK).build();
         let font_menu_active = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::BLACK).background_color(Rgb565::GREEN).build();
@@ -761,25 +842,26 @@ impl BrowseController {
             AppState::AjusterSlider { main_index, sub_index, .. } => (main_index, sub_index),
             AppState::ConfirmerAction { action_type, .. } => match action_type {
                 ConfirmActionType::MiseEnVeille => (1, 4),
-                ConfirmActionType::MiseAJour => (2, 4),
+                ConfirmActionType::MiseAJour => (3, 4),
+                ConfirmActionType::ConnexionWifi => (3, 0),
             },
         };
 
-        // ── 1. LIGNE DES MENUS PRINCIPAUX (Y=18 à 30) ──
-        let main_menus = ["1.Capteurs", "2.Actionneurs", "3.Setting"];
-        let mut x_offset = 5;
-        for (idx, title) in main_menus.iter().enumerate() {
-            let is_selected = idx == current_main;
-            let style = if is_selected { font_menu_active } else { font_small_white };
-            let _ = Text::new(title, Point::new(x_offset, 27), style).draw(display);
-            x_offset += (title.len() as i32 * 6) + 18;
+        if !periodic_update && !val_changed {
+            // ── 1. LIGNE DES MENUS PRINCIPAUX (Y=18 à 30) ──
+            let main_menus = ["Capteurs", "Actionneurs", "Schema", "Setting"];
+            let mut x_offset = 5;
+            for (idx, title) in main_menus.iter().enumerate() {
+                let is_selected = idx == current_main;
+                let style = if is_selected { font_menu_active } else { font_small_white };
+                let _ = Text::new(title, Point::new(x_offset, 27), style).draw(display);
+                x_offset += (title.len() as i32 * 6) + 12;
+            }
+
+            let _ = Rectangle::new(Point::new(0, 32), Size::new(320, 1))
+                .into_styled(PrimitiveStyle::with_fill(Rgb565::new(10, 20, 10)))
+                .draw(display);
         }
-
-        let _ = Rectangle::new(Point::new(0, 32), Size::new(320, 1))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::new(10, 20, 10)))
-            .draw(display);
-
-
 
         // ── 2. COLONNE DES SOUS-MENUS (X=2..98, Y=38) ──
         let sensors_list = Self::get_sensors_list(nvs, board, actuators_state);
@@ -790,7 +872,6 @@ impl BrowseController {
                     if s.name.len() > 13 { format!("{:.12}…", s.name) } else { s.name.clone() }
                 }).collect();
                 list.push("Dashboard".to_string());
-                list.push("Schema".to_string());
                 list
             }
             1 => vec![
@@ -800,7 +881,8 @@ impl BrowseController {
                 "RLB Relay".to_string(),
                 "SWPWR Off".to_string(),
             ],
-            2 => vec![
+            2 => vec![],
+            3 => vec![
                 "Wifi Client".to_string(),
                 "Wifi AP".to_string(),
                 "TOTP".to_string(),
@@ -810,16 +892,18 @@ impl BrowseController {
             _ => vec![],
         };
 
-        for (idx, stitle) in sub_titles.iter().enumerate() {
-            let y_pos = 45 + (idx as i32 * 14);
-            if y_pos > 210 { break; }
+        if !periodic_update && !val_changed {
+            for (idx, stitle) in sub_titles.iter().enumerate() {
+                let y_pos = 45 + (idx as i32 * 14);
+                if y_pos > 210 { break; }
 
-            let is_sub_sel = idx == current_sub;
-            let prefix = if is_sub_sel { ">" } else { " " };
-            let style = if is_sub_sel { font_small_green } else { font_small_white };
+                let is_sub_sel = idx == current_sub;
+                let prefix = if is_sub_sel { ">" } else { " " };
+                let style = if is_sub_sel { font_small_green } else { font_small_white };
 
-            let _ = Text::new(prefix, Point::new(1, y_pos), style).draw(display);
-            let _ = Text::new(stitle, Point::new(8, y_pos), style).draw(display);
+                let _ = Text::new(prefix, Point::new(1, y_pos), style).draw(display);
+                let _ = Text::new(stitle, Point::new(8, y_pos), style).draw(display);
+            }
         }
 
         // ── 3. PANNEAU DE DROITE (PROPRIÉTÉS / SLIDER / SCHÉMA / DASHBOARD) (X=104..316) ──
@@ -830,12 +914,14 @@ impl BrowseController {
                 if current_sub < sensors_list.len() {
                     let s = &sensors_list[current_sub];
 
-                    if sub_changed {
-                        let _ = Text::new(&format!("Nom: {:<20}", s.name), Point::new(right_x, 48), font_small_green).draw(display);
-                        let _ = Text::new(&format!("{:<30}", s.desc), Point::new(right_x, 62), font_small_white).draw(display);
+                    if !periodic_update && !val_changed {
+                        if sub_changed {
+                            let _ = Text::new(&format!("Nom: {:<20}", s.name), Point::new(right_x, 48), font_small_green).draw(display);
+                            let _ = Text::new(&format!("{:<30}", s.desc), Point::new(right_x, 62), font_small_white).draw(display);
 
-                        let model_str = format!("Bus: {}", s.model_bus);
-                        let _ = Text::new(&format!("{:<30}", model_str), Point::new(right_x, 145), font_small_gray).draw(display);
+                            let model_str = format!("Bus: {}", s.model_bus);
+                            let _ = Text::new(&format!("{:<30}", model_str), Point::new(right_x, 145), font_small_gray).draw(display);
+                        }
                     }
 
                     let val_str = format!("{} {}   ", s.corrected_val, s.unit);
@@ -851,7 +937,7 @@ impl BrowseController {
                         let cy = 42 + (row * 33);
 
                         let short_name = if s.name.len() > 10 { format!("{:.9}…", s.name) } else { s.name.clone() };
-                        if sub_changed {
+                        if !periodic_update && !val_changed && sub_changed {
                             let _ = Text::new(&format!("{:<11}", short_name), Point::new(cx, cy), font_small_gray).draw(display);
                         }
                         let _ = Text::new(&format!("{:<11}", format!("{} {}", s.corrected_val, s.unit)), Point::new(cx, cy + 12), font_small_white).draw(display);
@@ -865,177 +951,206 @@ impl BrowseController {
             }
             1 => {
                 if current_sub == 4 {
-                    if sub_changed {
-                        let _ = Text::new("SWPWR - COUPE-CIRCUIT", Point::new(right_x, 50), font_small_green).draw(display);
-                        let _ = Text::new("Passe en economie", Point::new(right_x, 70), font_small_white).draw(display);
-                        let _ = Text::new("d'energie.", Point::new(right_x, 82), font_small_white).draw(display);
-                        let _ = Text::new("Rallumer via TOUCH", Point::new(right_x, 100), font_small_green).draw(display);
+                    if !periodic_update && !val_changed {
+                        if sub_changed {
+                            let _ = Text::new("SWPWR - COUPE-CIRCUIT (GPIO21)", Point::new(right_x, 50), font_small_green).draw(display);
+                            let _ = Text::new("Passe en economie d'energie.", Point::new(right_x, 70), font_small_white).draw(display);
+                            let _ = Text::new("Rallumer via TOUCH", Point::new(right_x, 100), font_small_green).draw(display);
+                        }
                     }
                 } else {
-                    let act_names = ["Sortie INA", "Sortie INB", "Relais A", "Relais B"];
-                    let act_descs = [
-                        "Commande moteur INA (PWM)",
-                        "Commande moteur INB (PWM)",
-                        "Relais puissance A",
-                        "Relais puissance B",
-                    ];
-                    let name = act_names[current_sub];
-                    let desc = act_descs[current_sub];
+                    if !periodic_update {
+                        let act_names = ["Sortie INA", "Sortie INB", "Relais A", "Relais B"];
+                        let act_gpios = ["GPIO36", "GPIO35", "GPIO48", "GPIO47"];
+                        let act_descs = [
+                            "Commande moteur INA (PWM)",
+                            "Commande moteur INB (PWM)",
+                            "Relais puissance A",
+                            "Relais puissance B",
+                        ];
+                        let name = act_names[current_sub];
+                        let gpio = act_gpios[current_sub];
+                        let desc = act_descs[current_sub];
 
-                    let (cur_val, is_editing, step_idx) = match self.state {
-                        AppState::AjusterSlider { sub_index, value, step_idx, .. } if sub_index == current_sub => (value, true, step_idx),
-                        _ => {
-                            let acts = actuators.lock().unwrap();
-                            let v = match current_sub {
-                                0 => acts.ina.get_speed() as u8,
-                                1 => acts.inb.get_speed() as u8,
-                                2 => if acts.relay_a.is_set_high() { 100 } else { 0 },
-                                3 => if acts.relay_b.is_set_high() { 100 } else { 0 },
-                                _ => 0,
-                            };
-                            (v, false, self.slider_step_idx)
+                        let (cur_val, is_editing, step_idx) = match self.state {
+                            AppState::AjusterSlider { sub_index, value, step_idx, .. } if sub_index == current_sub => (value, true, step_idx),
+                            _ => {
+                                let acts = actuators.lock().unwrap();
+                                let v = match current_sub {
+                                    0 => acts.ina.get_speed() as u8,
+                                    1 => acts.inb.get_speed() as u8,
+                                    2 => if acts.relay_a.is_active() { 100 } else { 0 },
+                                    3 => if acts.relay_b.is_active() { 100 } else { 0 },
+                                    _ => 0,
+                                };
+                                (v, false, self.slider_step_idx)
+                            }
+                        };
+
+                        if !val_changed && sub_changed {
+                            let _ = Text::new(&format!("{} ({})", name, gpio), Point::new(right_x, 48), font_small_green).draw(display);
+                            let _ = Text::new(desc, Point::new(right_x, 62), font_small_white).draw(display);
                         }
-                    };
 
-                    if sub_changed {
-                        let _ = Text::new(name, Point::new(right_x, 48), font_small_green).draw(display);
-                        let _ = Text::new(desc, Point::new(right_x, 62), font_small_white).draw(display);
-                    }
+                        let vsense_v = board.lock().unwrap().read_value(false, false).vsense_volts;
+                        let has_power = vsense_v.map_or(false, |v| v > 6.0);
+                        let is_ina_inb = current_sub == 0 || current_sub == 1;
+                        let is_warning = !has_power && is_ina_inb;
 
-                    let bar_x = right_x + 1;
-                    let bar_y = 94;
-                    let bar_w = 210;
-                    let bar_h = 8;
-                    let fill_w = ((bar_w - 2) as u32 * cur_val as u32) / 100;
+                        let bar_x = right_x + 1;
+                        let bar_y = 94;
+                        let bar_w = 210;
+                        let bar_h = 8;
+                        let fill_w = ((bar_w - 2) as u32 * cur_val as u32) / 100;
 
-                    let _ = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_w as u32, bar_h as u32))
-                        .into_styled(PrimitiveStyle::with_stroke(Rgb565::WHITE, 1))
-                        .draw(display);
-
-                    if fill_w > 0 {
-                        let fill_color = if is_editing { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
-                        let _ = Rectangle::new(Point::new(bar_x + 1, bar_y + 1), Size::new(fill_w, (bar_h - 2) as u32))
-                            .into_styled(PrimitiveStyle::with_fill(fill_color))
+                        let stroke_color = if is_warning { Rgb565::RED } else { Rgb565::WHITE };
+                        let _ = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_w as u32, bar_h as u32))
+                            .into_styled(PrimitiveStyle::with_stroke(stroke_color, 1))
                             .draw(display);
+
+                        if fill_w > 0 {
+                            let fill_color = if is_warning {
+                                Rgb565::RED
+                            } else if is_editing {
+                                Rgb565::GREEN
+                            } else {
+                                Rgb565::new(0, 45, 0)
+                            };
+                            let _ = Rectangle::new(Point::new(bar_x + 1, bar_y + 1), Size::new(fill_w, (bar_h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(fill_color))
+                                .draw(display);
+                        }
+
+                        let remaining_w = (bar_w - 2) as u32 - fill_w;
+                        if remaining_w > 0 {
+                            let _ = Rectangle::new(Point::new(bar_x + 1 + fill_w as i32, bar_y + 1), Size::new(remaining_w, (bar_h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                .draw(display);
+                        }
+
+                        let val_label = format!("  {}%   ", cur_val);
+                        let val_w = val_label.len() as i32 * 6;
+                        let label_x = bar_x + (bar_w as i32 - val_w) / 2;
+                        let val_style = if is_warning {
+                            font_small_red
+                        } else {
+                            font_small_green
+                        };
+                        let _ = Text::new(&val_label, Point::new(label_x, bar_y - 4), val_style).draw(display);
+
+                        if is_warning {
+                            let _ = Text::new("Power Supply Missing !", Point::new(right_x, 115), font_small_red).draw(display);
+                        } else {
+                            let _ = Text::new("                      ", Point::new(right_x, 115), font_small_white).draw(display);
+                        }
+
+                        let step_val = SLIDER_STEPS[step_idx];
+                        let mode_str = if step_val == 100 { "Mode: Switch" } else { "Mode: PWM      " };
+                        let _ = Text::new(mode_str, Point::new(right_x, 145), font_small_gray).draw(display);
+                        let _ = Text::new(&format!("Step (BTN3): {}%   ", step_val), Point::new(right_x, 160), font_small_gray).draw(display);
                     }
-
-                    let remaining_w = (bar_w - 2) as u32 - fill_w;
-                    if remaining_w > 0 {
-                        let _ = Rectangle::new(Point::new(bar_x + 1 + fill_w as i32, bar_y + 1), Size::new(remaining_w, (bar_h - 2) as u32))
-                            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                            .draw(display);
-                    }
-
-                    let val_label = format!("  {}%   ", cur_val);
-                    let val_w = val_label.len() as i32 * 6;
-                    let label_x = bar_x + (bar_w as i32 - val_w) / 2;
-                    let _ = Text::new(&val_label, Point::new(label_x, bar_y - 4), font_small_green).draw(display);
-
-                    let step_val = SLIDER_STEPS[step_idx];
-                    let mode_str = if step_val == 100 { "Mode: Switch" } else { "Mode: PWM      " };
-                    let _ = Text::new(mode_str, Point::new(right_x, 145), font_small_gray).draw(display);
-                    let _ = Text::new(&format!("Step (BTN3): {}%   ", step_val), Point::new(right_x, 160), font_small_gray).draw(display);
                 }
             }
             2 => {
+                // Schema: zone vide
+            }
+            3 => {
                 match current_sub {
                     0 => {
-                        if sub_changed {
-                            let _ = Text::new("WIFI CLIENT", Point::new(right_x, 42), font_small_green).draw(display);
-                            let _ = Text::new("SSID: ", Point::new(right_x, 54), font_small_white).draw(display);
-                            let _ = Text::new("IP  : ", Point::new(right_x, 66), font_small_white).draw(display);
-                            let _ = Text::new("CIDR: ", Point::new(right_x, 78), font_small_white).draw(display);
-                            let _ = Text::new("Gate: ", Point::new(right_x, 90), font_small_white).draw(display);
-                            let _ = Text::new("Rssi: ", Point::new(right_x, 102), font_small_white).draw(display);
-                            let _ = Text::new("Psk : ", Point::new(right_x, 114), font_small_white).draw(display);
-                        }
+                        if !periodic_update {
+                            let known_wifis = nvs.lock().unwrap().get_known_networks().unwrap_or_default();
+                            
+                            if !val_changed {
+                                if sub_changed {
+                                    let _ = Text::new("WIFI CLIENT", Point::new(right_x, 42), font_small_green).draw(display);
+                                    let _ = Text::new("SSID    : ", Point::new(right_x, 54), font_small_white).draw(display);
+                                    let _ = Text::new("IP      : ", Point::new(right_x, 66), font_small_white).draw(display);
+                                    let _ = Text::new("GateWay : ", Point::new(right_x, 78), font_small_white).draw(display);
+                                    let _ = Text::new("Rssi    : ", Point::new(right_x, 90), font_small_white).draw(display);
+                                    let _ = Text::new("Psk     : ", Point::new(right_x, 102), font_small_white).draw(display);
+                                    let _ = Text::new("Reseaux connus:", Point::new(right_x, 120), font_small_green).draw(display);
+                                }
 
-                        let (ssid, ip, gateway, mask_len, rssi_val) = {
-                            let net = wifi_manager.lock().unwrap();
-                            let s = crate::wifi::CURRENT_SSID.lock().unwrap().clone();
-                            let i = crate::wifi::CURRENT_IP.lock().unwrap().clone();
-                            let ip_info = net.wifi.wifi().sta_netif().get_ip_info().ok();
-                            let gw = ip_info.as_ref().map(|info| info.subnet.gateway.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
-                            let mask_len = ip_info.as_ref().map(|info| info.subnet.mask.0).unwrap_or(0);
-                            let rssi_val = net.wifi.wifi().get_ap_info().ok().map(|info| info.signal_strength);
-                            (s, i, gw, mask_len, rssi_val)
-                        };
+                                let (ssid, ip, gateway, rssi_val) = {
+                                    let net = wifi_manager.lock().unwrap();
+                                    let s = crate::wifi::CURRENT_SSID.lock().unwrap().clone();
+                                    let i = crate::wifi::CURRENT_IP.lock().unwrap().clone();
+                                    let ip_info = net.wifi.wifi().sta_netif().get_ip_info().ok();
+                                    let gw = ip_info.as_ref().map(|info| info.subnet.gateway.to_string()).unwrap_or_else(|| "0.0.0.0".to_string());
+                                    let rssi_val = net.wifi.wifi().get_ap_info().ok().map(|info| info.signal_strength);
+                                    (s, i, gw, rssi_val)
+                                };
 
-                        let known_wifis = nvs.lock().unwrap().get_known_networks().unwrap_or_default();
-                        let current_psk = known_wifis.get(&ssid).map(|entry| entry.psk.clone()).unwrap_or_else(|| "--".to_string());
+                                let current_psk = known_wifis.get(&ssid).map(|entry| entry.psk.clone()).unwrap_or_else(|| "--".to_string());
 
-                        let ssid_str = if ssid.is_empty() { "--" } else { &ssid };
-                        let _ = Text::new(&format!("{:<20}", ssid_str), Point::new(right_x + 36, 54), font_small_white).draw(display);
+                                let ssid_str = if ssid.is_empty() { "--" } else { &ssid };
+                                let _ = Text::new(&format!("{}                    ", ssid_str), Point::new(right_x + 42, 54), font_small_white).draw(display);
 
-                        let ip_str = if ip.is_empty() { "--" } else { &ip };
-                        let _ = Text::new(&format!("{:<20}", ip_str), Point::new(right_x + 36, 66), font_small_white).draw(display);
+                                let ip_str = if ip.is_empty() { "--" } else { &ip };
+                                let _ = Text::new(&format!("{}                    ", ip_str), Point::new(right_x + 42, 66), font_small_white).draw(display);
 
-                        let cidr_str = if ip.is_empty() { "--".to_string() } else { format!("{}/{}", ip, mask_len) };
-                        let _ = Text::new(&format!("{:<20}", cidr_str), Point::new(right_x + 36, 78), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", gateway), Point::new(right_x + 42, 78), font_small_white).draw(display);
 
-                        let _ = Text::new(&format!("{:<20}", gateway), Point::new(right_x + 36, 90), font_small_white).draw(display);
+                                let rssi_str = rssi_val.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "--".to_string());
+                                let _ = Text::new(&format!("{}                    ", rssi_str), Point::new(right_x + 42, 90), font_small_white).draw(display);
 
-                        let rssi_str = rssi_val.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "--".to_string());
-                        let _ = Text::new(&format!("{:<20}", rssi_str), Point::new(right_x + 36, 102), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", current_psk), Point::new(right_x + 42, 102), font_small_white).draw(display);
+                            }
 
-                        let _ = Text::new(&format!("{:<20}", current_psk), Point::new(right_x + 36, 114), font_small_white).draw(display);
+                            // Réseaux connus en dessous (toujours redessinés si val_changed ou sub_changed)
+                            let scan_cache = wifi_manager.lock().unwrap().scan_cache.clone();
+                            let mut all_known = Vec::new();
+                            for (known_ssid, entry) in known_wifis.iter() {
+                                let is_avail = scan_cache.contains(known_ssid);
+                                all_known.push((known_ssid.clone(), entry.psk.clone(), is_avail));
+                            }
+                            all_known.sort_by(|a, b| a.0.cmp(&b.0));
 
-                        // Réseaux connus en dessous
-                        if sub_changed {
-                            let _ = Text::new("Reseaux connus:", Point::new(right_x, 130), font_small_green).draw(display);
-                        }
-
-                        let scan_cache = wifi_manager.lock().unwrap().scan_cache.clone();
-                        let mut all_known = Vec::new();
-                        for (known_ssid, entry) in known_wifis.iter() {
-                            let is_avail = scan_cache.contains(known_ssid);
-                            all_known.push((known_ssid.clone(), entry.psk.clone(), is_avail));
-                        }
-                        all_known.sort_by(|a, b| a.0.cmp(&b.0));
-
-                        let mut idx = 0;
-                        for (i, (known_ssid, _, is_avail)) in all_known.iter().enumerate() {
-                            if idx >= 4 { break; }
-                            let suffix = if *is_avail { "*" } else { "" };
-                            let is_selected = i == self.selected_wifi_idx && current_focus == 2;
-                            let style = if is_selected { font_small_green } else { font_small_gray };
-                            let prefix = if is_selected { ">" } else { " " };
-                            let label = format!("{}{:<18}{}", prefix, known_ssid, suffix);
-                            let y = 144 + (idx * 12);
-                            let _ = Text::new(&label, Point::new(right_x, y), style).draw(display);
-                            idx += 1;
+                            let mut idx = 0;
+                            for (i, (known_ssid, _, is_avail)) in all_known.iter().enumerate() {
+                                if idx >= 4 { break; }
+                                let suffix = if *is_avail { " *" } else { "" };
+                                let is_selected = i == self.selected_wifi_idx && current_focus == 2;
+                                let style = if is_selected { font_small_green } else { font_small_gray };
+                                let prefix = if is_selected { ">" } else { " " };
+                                let label = format!("{}{}{}", prefix, known_ssid, suffix);
+                                let y = 134 + (idx * 12);
+                                let _ = Text::new(&label, Point::new(right_x, y), style).draw(display);
+                                idx += 1;
+                            }
                         }
                     }
                     1 => {
-                        if sub_changed {
-                            let _ = Text::new("WIFI ACCESS POINT", Point::new(right_x, 42), font_small_green).draw(display);
-                            let _ = Text::new("SSID: ", Point::new(right_x, 56), font_small_white).draw(display);
-                            let _ = Text::new("IP  : ", Point::new(right_x, 68), font_small_white).draw(display);
-                            let _ = Text::new("CIDR: ", Point::new(right_x, 80), font_small_white).draw(display);
-                            let _ = Text::new("Psk : ", Point::new(right_x, 92), font_small_white).draw(display);
-                            let _ = Text::new("Cli : ", Point::new(right_x, 104), font_small_white).draw(display);
+                                let module_size = 3;
+                                let start_x = 320 - (qr_size * module_size) - 6; // 320 - 87 - 6 = 227
+                                let start_y = 102;
+                                
+                                // Draw white quiet zone (background)
+                                let _ = Rectangle::new(Point::new(start_x - 2, start_y - 2), Size::new((qr_size * module_size + 4) as u32, (qr_size * module_size + 4) as u32))
+                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+                                    .draw(display);
+                                    
+                                for y in 0..qr_size {
+                                    for x in 0..qr_size {
+                                        if qr.get_module(x, y) {
+                                            let px = start_x + (x * module_size);
+                                            let py = start_y + (y * module_size);
+                                            let _ = Rectangle::new(Point::new(px, py), Size::new(module_size as u32, module_size as u32))
+                                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                                .draw(display);
+                                        }
+                                    }
+                                }
+                            }
                         }
-
-                        let ap_ssid = "AP-Configuration";
-                        let subnet = crate::wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
-                        let ap_ip = format!("192.168.{}.1", subnet);
-                        let ap_cidr = format!("192.168.{}.1/24", subnet);
-                        let ap_psk = "Mesh-IoT@Espressif!";
-                        let num_clients = crate::wifi::get_ap_num_clients();
-
-                        let _ = Text::new(&format!("{:<20}", ap_ssid), Point::new(right_x + 36, 56), font_small_white).draw(display);
-                        let _ = Text::new(&format!("{:<20}", ap_ip), Point::new(right_x + 36, 68), font_small_white).draw(display);
-                        let _ = Text::new(&format!("{:<20}", ap_cidr), Point::new(right_x + 36, 80), font_small_white).draw(display);
-                        let _ = Text::new(&format!("{:<20}", ap_psk), Point::new(right_x + 36, 92), font_small_white).draw(display);
-                        let _ = Text::new(&format!("{:<20}", num_clients), Point::new(right_x + 36, 104), font_small_white).draw(display);
 
                         let ap_until = wifi_manager.lock().unwrap().pairing_until;
                         if let Some(until) = ap_until {
                             let rem = until.checked_duration_since(std::time::Instant::now()).map(|d| d.as_secs()).unwrap_or(0);
-                            let _ = Text::new(&format!("Reste: {:>3}s  ", rem), Point::new(right_x, 120), font_small_green).draw(display);
+                            let _ = Text::new(&format!("Reste: {:>3}s                    ", rem), Point::new(right_x, 190), font_small_green).draw(display);
 
                             let bar_x = right_x + 1;
-                            let bar_y = 134;
+                            let bar_y = 205; // barre tout en bas
                             let bar_w = 210;
                             let bar_h = 8;
                             let fill_w = ((bar_w - 2) as u32 * rem as u32) / 120;
@@ -1056,35 +1171,9 @@ impl BrowseController {
                                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                                     .draw(display);
                             }
-
-                            // QR code 2x2 en bas à droite
-                            let qr_str = "WIFI:T:WPA;S:AP-Configuration;P:Mesh-IoT@Espressif!;;";
-                            if let Ok(qr) = QrCode::encode_text(qr_str, QrCodeEcc::Medium) {
-                                let qr_size = qr.size(); // 29 pour Version 3
-                                let module_size = 2;
-                                let start_x = 320 - (qr_size * module_size) - 6; // 320 - 58 - 6 = 256
-                                let start_y = 218 - (qr_size * module_size) - 6; // 218 - 58 - 6 = 154
-                                
-                                // Draw white quiet zone (background)
-                                let _ = Rectangle::new(Point::new(start_x - 2, start_y - 2), Size::new((qr_size * module_size + 4) as u32, (qr_size * module_size + 4) as u32))
-                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
-                                    .draw(display);
-                                    
-                                for y in 0..qr_size {
-                                    for x in 0..qr_size {
-                                        if qr.get_module(x, y) {
-                                            let px = start_x + (x * module_size);
-                                            let py = start_y + (y * module_size);
-                                            let _ = Rectangle::new(Point::new(px, py), Size::new(module_size as u32, module_size as u32))
-                                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                                                .draw(display);
-                                        }
-                                    }
-                                }
-                            }
                         } else {
-                            let _ = Text::new("Inactif (BTN2 -> 120s)", Point::new(right_x, 120), font_small_gray).draw(display);
-                            let _ = Rectangle::new(Point::new(right_x + 1, 134), Size::new(210, 8))
+                            let _ = Text::new("Activer -> 120s ?", Point::new(right_x, 190), font_small_gray).draw(display);
+                            let _ = Rectangle::new(Point::new(right_x + 1, 205), Size::new(210, 8))
                                 .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                                 .draw(display);
                         }
@@ -1132,7 +1221,7 @@ impl BrowseController {
 
                         if fill_w > 0 {
                             let fill_color = match self.state {
-                                AppState::AjusterSlider { main_index: 2, sub_index: 3, .. } => Rgb565::GREEN,
+                                AppState::AjusterSlider { main_index: 3, sub_index: 3, .. } => Rgb565::GREEN,
                                 _ => Rgb565::new(0, 45, 0),
                             };
                             let _ = Rectangle::new(Point::new(bar_x + 1, bar_y + 1), Size::new(fill_w, (bar_h - 2) as u32))
@@ -1272,8 +1361,11 @@ impl BrowseController {
                 let question = match action_type {
                     ConfirmActionType::MiseEnVeille => "Eteindre le systeme?",
                     ConfirmActionType::MiseAJour    => "Lancer la mise a jour?",
+                    ConfirmActionType::ConnexionWifi => "Se connecter au wifi?",
                 };
-                let _ = Text::new(question, Point::new(100, 115), font_small_white).draw(display);
+                let q_len = question.len() as i32 * 6;
+                let q_x = 70 + (180 - q_len) / 2;
+                let _ = Text::new(question, Point::new(q_x, 115), font_small_white).draw(display);
             }
 
             // Boutons de choix
