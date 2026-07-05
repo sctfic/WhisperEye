@@ -39,6 +39,17 @@ pub const MAGENTA: Color = (255, 0, 255);
 pub const WHITE: Color = (255, 255, 255);
 
 pub fn set_led_color(color: Color, intensity: u8) {
+    if RLA_ACTIVE.load(Ordering::SeqCst) {
+        unsafe {
+            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                48,
+                (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                false,
+                false,
+            );
+        }
+        return;
+    }
     let r = ((color.0 as u32 * intensity as u32) / 255).min(255) as u8;
     let g = ((color.1 as u32 * intensity as u32) / 255).min(255) as u8;
     let b = ((color.2 as u32 * intensity as u32) / 255).min(255) as u8;
@@ -46,8 +57,27 @@ pub fn set_led_color(color: Color, intensity: u8) {
     let mut guard = LED_DRIVER.lock().unwrap();
     if let Some(ref mut driver) = *guard {
         let led_color = LedPixelColorGrb24::new_with_rgb(r, g, b);
+        
+        unsafe {
+            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                48,
+                esp_idf_sys::RMT_SIG_OUT0_IDX as u32,
+                false,
+                false,
+            );
+        }
+
         if let Err(e) = driver.write_blocking(led_color.as_ref().iter().copied()) {
             log::error!("Erreur d'écriture RMT LED: {:?}", e);
+        }
+
+        unsafe {
+            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                48,
+                (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                false,
+                false,
+            );
         }
     } else {
         log::warn!("LED RMT non initialisée ! Appeler init_led() d'abord.");
@@ -56,6 +86,7 @@ pub fn set_led_color(color: Color, intensity: u8) {
 
 // ─── Pattern LED RGB 2-impulsions (STA + AP), intensité 2/255 ───
 
+pub static RLA_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LED_STA_STATUS: AtomicU8 = AtomicU8::new(0);
 // 0 = None (rouge), 1 = WifiAttempting (vert clignotant), 2 = WifiOk (vert),
 // 3 = ProvisioningAttempting (bleu clignotant), 4 = ProvisioningOk (bleu)
@@ -155,30 +186,78 @@ fn ensure_pattern_running() {
                     pulse_duration_ticks + off_ticks + pulse_duration_ticks + off_ticks; // 1200ms
                 let mut phase: u32 = 0;
 
+                let mut was_identify_active = false;
+
                 loop {
+                    if RLA_ACTIVE.load(Ordering::SeqCst) {
+                        unsafe {
+                            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                48,
+                                (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                                false,
+                                false,
+                            );
+                        }
+                        thread::sleep(tick);
+                        continue;
+                    }
+
                     if RESET_FLASHING.load(Ordering::SeqCst) {
                         thread::sleep(tick);
                         continue;
                     }
 
                     // Le mode identify (blanc rapide) prend priorité sur tout
-                    if identify_active() {
-                        // Blanc clignotant rapide : 50ms ON, 50ms OFF
-                        let fast_phase = phase % 10; // 10 ticks = 100ms cycle
-                        let (r, g, b) = if fast_phase < 5 {
-                            (identify_intensity, identify_intensity, identify_intensity)
+                    let identify = identify_active();
+                    if identify {
+                        if !was_identify_active {
+                            was_identify_active = true;
+                        }
+                        // Blanc clignotant rapide à 3Hz : cycle de 330ms (33 ticks)
+                        let fast_phase = phase % 33;
+                        let (r, g, b) = if fast_phase < 16 {
+                            (230, 230, 230) // 90% d'intensité
                         } else {
                             (0, 0, 0)
                         };
                         let mut guard = LED_DRIVER.lock().unwrap();
                         if let Some(ref mut driver) = *guard {
                             let led_color = LedPixelColorGrb24::new_with_rgb(r, g, b);
+                            unsafe {
+                                esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                    48,
+                                    esp_idf_sys::RMT_SIG_OUT0_IDX as u32,
+                                    false,
+                                    false,
+                                );
+                            }
                             let _ = driver.write_blocking(led_color.as_ref().iter().copied());
+                            unsafe {
+                                esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                    48,
+                                    (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                                    false,
+                                    false,
+                                );
+                            }
                         }
                         drop(guard);
                         thread::sleep(tick);
                         phase = (phase + 1) % cycle_ticks;
                         continue;
+                    } else {
+                        if was_identify_active {
+                            was_identify_active = false;
+                            log::info!("LED identify finished, restoring GPIO 48 PWM to LEDC 3");
+                            unsafe {
+                                esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                    48,
+                                    (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                                    false,
+                                    false,
+                                );
+                            }
+                        }
                     }
 
                     let sta = LED_STA_STATUS.load(Ordering::SeqCst);
@@ -255,7 +334,23 @@ fn ensure_pattern_running() {
                     let mut guard = LED_DRIVER.lock().unwrap();
                     if let Some(ref mut driver) = *guard {
                         let led_color = LedPixelColorGrb24::new_with_rgb(r, g, b);
+                        unsafe {
+                            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                48,
+                                esp_idf_sys::RMT_SIG_OUT0_IDX as u32,
+                                false,
+                                false,
+                            );
+                        }
                         let _ = driver.write_blocking(led_color.as_ref().iter().copied());
+                        unsafe {
+                            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                48,
+                                (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                                false,
+                                false,
+                            );
+                        }
                     }
                     drop(guard);
 

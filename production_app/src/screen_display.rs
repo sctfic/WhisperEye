@@ -338,7 +338,7 @@ pub fn run_ihm(
     let _ = Rectangle::new(Point::new(130 - 1, 217), Size::new(61, 11))
         .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
         .draw(&mut display);
-    let _ = Text::new("WhisperEye", Point::new(130, 224), MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::BLACK).background_color(Rgb565::WHITE).build())
+    let _ = Text::new("WhisperEye", Point::new(130, 225), MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::BLACK).background_color(Rgb565::WHITE).build())
         .draw(&mut display);
 
     let ver_str = format!("v{}", crate::FW_VERSION);
@@ -346,6 +346,8 @@ pub fn run_ihm(
     let ver_x = (320 - ver_w) / 2;
     let _ = Text::new(&ver_str, Point::new(ver_x, 238), taskbar_ver_style)
         .draw(&mut display);
+
+    let mut last_periodic_tick = std::time::Instant::now();
 
     loop {
         let current_touch = {
@@ -451,7 +453,6 @@ pub fn run_ihm(
         let should_update_raw = raw_update_ticks >= 10;
         if should_update_raw {
             raw_update_ticks = 0;
-            controller.needs_redraw = true;
             let readings = {
                 let mut b = board.lock().unwrap();
                 let (ina_act, inb_act) = {
@@ -461,6 +462,12 @@ pub fn run_ihm(
                 b.read_value(ina_act, inb_act)
             };
             vsense_volts_val = readings.vsense_volts.unwrap_or(0.0);
+        }
+
+        let mut periodic_update = false;
+        if last_periodic_tick.elapsed() >= std::time::Duration::from_secs(1) {
+            last_periodic_tick = std::time::Instant::now();
+            periodic_update = true;
         }
 
         let (current_rla, current_rlb, current_ina, current_inb) = {
@@ -590,7 +597,7 @@ pub fn run_ihm(
         let _ = Text::new(&format!("{:<16}", ip_disp), Point::new(220, 237), status_style_white).draw(&mut display);
 
         // ── 3. ZONE CENTRALE (Y=17..218) RENTRÉE PAR SCREEN_BROWSE ──
-        let _ = controller.draw(&mut display, &nvs_storage, &board, &actuators, &actuators_state, &wifi_manager);
+        let _ = controller.draw(&mut display, &nvs_storage, &board, &actuators, &actuators_state, &wifi_manager, periodic_update);
 
         std::thread::sleep(std::time::Duration::from_millis(20));
     }

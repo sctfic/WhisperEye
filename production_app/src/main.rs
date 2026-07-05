@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.15-0028";
+pub const FW_VERSION: &str = "1.2.16";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -164,6 +164,13 @@ fn main() -> Result<()> {
     println!("DEBUG: Actuators initialized");
 
     let actuators_state = Arc::new(Mutex::new(ActuatorsState::default()));
+
+    // 2b. Initialiser la LED RMT (GPIO48 est partagé avec RLA)
+    let rmt_channel = unsafe { esp_idf_hal::rmt::CHANNEL0::steal() };
+    let led_pin = unsafe { esp_idf_hal::gpio::Gpio48::steal() };
+    if let Err(e) = common::led::init_led(rmt_channel, led_pin) {
+        println!("WARNING: Failed to init LED: {:?}", e);
+    }
 
     // Restauration des états/valeurs PWM sauvegardés dans devicesKnow
     {
@@ -438,6 +445,20 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

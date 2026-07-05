@@ -201,7 +201,10 @@ impl Actuators {
 
     pub fn write(&mut self, id: &str, state: bool) -> Result<(), esp_idf_hal::sys::EspError> {
         match id {
-            "rla" => self.relay_a.set_level(state.into()),
+            "rla" => {
+                common::led::RLA_ACTIVE.store(state, std::sync::atomic::Ordering::SeqCst);
+                self.relay_a.set_level(state.into())
+            }
             "rlb" => self.relay_b.set_level(state.into()),
             "swpwr" => self.sw_pwr.set_level(state.into()),
             "ina" => self.ina.set_level(state.into()),

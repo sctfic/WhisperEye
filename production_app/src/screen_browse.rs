@@ -414,6 +414,8 @@ impl BrowseController {
                                     value: current_brightness,
                                     step_idx: 3, // step 5%
                                 };
+                            } else if new_sub == 5 {
+                                self.state = AppState::ConfirmerAction { action_type: ConfirmActionType::ResetConfiguration, choice: false };
                             } else {
                                 self.state = AppState::AfficherProprietes {
                                     main_index,
@@ -714,6 +716,16 @@ impl BrowseController {
                             }
                             self.state = AppState::AfficherProprietes { main_index: 3, sub_index: 0 };
                         }
+                        ConfirmActionType::ResetConfiguration => {
+                            if choice {
+                                log::info!("Demande de reset usine...");
+                                if let Ok(mut storage) = nvs.lock() {
+                                    let _ = storage.factory_reset();
+                                }
+                                unsafe { esp_idf_sys::esp_restart(); }
+                            }
+                            self.state = AppState::NaviguerSousMenu { main_index: 3, sub_index: 5 };
+                        }
                     }
                 }
 
@@ -727,6 +739,9 @@ impl BrowseController {
                         }
                         ConfirmActionType::ConnexionWifi => {
                             self.state = AppState::AfficherProprietes { main_index: 3, sub_index: 0 };
+                        }
+                        ConfirmActionType::ResetConfiguration => {
+                            self.state = AppState::NaviguerSousMenu { main_index: 3, sub_index: 5 };
                         }
                     }
                 }
@@ -767,6 +782,7 @@ impl BrowseController {
                 ConfirmActionType::MiseEnVeille => (1, 4),
                 ConfirmActionType::MiseAJour => (3, 4),
                 ConfirmActionType::ConnexionWifi => (3, 0),
+                ConfirmActionType::ResetConfiguration => (3, 5),
             },
         };
 
@@ -786,6 +802,7 @@ impl BrowseController {
         if !in_modal && !periodic_update && !val_changed {
             if current_main == 2 {
                 if main_changed {
+                    // Efface toute la zone centrale (sous-menu + détail) lors du passage au mode Schéma
                     let _ = Rectangle::new(Point::new(0, 33), Size::new(320, 186))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
@@ -795,6 +812,7 @@ impl BrowseController {
             } else {
                 // Zone 2: Sous-menus de gauche (X=0..100, Y=33..218) -> Effacée seulement au changement de main menu ou à la sortie de la modale
                 if main_changed {
+                    // Efface le volet sous-menu de gauche lors d'un changement de menu principal
                     let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
@@ -803,6 +821,7 @@ impl BrowseController {
 
                 // Zone 3: Zone de détail à droite (X=102..320, Y=33..218) -> Effacée au changement de menu ou d'état/mode
                 if sub_changed {
+                    // Efface le panneau de détail de droite lors d'un changement de sous-menu
                     let _ = Rectangle::new(Point::new(102, 33), Size::new(218, 186))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
@@ -813,7 +832,7 @@ impl BrowseController {
 
         // Zone 4: Dessin du cadre actif (skip pendant la modale, skip en mode Schéma, skip si periodic_update ou val_changed)
         if !in_modal && current_main != 2 && !periodic_update && !val_changed {
-            // Effacer les anciens cadres en dessinant en noir
+            // Effacer les anciens cadres de focus en les redessinant en noir
             let clear_style = PrimitiveStyle::with_stroke(Rgb565::BLACK, 1);
             let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186)).into_styled(clear_style).draw(display);
             let _ = Rectangle::new(Point::new(101, 33), Size::new(219, 186)).into_styled(clear_style).draw(display);
@@ -844,6 +863,7 @@ impl BrowseController {
                 ConfirmActionType::MiseEnVeille => (1, 4),
                 ConfirmActionType::MiseAJour => (3, 4),
                 ConfirmActionType::ConnexionWifi => (3, 0),
+                ConfirmActionType::ResetConfiguration => (3, 5),
             },
         };
 
@@ -888,6 +908,7 @@ impl BrowseController {
                 "TOTP".to_string(),
                 "Ecran".to_string(),
                 "Update".to_string(),
+                "Reset".to_string(),
             ],
             _ => vec![],
         };
@@ -1023,6 +1044,7 @@ impl BrowseController {
 
                         let remaining_w = (bar_w - 2) as u32 - fill_w;
                         if remaining_w > 0 {
+                            // Efface la partie droite non remplie du curseur/jauge (slider)
                             let _ = Rectangle::new(Point::new(bar_x + 1 + fill_w as i32, bar_y + 1), Size::new(remaining_w, (bar_h - 2) as u32))
                                 .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                                 .draw(display);
@@ -1063,11 +1085,11 @@ impl BrowseController {
                             if !val_changed {
                                 if sub_changed {
                                     let _ = Text::new("WIFI CLIENT", Point::new(right_x, 42), font_small_green).draw(display);
-                                    let _ = Text::new("SSID    : ", Point::new(right_x, 54), font_small_white).draw(display);
-                                    let _ = Text::new("IP      : ", Point::new(right_x, 66), font_small_white).draw(display);
-                                    let _ = Text::new("GateWay : ", Point::new(right_x, 78), font_small_white).draw(display);
-                                    let _ = Text::new("Rssi    : ", Point::new(right_x, 90), font_small_white).draw(display);
-                                    let _ = Text::new("Psk     : ", Point::new(right_x, 102), font_small_white).draw(display);
+                                    let _ = Text::new("SSID    :", Point::new(right_x, 54), font_small_white).draw(display);
+                                    let _ = Text::new("IP      :", Point::new(right_x, 66), font_small_white).draw(display);
+                                    let _ = Text::new("GateWay :", Point::new(right_x, 78), font_small_white).draw(display);
+                                    let _ = Text::new("Rssi    :", Point::new(right_x, 90), font_small_white).draw(display);
+                                    let _ = Text::new("Psk     :", Point::new(right_x, 102), font_small_white).draw(display);
                                     let _ = Text::new("Reseaux connus:", Point::new(right_x, 120), font_small_green).draw(display);
                                 }
 
@@ -1084,17 +1106,17 @@ impl BrowseController {
                                 let current_psk = known_wifis.get(&ssid).map(|entry| entry.psk.clone()).unwrap_or_else(|| "--".to_string());
 
                                 let ssid_str = if ssid.is_empty() { "--" } else { &ssid };
-                                let _ = Text::new(&format!("{}                    ", ssid_str), Point::new(right_x + 42, 54), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", ssid_str), Point::new(right_x + 55, 54), font_small_white).draw(display);
 
                                 let ip_str = if ip.is_empty() { "--" } else { &ip };
-                                let _ = Text::new(&format!("{}                    ", ip_str), Point::new(right_x + 42, 66), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", ip_str), Point::new(right_x + 55, 66), font_small_white).draw(display);
 
-                                let _ = Text::new(&format!("{}                    ", gateway), Point::new(right_x + 42, 78), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", gateway), Point::new(right_x + 55, 78), font_small_white).draw(display);
 
                                 let rssi_str = rssi_val.map(|r| format!("{} dBm", r)).unwrap_or_else(|| "--".to_string());
-                                let _ = Text::new(&format!("{}                    ", rssi_str), Point::new(right_x + 42, 90), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", rssi_str), Point::new(right_x + 55, 90), font_small_white).draw(display);
 
-                                let _ = Text::new(&format!("{}                    ", current_psk), Point::new(right_x + 42, 102), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", current_psk), Point::new(right_x + 55, 102), font_small_white).draw(display);
                             }
 
                             // Réseaux connus en dessous (toujours redessinés si val_changed ou sub_changed)
@@ -1121,23 +1143,47 @@ impl BrowseController {
                         }
                     }
                     1 => {
-                                let module_size = 3;
-                                let start_x = 320 - (qr_size * module_size) - 6; // 320 - 87 - 6 = 227
-                                let start_y = 102;
-                                
-                                // Draw white quiet zone (background)
-                                let _ = Rectangle::new(Point::new(start_x - 2, start_y - 2), Size::new((qr_size * module_size + 4) as u32, (qr_size * module_size + 4) as u32))
-                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
-                                    .draw(display);
+                        if !periodic_update && !val_changed {
+                            if sub_changed {
+                                let _ = Text::new("WIFI ACCESS POINT", Point::new(right_x, 42), font_small_green).draw(display);
+                                let _ = Text::new("SSID    :", Point::new(right_x, 56), font_small_white).draw(display);
+                                let _ = Text::new("IP      :", Point::new(right_x, 68), font_small_white).draw(display);
+                                let _ = Text::new("Psk     :", Point::new(right_x, 80), font_small_white).draw(display);
+                                let _ = Text::new("clients :", Point::new(right_x, 92), font_small_white).draw(display);
+
+                                let ap_ssid = "AP-Configuration";
+                                let subnet = crate::wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
+                                let ap_cidr = format!("192.168.{}.1/24", subnet);
+                                let ap_psk = "Mesh-IoT@Espressif!";
+                                let num_clients = crate::wifi::get_ap_num_clients();
+
+                                let _ = Text::new(&format!("{}                    ", ap_ssid), Point::new(right_x + 57, 56), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", ap_cidr), Point::new(right_x + 57, 68), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", ap_psk), Point::new(right_x + 57, 80), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{}                    ", num_clients), Point::new(right_x + 57, 92), font_small_white).draw(display);
+
+                                // QR code 3x3 en bas, juste au-dessus de la barre de progression
+                                let qr_str = "WIFI:T:WPA;S:AP-Configuration;P:Mesh-IoT@Espressif!;;";
+                                if let Ok(qr) = QrCode::encode_text(qr_str, QrCodeEcc::Medium) {
+                                    let qr_size = qr.size(); // 29 pour Version 3
+                                    let module_size = 3;
+                                    let start_x = 320 - (qr_size * module_size) - 6; // 320 - 87 - 6 = 227
+                                    let start_y = 102;
                                     
-                                for y in 0..qr_size {
-                                    for x in 0..qr_size {
-                                        if qr.get_module(x, y) {
-                                            let px = start_x + (x * module_size);
-                                            let py = start_y + (y * module_size);
-                                            let _ = Rectangle::new(Point::new(px, py), Size::new(module_size as u32, module_size as u32))
-                                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                                                .draw(display);
+                                    // Draw white quiet zone (background)
+                                    let _ = Rectangle::new(Point::new(start_x - 2, start_y - 2), Size::new((qr_size * module_size + 4) as u32, (qr_size * module_size + 4) as u32))
+                                        .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+                                        .draw(display);
+                                        
+                                    for y in 0..qr_size {
+                                        for x in 0..qr_size {
+                                            if qr.get_module(x, y) {
+                                                let px = start_x + (x * module_size);
+                                                let py = start_y + (y * module_size);
+                                                let _ = Rectangle::new(Point::new(px, py), Size::new(module_size as u32, module_size as u32))
+                                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                                    .draw(display);
+                                            }
                                         }
                                     }
                                 }
@@ -1147,7 +1193,7 @@ impl BrowseController {
                         let ap_until = wifi_manager.lock().unwrap().pairing_until;
                         if let Some(until) = ap_until {
                             let rem = until.checked_duration_since(std::time::Instant::now()).map(|d| d.as_secs()).unwrap_or(0);
-                            let _ = Text::new(&format!("Reste: {:>3}s                    ", rem), Point::new(right_x, 190), font_small_green).draw(display);
+                            let _ = Text::new(&format!("Reste: {:>3}s      ", rem), Point::new(right_x, 198), font_small_green).draw(display);
 
                             let bar_x = right_x + 1;
                             let bar_y = 205; // barre tout en bas
@@ -1167,12 +1213,14 @@ impl BrowseController {
 
                             let remaining_w = (bar_w - 2) as u32 - fill_w;
                             if remaining_w > 0 {
+                                // Efface la partie droite non remplie de la jauge Wifi AP
                                 let _ = Rectangle::new(Point::new(bar_x + 1 + fill_w as i32, bar_y + 1), Size::new(remaining_w, (bar_h - 2) as u32))
                                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                                     .draw(display);
                             }
                         } else {
-                            let _ = Text::new("Activer -> 120s ?", Point::new(right_x, 190), font_small_gray).draw(display);
+                            let _ = Text::new("Activer -> 120s ?", Point::new(right_x, 198), font_small_gray).draw(display);
+                            // Efface complètement la jauge de progression Wifi AP lorsqu'il n'y a pas de pairage actif
                             let _ = Rectangle::new(Point::new(right_x + 1, 205), Size::new(210, 8))
                                 .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                                 .draw(display);
@@ -1231,6 +1279,7 @@ impl BrowseController {
 
                         let remaining_w = (bar_w - 2) as u32 - fill_w;
                         if remaining_w > 0 {
+                            // Efface la partie droite non remplie du curseur/jauge de luminosité (slider)
                             let _ = Rectangle::new(Point::new(bar_x + 1 + fill_w as i32, bar_y + 1), Size::new(remaining_w, (bar_h - 2) as u32))
                                 .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                                 .draw(display);
@@ -1339,6 +1388,24 @@ impl BrowseController {
                             let _ = Text::new("[BTN2] Selectionner ver.", Point::new(right_x, 155), font_small_gray).draw(display);
                         }
                     }
+                    5 => {
+                        if !periodic_update && !val_changed {
+                            if sub_changed {
+                                let _ = Text::new("REINITIALISATION USINE", Point::new(right_x, 42), font_small_green).draw(display);
+                                let _ = Text::new("Efface toute la config NVS", Point::new(right_x, 56), font_small_white).draw(display);
+                                let _ = Text::new("et redemarre l'appareil.", Point::new(right_x, 68), font_small_white).draw(display);
+                                let _ = Text::new("Cette action est irreversible !", Point::new(right_x, 90), font_small_red).draw(display);
+                            }
+                        }
+
+                        if !periodic_update {
+                            if current_focus == 2 {
+                                let _ = Text::new("[BTN2] Demarrer Reset", Point::new(right_x, 155), font_small_red).draw(display);
+                            } else {
+                                let _ = Text::new("[BTN2] Selectionner Reset", Point::new(right_x, 155), font_small_gray).draw(display);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1362,6 +1429,7 @@ impl BrowseController {
                     ConfirmActionType::MiseEnVeille => "Eteindre le systeme?",
                     ConfirmActionType::MiseAJour    => "Lancer la mise a jour?",
                     ConfirmActionType::ConnexionWifi => "Se connecter au wifi?",
+                    ConfirmActionType::ResetConfiguration => "Effacer et redemarrer?",
                 };
                 let q_len = question.len() as i32 * 6;
                 let q_x = 70 + (180 - q_len) / 2;
