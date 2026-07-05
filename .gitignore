@@ -5,3 +5,5 @@ a faire.txt
 boards/board_default/firmware-s3.json
 .embuild/
 components_esp32s3.lock
+a faire.md
+walkthrough.md

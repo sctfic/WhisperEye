@@ -121,6 +121,10 @@ impl Board {
             isense_raw: isense_raw as u32,
         }
     }
+
+    pub fn is_touch_pressed(&self) -> bool {
+        self.touch.is_pressed().unwrap_or(false)
+    }
 }
 
 unsafe impl Send for Board {}

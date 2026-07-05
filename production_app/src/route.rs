@@ -10,6 +10,28 @@ use crate::MeshState;
 use crate::UrlValidationState;
 use crate::web_handlers;
 
+trait EspHttpServerApiExt {
+    fn api_handler<F>(&mut self, uri: &str, method: esp_idf_svc::http::Method, handler: F) -> Result<(), anyhow::Error>
+    where
+        F: Fn(esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> Result<(), anyhow::Error> + Send + Sync + 'static;
+}
+
+impl EspHttpServerApiExt for EspHttpServer<'_> {
+    fn api_handler<F>(&mut self, uri: &str, method: esp_idf_svc::http::Method, handler: F) -> Result<(), anyhow::Error>
+    where
+        F: Fn(esp_idf_svc::http::server::Request<&mut esp_idf_svc::http::server::EspHttpConnection<'_>>) -> Result<(), anyhow::Error> + Send + Sync + 'static,
+    {
+        self.fn_handler(uri, method, move |req| {
+            crate::wifi::API_DOWNLOAD_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+            let res = handler(req);
+            crate::wifi::API_DOWNLOAD_ACTIVE.store(false, std::sync::atomic::Ordering::Relaxed);
+            crate::wifi::API_UPLOAD_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+            res
+        })?;
+        Ok(())
+    }
+}
+
 pub fn register_routes(
     server: &mut EspHttpServer,
     nvs_storage: Arc<Mutex<NvsStorage>>,
@@ -61,7 +83,7 @@ pub fn register_routes(
     // GET /api/network/knowledge
     let nvs_sync = Arc::clone(&nvs_storage);
     let mesh_state_sync = Arc::clone(&mesh_state);
-    server.fn_handler("/api/network/knowledge", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/network/knowledge", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         web_handlers::handle_network_knowledge(req, Arc::clone(&nvs_sync), Arc::clone(&mesh_state_sync))
     })?;
 
@@ -70,7 +92,7 @@ pub fn register_routes(
     let status_wifi = Arc::clone(&wifi_manager);
     let status_mesh = Arc::clone(&mesh_state);
     let status_url = Arc::clone(&url_validation_state);
-    server.fn_handler("/api/status", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/status", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         web_handlers::handle_api_status(req, Arc::clone(&status_nvs), Arc::clone(&status_wifi), Arc::clone(&status_mesh), Arc::clone(&status_url))
     })?;
 
@@ -82,7 +104,7 @@ pub fn register_routes(
     let cap_sched = Arc::clone(&scheduled_actions);
     let cap_board = Arc::clone(&board);
     let cap_i2c = Arc::clone(&i2c);
-    server.fn_handler("/api/capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/capacity", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         web_handlers::handle_api_capacity(
             req,
             Arc::clone(&cap_nvs),
@@ -98,14 +120,14 @@ pub fn register_routes(
     // GET /api/check_updates
     let updates_nvs = Arc::clone(&nvs_storage);
     let updates_url = Arc::clone(&url_validation_state);
-    server.fn_handler("/api/check_updates", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/check_updates", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         web_handlers::handle_check_updates(req, Arc::clone(&updates_nvs), Arc::clone(&updates_url))
     })?;
 
     // GET /api/history
     let cron_history = cron_handle.clone();
     let history_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/history", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/history", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let mut state = history_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -125,7 +147,7 @@ pub fn register_routes(
     let ssids_wifi = Arc::clone(&wifi_manager);
     let ssids_nvs = Arc::clone(&nvs_storage);
     let ssids_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/ssids", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/ssids", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let mut state = ssids_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -138,7 +160,7 @@ pub fn register_routes(
     let sensors_nvs = Arc::clone(&nvs_storage);
     let sensors_i2c = Arc::clone(&i2c);
     let sensors_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/sensors", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/sensors", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let mut state = sensors_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -155,7 +177,7 @@ pub fn register_routes(
     let periphs_board = Arc::clone(&board);
     let periphs_i2c = Arc::clone(&i2c);
     let periphs_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/peripherals", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/peripherals", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         let mut state = periphs_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -175,7 +197,7 @@ pub fn register_routes(
     // POST /api/peripherals
     let rename_nvs = Arc::clone(&nvs_storage);
     let rename_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/peripherals", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/peripherals", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = rename_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -187,7 +209,7 @@ pub fn register_routes(
     // POST /api/sensor-correction
     let corr_nvs = Arc::clone(&nvs_storage);
     let corr_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/sensor-correction", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/sensor-correction", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = corr_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -200,7 +222,7 @@ pub fn register_routes(
     let act_state_post = Arc::clone(&actuators_state);
     let act_post = Arc::clone(&actuators);
     let act_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/actuators", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/actuators", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = act_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -215,7 +237,7 @@ pub fn register_routes(
     let ctrl_act = Arc::clone(&actuators);
     let ctrl_sched = Arc::clone(&scheduled_actions);
     let ctrl_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/actuators/control", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/actuators/control", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = ctrl_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -232,7 +254,7 @@ pub fn register_routes(
 
     // POST /api/identify
     let id_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/identify", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/identify", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = id_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -254,7 +276,7 @@ pub fn register_routes(
 
     // POST /api/identify/stop
     let id_stop_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/identify/stop", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/identify/stop", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = id_stop_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -270,7 +292,7 @@ pub fn register_routes(
 
     // POST /api/restart
     let restart_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/restart", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/restart", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = restart_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -292,7 +314,7 @@ pub fn register_routes(
     // POST /api/clear-totp
     let clear_totp_nvs = Arc::clone(&nvs_storage);
     let clear_totp_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/clear-totp", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/clear-totp", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = clear_totp_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -304,7 +326,7 @@ pub fn register_routes(
     // POST /api/reset
     let reset_nvs = Arc::clone(&nvs_storage);
     let reset_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/reset", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/reset", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = reset_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
@@ -316,7 +338,7 @@ pub fn register_routes(
     // POST /api/network/ApPairing
     let pair_wifi = Arc::clone(&wifi_manager);
     let pair_mesh = Arc::clone(&mesh_state);
-    server.fn_handler("/api/network/ApPairing", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/network/ApPairing", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         {
             let mut net = pair_wifi.lock().unwrap();
             net.state = NetState::ApPairing;
@@ -335,7 +357,7 @@ pub fn register_routes(
     let config_wifi = Arc::clone(&wifi_manager);
     let config_mesh = Arc::clone(&mesh_state);
     let config_url = Arc::clone(&url_validation_state);
-    server.fn_handler("/api/config", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
+    server.api_handler("/api/config", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         let mut state = config_mesh.lock().unwrap();
         if state.pairing_until.is_some() {
             state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));

@@ -7,7 +7,6 @@ use serde::{Serialize, Deserialize};
 /// Static devices — toujours présents, noms en dur dans le code.
 /// Ne sont JAMAIS stockés dans devicesKnow NVS.
 const STATIC_DEVICES: &[(&str, &str)] = &[
-    ("touch", "Touche Tactile (TOUCH)"),
     ("vsense", "Mesure Tension (VSENSE)"),
     ("rla", "Relais A (RLA)"),
     ("rlb", "Relais B (RLB)"),
@@ -28,6 +27,10 @@ pub struct DeviceEntry {
     pub present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correction_formula: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pwm_val: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +39,10 @@ struct PersistEntry {
     present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     correction_formula: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pwm_val: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,12 +169,12 @@ pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, for
     let mut persist_map: HashMap<String, PersistEntry> = if let Ok(Some(j)) = storage.get_str("devicesKnow") {
         serde_json::from_str(&j).unwrap_or_default()
     } else { HashMap::new() };
-    let (name, present) = if let Some(existing) = persist_map.get(device_id) {
-        (existing.name.clone(), existing.present)
+    let (name, present, step, pwm_val) = if let Some(existing) = persist_map.get(device_id) {
+        (existing.name.clone(), existing.present, existing.step, existing.pwm_val)
     } else {
-        (device_id.to_string(), true)
+        (device_id.to_string(), true, None, None)
     };
-    persist_map.insert(device_id.to_string(), PersistEntry { name, present, correction_formula: Some(formula.to_string()) });
+    persist_map.insert(device_id.to_string(), PersistEntry { name, present, correction_formula: Some(formula.to_string()), step, pwm_val });
     let new_str = serde_json::to_string(&persist_map)?;
     storage.set_str("devicesKnow", &new_str)?;
     Ok(())
@@ -180,10 +187,12 @@ pub struct DeviceRegistry {
 
 impl DeviceRegistry {
     pub fn new(nvs: Arc<Mutex<NvsStorage>>) -> Self {
-        Self {
+        let mut reg = Self {
             nvs,
             devices: HashMap::new(),
-        }
+        };
+        reg.devices = reg.load_registry();
+        reg
     }
 
     /// Load device metadata registry from NVS (dynamic only) + static devices from code
@@ -191,28 +200,57 @@ impl DeviceRegistry {
         let mut map: HashMap<String, DeviceEntry> = HashMap::new();
         // 1. Static devices — toujours présents, en dur
         for &(id, name) in STATIC_DEVICES {
-            map.insert(id.to_string(), DeviceEntry { name: name.to_string(), is_static: true, present: true, correction_formula: None });
+            map.insert(id.to_string(), DeviceEntry {
+                name: name.to_string(),
+                is_static: true,
+                present: true,
+                correction_formula: None,
+                step: None,
+                pwm_val: None,
+            });
         }
-        // 2. Dynamic devices from NVS
+        // 2. Dynamic and customized static devices from NVS
         let storage = self.nvs.lock().unwrap();
         if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
             if let Ok(saved) = serde_json::from_str::<HashMap<String, PersistEntry>>(&json_str) {
                 for (id, pe) in saved {
-                    if is_static_device(&id) { continue; }
-                    map.entry(id.clone()).or_insert(DeviceEntry { name: pe.name, is_static: false, present: pe.present, correction_formula: pe.correction_formula });
+                    if is_static_device(&id) {
+                        if let Some(entry) = map.get_mut(&id) {
+                            entry.name = pe.name;
+                            entry.correction_formula = pe.correction_formula;
+                            entry.step = pe.step;
+                            entry.pwm_val = pe.pwm_val;
+                        }
+                    } else {
+                        map.insert(id.clone(), DeviceEntry {
+                            name: pe.name,
+                            is_static: false,
+                            present: pe.present,
+                            correction_formula: pe.correction_formula,
+                            step: pe.step,
+                            pwm_val: pe.pwm_val,
+                        });
+                    }
                 }
             }
         }
         map
     }
 
-    fn save_registry(&self, map: &HashMap<String, DeviceEntry>) {
+    pub fn save_registry(&self, map: &HashMap<String, DeviceEntry>) {
         println!("DEBUG: Entering save_registry...");
         let mut persist_map: HashMap<String, PersistEntry> = HashMap::new();
         for (k, v) in map.iter() {
-            if is_static_device(k) { continue; }
+            let is_supported_static = matches!(k.as_str(), "ina" | "inb" | "rla" | "rlb");
+            if is_static_device(k) && !is_supported_static { continue; }
             if !v.present { continue; }
-            persist_map.insert(k.clone(), PersistEntry { name: v.name.clone(), present: v.present, correction_formula: v.correction_formula.clone() });
+            persist_map.insert(k.clone(), PersistEntry {
+                name: v.name.clone(),
+                present: v.present,
+                correction_formula: v.correction_formula.clone(),
+                step: v.step,
+                pwm_val: v.pwm_val,
+            });
         }
         println!("DEBUG: save_registry: locking NVS...");
         let mut storage = self.nvs.lock().unwrap();
@@ -239,6 +277,8 @@ impl DeviceRegistry {
                 is_static: true,
                 present: true,
                 correction_formula: None,
+                step: None,
+                pwm_val: None,
             });
         }
 
@@ -250,6 +290,8 @@ impl DeviceRegistry {
                 is_static: false,
                 present: screen_present,
                 correction_formula: None,
+                step: None,
+                pwm_val: None,
             });
             entry.present = screen_present;
             updated.insert("screen".to_string(), entry);
@@ -262,6 +304,8 @@ impl DeviceRegistry {
                 is_static: false,
                 present: radio_present,
                 correction_formula: None,
+                step: None,
+                pwm_val: None,
             });
             entry.present = radio_present;
             updated.insert("radio".to_string(), entry);
@@ -275,6 +319,8 @@ impl DeviceRegistry {
                 is_static: false,
                 present: true,
                 correction_formula: None,
+                step: None,
+                pwm_val: None,
             });
             entry.present = true;
             updated.insert(id, entry);
@@ -291,6 +337,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
                 entry_t.present = true;
                 updated.insert(id_t, entry_t);
@@ -301,6 +349,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
                 entry_h.present = true;
                 updated.insert(id_h, entry_h);
@@ -311,6 +361,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
                 entry.present = true;
                 updated.insert(id, entry);
@@ -322,6 +374,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
                 entry_t.present = true;
                 updated.insert(id_t, entry_t);
@@ -332,6 +386,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
                 entry_h.present = true;
                 updated.insert(id_h, entry_h);
@@ -342,6 +398,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
                 entry_p.present = true;
                 updated.insert(id_p, entry_p);
@@ -352,6 +410,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
                 entry.present = true;
                 updated.insert(id, entry);
@@ -617,6 +677,8 @@ impl DeviceRegistry {
                     is_static: false,
                     present: true,
                     correction_formula: None,
+                    step: None,
+                    pwm_val: None,
                 });
             }
             self.save_registry(&map);

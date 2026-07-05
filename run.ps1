@@ -62,31 +62,47 @@ function Increment-ProductionVersion {
         [bool]$StableBuild = $false,
         [bool]$NoVersionBuild = $false
     )
-    # Versioning rules:
-    #   - Stable  = even patch, no build suffix  (e.g. 1.0.2)
-    #   - Unstable = odd patch, with build suffix (e.g. 1.0.3-0001)
-    # After a stable release X.Y.Z (even Z), next build is X.Y.(Z+1)-0001
-    # After an unstable build X.Y.Z-BBBB (odd Z), next build is X.Y.Z-(BBBB+1)
-    $BinFiles = Get-ChildItem "boards\board_default\firmware-s3-*.bin" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+
+    $MainRsPath = "production_app\src\main.rs"
+    $MainRsVersion = ""
+    if (Test-Path $MainRsPath) {
+        $MainRsContent = Get-Content $MainRsPath -Raw
+        if ($MainRsContent -match 'pub const FW_VERSION:\s*&str\s*=\s*"([^"]*)";' -or $MainRsContent -match 'const FW_VERSION:\s*&str\s*=\s*"([^"]*)";') {
+            $MainRsVersion = $Matches[1]
+        }
+    }
+
+    # If main.rs has a version and -NoVersion is set (or by default if user edited main.rs), main.rs is the single source of truth
+    if ($NoVersionBuild -and $MainRsVersion) {
+        Write-Host "[+] Using WhisperEye build version from main.rs: $MainRsVersion" -ForegroundColor Green
+        return $MainRsVersion
+    }
 
     $LatestMajor = 1; $LatestMinor = 0; $LatestPatch = 0; $LatestBuild = -1
     $LatestIsStable = $false
 
+    if ($MainRsVersion) {
+        if ($MainRsVersion -match "(\d+)\.(\d+)\.(\d+)-(\d+)") {
+            $LatestMajor = [int]$Matches[1]; $LatestMinor = [int]$Matches[2]; $LatestPatch = [int]$Matches[3]; $LatestBuild = [int]$Matches[4]
+            $LatestIsStable = $false
+        } elseif ($MainRsVersion -match "(\d+)\.(\d+)\.(\d+)") {
+            $LatestMajor = [int]$Matches[1]; $LatestMinor = [int]$Matches[2]; $LatestPatch = [int]$Matches[3]; $LatestBuild = 0
+            $LatestIsStable = $true
+        }
+    }
+
+    $BinFiles = Get-ChildItem "boards\board_default\firmware-s3-*.bin" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
     if ($BinFiles) {
         foreach ($f in $BinFiles) {
             $maj = 0; $min = 0; $pat = 0; $bld = -1; $isStable = $false
-
             if ($f -match "firmware-s3-(\d+)\.(\d+)\.(\d+)-(\d+)\.bin") {
-                # Unstable: e.g. firmware-s3-1.0.3-0005.bin
                 $maj = [int]$Matches[1]; $min = [int]$Matches[2]; $pat = [int]$Matches[3]; $bld = [int]$Matches[4]
             } elseif ($f -match "firmware-s3-(\d+)\.(\d+)\.(\d+)\.bin") {
-                # Stable: e.g. firmware-s3-1.0.2.bin
                 $maj = [int]$Matches[1]; $min = [int]$Matches[2]; $pat = [int]$Matches[3]; $bld = 0; $isStable = $true
             } else {
                 continue
             }
 
-            # Compare: major > minor > patch > build (stable build=0 is always < unstable build=1+)
             $isNewer = ($maj -gt $LatestMajor) -or
                        ($maj -eq $LatestMajor -and $min -gt $LatestMinor) -or
                        ($maj -eq $LatestMajor -and $min -eq $LatestMinor -and $pat -gt $LatestPatch) -or
@@ -101,51 +117,38 @@ function Increment-ProductionVersion {
 
     if ($StableBuild) {
         if (-not $LatestIsStable) {
-            # Promote current unstable series (e.g. 1.0.5-0005) to stable (even patch, e.g. 1.0.6)
             $NewPatch = $LatestPatch + 1
             $NewVersion = "{0}.{1}.{2}" -f $LatestMajor, $LatestMinor, $NewPatch
         } else {
-            # Already stable, increment to next stable (e.g. 1.0.4 -> 1.0.6)
             $NewPatch = $LatestPatch + 2
             $NewVersion = "{0}.{1}.{2}" -f $LatestMajor, $LatestMinor, $NewPatch
         }
     } elseif ($NoVersionBuild) {
-        # Do not increment version, reuse latest detected version
-        if ($LatestIsStable) {
-            $NewVersion = "{0}.{1}.{2}" -f $LatestMajor, $LatestMinor, $LatestPatch
+        if ($MainRsVersion) {
+            $NewVersion = $MainRsVersion
         } else {
-            if ($LatestBuild -eq -1) {
-                $NewVersion = "1.0.1-0001"
-            } else {
-                $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $LatestPatch, $LatestBuild
-            }
+            $NewVersion = "1.0.0"
         }
     } else {
         if ($LatestIsStable) {
-            # Latest is stable (even patch) -> next is odd patch, build 0001
             $NewPatch = $LatestPatch + 1
             $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $NewPatch, 1
         } else {
-            # Latest is unstable (odd patch) -> increment build number
             $NewBuild = $LatestBuild + 1
             $NewVersion = "{0}.{1}.{2}-{3:D4}" -f $LatestMajor, $LatestMinor, $LatestPatch, $NewBuild
         }
     }
 
-    Write-Host "[+] New WhisperEye build version: $NewVersion" -ForegroundColor Green
+    Write-Host "[+] WhisperEye build version: $NewVersion" -ForegroundColor Green
 
-    # Update FW_VERSION constant in production_app/src/main.rs
-    $MainRsPath = "production_app\src\main.rs"
-    if (Test-Path $MainRsPath) {
+    if ($MainRsVersion -ne $NewVersion -and (Test-Path $MainRsPath)) {
         $MainRsContent = Get-Content $MainRsPath -Raw
-        $Pattern = 'const FW_VERSION:\s*&str\s*=\s*"[^"]*";'
-        $Replacement = 'const FW_VERSION: &str = "' + $NewVersion + '";'
+        $Pattern = 'pub const FW_VERSION:\s*&str\s*=\s*"[^"]*";'
+        $Replacement = 'pub const FW_VERSION: &str = "' + $NewVersion + '";'
         if ($MainRsContent -match $Pattern) {
             $MainRsContent = $MainRsContent -replace $Pattern, $Replacement
             Set-Content $MainRsPath $MainRsContent
             Write-Host "    [+] Updated FW_VERSION to '$NewVersion' in $MainRsPath" -ForegroundColor DarkGray
-        } else {
-            Write-Host "    [!] Warning: Could not find const FW_VERSION in $MainRsPath" -ForegroundColor Yellow
         }
     }
 

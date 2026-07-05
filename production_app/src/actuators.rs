@@ -69,6 +69,14 @@ pub struct MotorPwmPin {
 }
 
 impl MotorPwmPin {
+    pub fn get_speed(&self) -> i32 {
+        self.speed_pct
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
     pub fn new(driver: LedcDriver<'static>) -> Self {
         Self {
             driver,

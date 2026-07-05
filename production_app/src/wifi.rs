@@ -25,6 +25,8 @@ const PAIRING_DURATION: Duration = Duration::from_secs(120);
 
 static DNS_SERVER_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+pub static API_DOWNLOAD_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static API_UPLOAD_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub static AP_IP_R: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(192);
 pub static AP_IP_G: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(168);
 pub static AP_IP_B: std::sync::atomic::AtomicU8 =
@@ -679,3 +681,14 @@ pub static WIFI_CONNECTED: std::sync::atomic::AtomicBool =
 
 pub static CURRENT_SSID: Mutex<String> = Mutex::new(String::new());
 pub static CURRENT_IP: Mutex<String> = Mutex::new(String::new());
+
+pub fn get_ap_num_clients() -> usize {
+    unsafe {
+        let mut sta_list = esp_idf_sys::wifi_sta_list_t::default();
+        if esp_idf_sys::esp_wifi_ap_get_sta_list(&mut sta_list) == 0 {
+            sta_list.num as usize
+        } else {
+            0
+        }
+    }
+}

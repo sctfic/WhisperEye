@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.3-0006";
+pub const FW_VERSION: &str = "1.2.15-0021";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -46,6 +46,7 @@ mod one_wire;
 mod i2c;
 mod screen;
 mod screen_display;
+mod screen_browse;
 mod radio;
 mod board;
 mod route;
@@ -140,24 +141,8 @@ fn main() -> Result<()> {
     // Initialize NVS Storage helper
     let nvs_storage = Arc::new(Mutex::new(NvsStorage::new(nvs_default.clone())?));
     println!("DEBUG: NVS Storage initialized");
+    let _ = nvs_storage.lock().unwrap().dump_to_log();
 
-    // Affichage en JSON multi-ligne de wifiKnown et devicesKnow
-    {
-        let mut storage = nvs_storage.lock().unwrap();
-        let wifi_known = storage.get_str("wifiKnown").unwrap_or(None).unwrap_or_else(|| "{}".to_string());
-        let device_renamable = storage.get_i32("devicesKnow").unwrap_or(None).unwrap_or(1);
-        
-        let wifi_known_json: serde_json::Value = serde_json::from_str(&wifi_known).unwrap_or(serde_json::Value::Null);
-        
-        let mut log_obj = serde_json::Map::new();
-        log_obj.insert("wifiKnown".to_string(), wifi_known_json);
-        log_obj.insert("devicesKnow".to_string(), serde_json::Value::Number(device_renamable.into()));
-        
-        let log_json = serde_json::Value::Object(log_obj);
-        if let Ok(pretty_log) = serde_json::to_string_pretty(&log_json) {
-            info!("[NVS Config] Configuration State:\n{}", pretty_log);
-        }
-    }
 
     // 1. Initialiser le module de carte mère Board (Touch, VSENSE, ISENSE)
     let board = Arc::new(Mutex::new(Board::init(
@@ -180,54 +165,56 @@ fn main() -> Result<()> {
 
     let actuators_state = Arc::new(Mutex::new(ActuatorsState::default()));
 
-    // 3. Initialiser le bus I2C (TCA9548A et scan dynamique)
-    let i2c = Arc::new(Mutex::new(I2c::init()?));
-    println!("DEBUG: I2C initialized");
+    // Restauration des états/valeurs PWM sauvegardés dans devicesKnow
+    {
+        let mut acts = actuators.lock().unwrap();
+        let mut state = actuators_state.lock().unwrap();
+        let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(&nvs_storage));
+        let map = registry.load_registry();
 
-    // 4. Initialisation et démarrage de l'IHM / Écran ST7789
-    println!("DEBUG: Initializing screen...");
-    match screen::Screen::init(
-        peripherals.spi2,
-        peripherals.pins.gpio7,
-        peripherals.pins.gpio15,
-        peripherals.pins.gpio16,
-        peripherals.pins.gpio4,
-        peripherals.pins.gpio5,
-        peripherals.pins.gpio6,
-        peripherals.pins.gpio17,
-        peripherals.pins.gpio18,
-        peripherals.pins.gpio8,
-        peripherals.pins.gpio3,
-    ) {
-        Ok((screen, display)) => {
-            println!("DEBUG: Screen initialized successfully, preparing IHM thread...");
-            let board_clone = Arc::clone(&board);
-            let actuators_clone = Arc::clone(&actuators);
-            let state_clone = Arc::clone(&actuators_state);
-            println!("DEBUG: Spawning screen_ihm thread (32KB stack)...");
-            match thread::Builder::new()
-                .name("screen_ihm".to_string())
-                .stack_size(32768)
-                .spawn(move || {
-                    if let Err(e) = screen_display::run_ihm(screen, display, board_clone, actuators_clone, state_clone) {
-                        log::error!("Erreur fatale dans le thread IHM : {:?}", e);
-                    }
-                })
-            {
-                Ok(_handle) => {
-                    println!("DEBUG: screen_ihm thread spawned successfully.");
-                    info!("Écran et thread IHM démarrés avec succès !");
-                }
-                Err(e) => {
-                    log::error!("Échec du spawn du thread IHM : {:?}. Main continue.", e);
-                }
+        // Restaurer INA
+        if let Some(entry) = map.get("ina") {
+            if let Some(pwm) = entry.pwm_val {
+                let is_active = pwm > 0;
+                let _ = acts.write("ina", is_active);
+                let _ = acts.ina.set_speed(pwm as i32);
+                state.ina = is_active;
+                log::info!("[BOOT] Restored INA to: {}%", pwm);
             }
         }
-        Err(e) => {
-            log::error!("Échec de l'initialisation de l'écran : {:?}", e);
+        // Restaurer INB
+        if let Some(entry) = map.get("inb") {
+            if let Some(pwm) = entry.pwm_val {
+                let is_active = pwm > 0;
+                let _ = acts.write("inb", is_active);
+                let _ = acts.inb.set_speed(pwm as i32);
+                state.inb = is_active;
+                log::info!("[BOOT] Restored INB to: {}%", pwm);
+            }
+        }
+        // Restaurer RLA
+        if let Some(entry) = map.get("rla") {
+            if let Some(pwm) = entry.pwm_val {
+                let is_active = pwm > 0;
+                let _ = acts.write("rla", is_active);
+                state.rla = is_active;
+                log::info!("[BOOT] Restored RLA to: {}", if is_active { "ON" } else { "OFF" });
+            }
+        }
+        // Restaurer RLB
+        if let Some(entry) = map.get("rlb") {
+            if let Some(pwm) = entry.pwm_val {
+                let is_active = pwm > 0;
+                let _ = acts.write("rlb", is_active);
+                state.rlb = is_active;
+                log::info!("[BOOT] Restored RLB to: {}", if is_active { "ON" } else { "OFF" });
+            }
         }
     }
 
+    // 3. Initialiser le bus I2C (TCA9548A et scan dynamique)
+    let i2c = Arc::new(Mutex::new(I2c::init()?));
+    println!("DEBUG: I2C initialized");
 
     info!("\x1b[35mWhisperEye Production Application Starting Up (Version {})...\x1b[0m", FW_VERSION);
 
@@ -285,13 +272,59 @@ fn main() -> Result<()> {
     let (mesh_channel, mesh_ssid, mesh_pmk) = {
         let storage = nvs_storage.lock().unwrap();
         let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
-        let ssid = storage.get_str("meshSsid")?.unwrap_or_else(|| "Esp32MeshNetwork".to_string());
-        let pmk = storage.get_str("meshPmk")?.unwrap_or_else(|| "Mesh-IoT@Espressif!".to_string());
+        let ssid = "Esp32MeshNetwork".to_string();
+        let pmk = "Mesh-IoT@Espressif!".to_string();
         (channel, ssid, pmk)
     };
 
     let wifi_manager = NetManager::new(modem, sys_loop.clone(), nvs_default, mesh_ssid, mesh_pmk, mesh_channel)?;
     let wifi_manager = Arc::new(Mutex::new(wifi_manager));
+
+    // 4. Initialisation et démarrage de l'IHM / Écran ST7789
+    println!("DEBUG: Initializing screen...");
+    match screen::Screen::init(
+        peripherals.spi2,
+        peripherals.pins.gpio7,
+        peripherals.pins.gpio15,
+        peripherals.pins.gpio16,
+        peripherals.pins.gpio4,
+        peripherals.pins.gpio5,
+        peripherals.pins.gpio6,
+        peripherals.pins.gpio17,
+        peripherals.pins.gpio18,
+        peripherals.pins.gpio8,
+        peripherals.pins.gpio3,
+    ) {
+        Ok((screen, display)) => {
+            println!("DEBUG: Screen initialized successfully, preparing IHM thread...");
+            let board_clone = Arc::clone(&board);
+            let actuators_clone = Arc::clone(&actuators);
+            let state_clone = Arc::clone(&actuators_state);
+            let nvs_clone = Arc::clone(&nvs_storage);
+            let wifi_clone = Arc::clone(&wifi_manager);
+            println!("DEBUG: Spawning screen_ihm thread (32KB stack)...");
+            match thread::Builder::new()
+                .name("screen_ihm".to_string())
+                .stack_size(32768)
+                .spawn(move || {
+                    if let Err(e) = screen_display::run_ihm(screen, display, board_clone, actuators_clone, state_clone, nvs_clone, wifi_clone) {
+                        log::error!("Erreur fatale dans le thread IHM : {:?}", e);
+                    }
+                })
+            {
+                Ok(_handle) => {
+                    println!("DEBUG: screen_ihm thread spawned successfully.");
+                    info!("Écran et thread IHM démarrés avec succès !");
+                }
+                Err(e) => {
+                    log::error!("Échec du spawn du thread IHM : {:?}. Main continue.", e);
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Échec de l'initialisation de l'écran : {:?}", e);
+        }
+    }
 
     let mesh_state = Arc::new(Mutex::new(MeshState {
         is_root: false,
@@ -405,74 +438,6 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

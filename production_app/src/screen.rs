@@ -1,3 +1,5 @@
+//  screen.rs
+
 use esp_idf_hal::gpio::*;
 use esp_idf_hal::ledc::*;
 use esp_idf_hal::spi::*;
@@ -223,59 +225,9 @@ impl Screen {
         let brightness = Arc::new(AtomicI32::new(20));
         let brightness_clone = Arc::clone(&brightness);
 
-        // PCNT sur GPIO17 et 18
+        // PCNT sur GPIO17 et 18 pour l'encodeur EC11
         log::info!("Configuring PCNT hardware for encoder...");
         let encoder = Arc::new(PcntEncoder::new(17, 18)?);
-        let encoder_thread = Arc::clone(&encoder);
-
-        std::thread::Builder::new()
-            .name("encoder_pcnt".to_string())
-            .stack_size(4096)
-            .spawn(move || {
-                let mut last_count = 0;
-                let mut acc_steps = 0;
-
-                loop {
-                    match encoder_thread.count() {
-                        Ok(current_count) => {
-                            let diff = current_count - last_count;
-                            if diff != 0 {
-                                acc_steps += diff;
-                                last_count = current_count;
-
-                                // Gestion de la saturation : reset périodique
-                                if current_count.abs() > 30000 {
-                                    encoder_thread.clear();
-                                    last_count = 0;
-                                }
-
-                                // 4 counts = 1 cran d'encodeur EC11
-                                while acc_steps >= 4 {
-                                    let mut val = brightness_clone.load(Ordering::Relaxed);
-                                    if val <= 95 {
-                                        val += 5;
-                                        brightness_clone.store(val, Ordering::Relaxed);
-                                    }
-                                    acc_steps -= 4;
-                                }
-                                while acc_steps <= -4 {
-                                    let mut val = brightness_clone.load(Ordering::Relaxed);
-                                    if val >= 10 {
-                                        val -= 5;
-                                        brightness_clone.store(val, Ordering::Relaxed);
-                                    }
-                                    acc_steps += 4;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("PCNT read error: {:?}", e);
-                        }
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10)); // 10ms, pas 100ms
-                }
-            })
-            .expect("Failed to spawn PCNT encoder thread");
 
         let screen = Self {
             blk_pwm,
@@ -287,6 +239,14 @@ impl Screen {
         };
 
         Ok((screen, display))
+    }
+
+    pub fn get_encoder_count(&self) -> i32 {
+        self._encoder.count().unwrap_or(0)
+    }
+
+    pub fn clear_encoder(&self) {
+        self._encoder.clear();
     }
 
     pub fn detect(&self) -> bool {

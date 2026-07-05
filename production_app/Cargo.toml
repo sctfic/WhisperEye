@@ -7,6 +7,7 @@ edition = "2021"
 common = { path = "../common" }
 anyhow = "1.0"
 log = "0.4"
+qrcodegen = "1.8.0"
 esp-idf-svc = { version = "0.52", features = ["alloc"] }
 esp-idf-hal = { version = "0.46", features = ["critical-section"] }
 esp-idf-sys = { version = "0.37", features = ["binstart"] }

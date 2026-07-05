@@ -70,12 +70,12 @@ impl NvsStorage {
         if self.get_i32("wifiChannel")?.is_none() {
             self.set_i32("wifiChannel", 11)?;
         }
-        if self.get_str("meshId")?.is_none() {
-            self.set_str("meshId", "WE-001")?;
-        }
-        if self.get_str("meshPmk")?.unwrap_or_default().is_empty() {
-            self.set_str("meshPmk", "Mesh-IoT@Espressif!")?;
-        }
+        // if self.get_str("meshId")?.is_none() {
+        //     self.set_str("meshId", "WE-001")?;
+        // }
+        // if self.get_str("meshPmk")?.unwrap_or_default().is_empty() {
+        //     self.set_str("meshPmk", "Mesh-IoT@Espressif!")?;
+        // }
         if self.get_str("meshSsid")?.unwrap_or_default().is_empty() {
             self.set_str("meshSsid", "Esp32MeshNetwork")?;
         }
@@ -208,8 +208,8 @@ impl NvsStorage {
             "extName",
             "extDesc",
             "metricsUrl",
-            "meshId",
-            "meshPmk",
+            // "meshId",
+            // "meshPmk",
         ];
         for key in keys_str {
             match self.get_str(key) {

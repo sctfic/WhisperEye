@@ -97,6 +97,19 @@ pub fn is_valid_name(name: &str, max_len: usize) -> bool {
     true
 }
 
+pub fn is_valid_peripheral_name(name: &str, max_len: usize) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.len() > max_len {
+        return false;
+    }
+    for c in trimmed.chars() {
+        if c == '\'' || c == '`' || c == ':' {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn is_valid_fqdn(name: &str) -> bool {
     if name.is_empty() || name == "default" || name == "empty" {
         return false;
@@ -863,23 +876,41 @@ pub fn handle_rename_peripherals(mut req: Request<&mut EspHttpConnection<'_>>, r
         id: String,
         name: String,
     }
-    let mut buf = vec![0u8; 256];
+    let mut buf = vec![0u8; 512];
     let bytes_read = req.read(&mut buf)?;
-    let payload: RenamePayload = serde_json::from_slice(&buf[..bytes_read])?;
+    log::info!("[POST /api/peripherals] Bytes read: {}", bytes_read);
 
-    if !is_valid_name(&payload.name, 24) {
+    let body_str = String::from_utf8_lossy(&buf[..bytes_read]);
+    log::info!("[POST /api/peripherals] Body payload: {}", body_str);
+
+    let payload: RenamePayload = match serde_json::from_slice(&buf[..bytes_read]) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("[POST /api/peripherals] JSON deserialization failed: {:?}", e);
+            let mut response = req.into_status_response(400)?;
+            response.write(format!("JSON error: {:?}", e).as_bytes())?;
+            return Ok(());
+        }
+    };
+
+    log::info!("[POST /api/peripherals] Decoded payload: id='{}', name='{}'", payload.id, payload.name);
+
+    if !is_valid_peripheral_name(&payload.name, 24) {
+        log::warn!("[POST /api/peripherals] Invalid name validation failed for: '{}'", payload.name);
         let mut response = req.into_status_response(400)?;
-        response.write(b"Nom de peripherique invalide. Il doit faire 24 caracteres max, sans espaces, ni ' ou ` ou :.")?;
+        response.write(b"Nom de peripherique invalide. Il doit faire 24 caracteres max, sans ' ou ` ou :.")?;
         return Ok(());
     }
 
     let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&rename_nvs));
     if let Err(e) = registry.rename_device(&payload.id, &payload.name) {
+        log::warn!("[POST /api/peripherals] rename_device failed for id '{}': {:?}", payload.id, e);
         let mut response = req.into_status_response(400)?;
         response.write(format!("Error: {}", e).as_bytes())?;
         return Ok(());
     }
 
+    log::info!("[POST /api/peripherals] Rename successful!");
     let mut response = req.into_ok_response()?;
     response.write(b"Rename Successful")?;
     Ok(())
@@ -1179,24 +1210,24 @@ pub fn handle_config(
                 let new_val = if rename_en { 1 } else { 0 };
                 storage.set_i32("deviceRenamable", new_val)?;
             }
-            if let Some(ref mesh_id) = payload.mesh_id {
-                let current_id = storage.get_str("meshId")?.unwrap_or_default();
-                if mesh_id != &current_id {
-                    storage.set_str("meshId", mesh_id)?;
-                    if !apply_only {
-                        should_reboot_production = true;
-                    }
-                }
-            }
-            if let Some(ref mesh_pmk) = payload.mesh_pmk {
-                let current_pmk = storage.get_str("meshPmk")?.unwrap_or_default();
-                if mesh_pmk != &current_pmk {
-                    storage.set_str("meshPmk", mesh_pmk)?;
-                    if !apply_only {
-                        should_reboot_production = true;
-                    }
-                }
-            }
+            // if let Some(ref mesh_id) = payload.mesh_id {
+            //     let current_id = storage.get_str("meshId")?.unwrap_or_default();
+            //     if mesh_id != &current_id {
+            //         storage.set_str("meshId", mesh_id)?;
+            //         if !apply_only {
+            //             should_reboot_production = true;
+            //         }
+            //     }
+            // }
+            // if let Some(ref mesh_pmk) = payload.mesh_pmk {
+            //     let current_pmk = storage.get_str("meshPmk")?.unwrap_or_default();
+            //     if mesh_pmk != &current_pmk {
+            //         storage.set_str("meshPmk", mesh_pmk)?;
+            //         if !apply_only {
+            //             should_reboot_production = true;
+            //         }
+            //     }
+            // }
         }
     }
 
