@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.35-0003";
+pub const FW_VERSION: &str = "1.2.44";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -204,8 +204,9 @@ fn main() -> Result<()> {
             if let Some(pwm) = entry.pwm_val {
                 let is_active = pwm > 0;
                 let _ = acts.write("rla", is_active);
+                let _ = acts.relay_a.set_speed(pwm as i32);
                 state.rla = is_active;
-                log::info!("[BOOT] Restored RLA to: {}", if is_active { "ON" } else { "OFF" });
+                log::info!("[BOOT] Restored RLA to: {}%", pwm);
             }
         }
         // Restaurer RLB
@@ -213,8 +214,17 @@ fn main() -> Result<()> {
             if let Some(pwm) = entry.pwm_val {
                 let is_active = pwm > 0;
                 let _ = acts.write("rlb", is_active);
+                let _ = acts.relay_b.set_speed(pwm as i32);
                 state.rlb = is_active;
-                log::info!("[BOOT] Restored RLB to: {}", if is_active { "ON" } else { "OFF" });
+                log::info!("[BOOT] Restored RLB to: {}%", pwm);
+            }
+        }
+        // Restaurer SCREEN
+        if let Some(entry) = map.get("screen") {
+            if let Some(pwm) = entry.pwm_val {
+                let mut storage = nvs_storage.lock().unwrap();
+                let _ = storage.set_i32("scrBrightness", pwm as i32);
+                log::info!("[BOOT] Restored SCREEN brightness to: {}%", pwm);
             }
         }
     }
@@ -445,6 +455,15 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

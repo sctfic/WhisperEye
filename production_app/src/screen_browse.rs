@@ -361,8 +361,8 @@ impl BrowseController {
                                 let (current_val, default_step) = {
                                     let acts = actuators.lock().unwrap();
                                     let val = match new_sub {
-                                        0 => acts.ina.get_speed() as u8,
-                                        1 => acts.inb.get_speed() as u8,
+                                        0 => if acts.ina.is_active() { acts.ina.get_speed() as u8 } else { 0 },
+                                        1 => if acts.inb.is_active() { acts.inb.get_speed() as u8 } else { 0 },
                                         2 => if acts.relay_a.is_active() { 100 } else { 0 },
                                         3 => if acts.relay_b.is_active() { 100 } else { 0 },
                                         _ => 0,
@@ -535,6 +535,22 @@ impl BrowseController {
 
                     if main_index == 3 && sub_index == 3 {
                         let _ = nvs.lock().unwrap().set_i32("scrBrightness", val);
+                        let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                        let mut map = registry.load_registry();
+                        if let Some(entry) = map.get_mut("screen") {
+                            entry.pwm_val = Some(val as u8);
+                            entry.step = None;
+                        } else {
+                            map.insert("screen".to_string(), crate::dynamic_devices::DeviceEntry {
+                                name: "Écran ST7789".to_string(),
+                                is_static: false,
+                                present: true,
+                                correction_formula: None,
+                                step: None,
+                                pwm_val: Some(val as u8),
+                            });
+                        }
+                        registry.save_registry(&map);
                     } else {
                         let is_active = val > 0;
                         let mut acts = actuators.lock().unwrap();
@@ -802,19 +818,19 @@ impl BrowseController {
                     self.last_sub_index = Some(current_sub);
                 }
             } else {
-                // Zone 2: Sous-menus de gauche (X=0..100, Y=33..218) -> Effacée seulement au changement de main menu ou à la sortie de la modale
+                // Zone 2: Sous-menus de gauche (X=0..101, Y=33..218) -> Effacée seulement au changement de main menu ou à la sortie de la modale
                 if main_changed {
                     // Efface le volet sous-menu de gauche lors d'un changement de menu principal
-                    let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186))
+                    let _ = Rectangle::new(Point::new(0, 33), Size::new(101, 186))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
                     self.last_main_index = Some(current_main);
                 }
 
-                // Zone 3: Zone de détail à droite (X=102..320, Y=33..218) -> Effacée au changement de menu ou d'état/mode
+                // Zone 3: Zone de détail à droite (X=101..320, Y=33..218) -> Effacée au changement de menu ou d'état/mode
                 if sub_changed {
                     // Efface le panneau de détail de droite lors d'un changement de sous-menu
-                    let _ = Rectangle::new(Point::new(102, 33), Size::new(218, 186))
+                    let _ = Rectangle::new(Point::new(101, 33), Size::new(219, 186))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
                     self.last_sub_index = Some(current_sub);
@@ -826,13 +842,13 @@ impl BrowseController {
         if !in_modal && current_main != 2 && !periodic_update && !val_changed {
             // Effacer les anciens cadres de focus en les redessinant en noir
             let clear_style = PrimitiveStyle::with_stroke(Rgb565::BLACK, 1);
-            let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186)).into_styled(clear_style).draw(display);
+            let _ = Rectangle::new(Point::new(0, 33), Size::new(101, 186)).into_styled(clear_style).draw(display);
             let _ = Rectangle::new(Point::new(101, 33), Size::new(219, 186)).into_styled(clear_style).draw(display);
 
             // Dessiner le cadre de la zone active (en vert)
             let active_style = PrimitiveStyle::with_stroke(Rgb565::GREEN, 1);
             if current_focus == 1 {
-                let _ = Rectangle::new(Point::new(0, 33), Size::new(100, 186)).into_styled(active_style).draw(display);
+                let _ = Rectangle::new(Point::new(0, 33), Size::new(101, 186)).into_styled(active_style).draw(display);
             } else if current_focus == 2 {
                 let _ = Rectangle::new(Point::new(101, 33), Size::new(219, 186)).into_styled(active_style).draw(display);
             }
@@ -881,22 +897,32 @@ impl BrowseController {
         let sub_titles: Vec<String> = match current_main {
             0 => {
                 let mut list: Vec<String> = sensors_list.iter().map(|s| {
-                    if s.name.len() > 13 { format!("{:.12}…", s.name) } else { s.name.clone() }
+                    format!("{:.15}", s.name)
                 }).collect();
                 list.push("Dashboard".to_string());
                 list
             }
-            1 => vec![
-                "INA Motor".to_string(),
-                "INB Motor".to_string(),
-                "RLA Relay".to_string(),
-                "RLB Relay".to_string(),
-                "SWPWR Off".to_string(),
-            ],
+            1 => {
+                let reg = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                let map = reg.load_registry();
+                let mut list = Vec::new();
+                for id in &["ina", "inb", "rla", "rlb", "swpwr"] {
+                    let default = match *id {
+                        "ina" => "Sortie INA",
+                        "inb" => "Sortie INB",
+                        "rla" => "Relais A",
+                        "rlb" => "Relais B",
+                        _ => "Coupure SWPWR",
+                    };
+                    let name = map.get(*id).map(|e| e.name.as_str()).unwrap_or(default);
+                    list.push(format!("{:.15}", name));
+                }
+                list
+            }
             2 => vec![],
             3 => vec![
-                "Wifi Client".to_string(),
-                "Wifi AP".to_string(),
+                "Wifi".to_string(),
+                "AccessPoint".to_string(),
                 "TOTP".to_string(),
                 "Ecran".to_string(),
                 "Update".to_string(),
@@ -972,7 +998,7 @@ impl BrowseController {
                         }
                     }
                 } else {
-                    if !periodic_update {
+                    if !periodic_update || val_changed || sub_changed {
                         let act_names = ["Sortie INA", "Sortie INB", "Relais A", "Relais B"];
                         let act_gpios = ["GPIO36", "GPIO35", "GPIO48", "GPIO47"];
                         let act_descs = [
@@ -996,7 +1022,24 @@ impl BrowseController {
                                     3 => if acts.relay_b.is_active() { 100 } else { 0 },
                                     _ => 0,
                                 };
-                                (v, false, self.slider_step_idx)
+                                let actuator_id = match current_sub {
+                                    0 => "ina",
+                                    1 => "inb",
+                                    2 => "rla",
+                                    3 => "rlb",
+                                    _ => "",
+                                };
+                                let step_val = {
+                                    let reg = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                                    let map = reg.load_registry();
+                                    map.get(actuator_id).and_then(|e| e.step)
+                                };
+                                let step_idx = if let Some(sv) = step_val {
+                                    get_step_idx_from_val(sv)
+                                } else {
+                                    if current_sub == 2 || current_sub == 3 { 8 } else { self.slider_step_idx }
+                                };
+                                (v, false, step_idx)
                             }
                         };
 
@@ -1169,7 +1212,7 @@ impl BrowseController {
                                 let _ = Text::new("Psk     :", Point::new(right_x, 80), font_small_white).draw(display);
                                 let _ = Text::new("clients :", Point::new(right_x, 92), font_small_white).draw(display);
 
-                                let ap_ssid = "AP-Configuration";
+                                let ap_ssid = "ESP32-Configuration";
                                 let subnet = crate::wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
                                 let ap_cidr = format!("192.168.{}.1/24", subnet);
                                 let num_clients = crate::wifi::get_ap_num_clients();
@@ -1182,13 +1225,13 @@ impl BrowseController {
 
                         // Dessin dynamique de la PSK et du QR Code (qui change selon l'état actif/inactif)
                         if !periodic_update || val_changed || sub_changed {
-                            let ap_psk = if is_ap_active { "Mesh-IoT@Espressif!" } else { "--" };
-                            let _ = Text::new(&format!("{}                    ", ap_psk), Point::new(right_x + 57, 80), font_small_white).draw(display);
+                            let ap_psk = if is_ap_active { "None" } else { "--" };
+                            let _ = Text::new(&format!("{}      ", ap_psk), Point::new(right_x + 57, 80), font_small_white).draw(display);
 
                             let start_x = 215;
                             let start_y = 100;
                             if is_ap_active {
-                                let qr_str = "WIFI:T:WPA;S:AP-Configuration;P:Mesh-IoT@Espressif!;;";
+                                let qr_str = "WIFI:T:nopass;S:ESP32-Configuration;;";
                                 if let Ok(qr) = QrCode::encode_text(qr_str, QrCodeEcc::Medium) {
                                     let qr_size = qr.size(); // 29 pour Version 3
                                     let module_size = 3;

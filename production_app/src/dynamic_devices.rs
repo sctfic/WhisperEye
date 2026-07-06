@@ -246,11 +246,12 @@ impl DeviceRegistry {
         let mut persist_map: HashMap<String, PersistEntry> = HashMap::new();
         for (k, v) in map.iter() {
             if !v.present { continue; }
+            let step_val = if k == "screen" { None } else { v.step };
             persist_map.insert(k.clone(), PersistEntry {
                 name: v.name.clone(),
                 present: v.present,
                 correction_formula: v.correction_formula.clone(),
-                step: v.step,
+                step: step_val,
                 pwm_val: v.pwm_val,
             });
         }
