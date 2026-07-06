@@ -1,9 +1,8 @@
 // screen_display.rs
 
-use esp_idf_hal::gpio::PinDriver;
 use embedded_graphics::{
     prelude::*,
-    mono_font::{ascii::{FONT_10X20, FONT_6X10}, MonoTextStyleBuilder},
+    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
     pixelcolor::Rgb565,
     text::Text,
     primitives::{Rectangle, PrimitiveStyle},

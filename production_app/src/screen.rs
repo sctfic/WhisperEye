@@ -175,7 +175,7 @@ impl Screen {
             channel0,
             LedcTimerDriver::new(
                 timer0,
-                &config::TimerConfig::new().frequency(5.kHz().into()),
+                 &esp_idf_hal::ledc::config::TimerConfig::new().frequency(5.kHz().into()),
             )?,
             blk,
         )?;
@@ -223,7 +223,7 @@ impl Screen {
         log::info!("Encoder buttons configured.");
 
         let brightness = Arc::new(AtomicI32::new(20));
-        let brightness_clone = Arc::clone(&brightness);
+        let _brightness_clone = Arc::clone(&brightness);
 
         // PCNT sur GPIO17 et 18 pour l'encodeur EC11
         log::info!("Configuring PCNT hardware for encoder...");

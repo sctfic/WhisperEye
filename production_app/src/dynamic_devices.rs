@@ -26,23 +26,47 @@ pub struct DeviceEntry {
     pub is_static: bool,
     pub present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polarity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uncertainty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<[f64; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub correction_formula: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pwm_val: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistEntry {
-    name: String,
-    present: bool,
+pub struct PersistEntry {
+    pub name: String,
+    pub present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    correction_formula: Option<String>,
+    pub address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    step: Option<u8>,
+    pub polarity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pwm_val: Option<u8>,
+    pub unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uncertainty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<[f64; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correction_formula: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pwm_val: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,7 +83,7 @@ pub struct DeviceDisplay {
     /// Métadonnées du capteur (incertitude, plage, unité) — None pour les actuateurs
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sensor_meta: Option<SensorMeta>,
-    /// Formule de correction stockée en NVS (par défaut "x")
+    /// Formule de correction stockée en NVS
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correction_formula: Option<String>,
     /// Planifications actives (uniquement pour les actionneurs)
@@ -69,15 +93,18 @@ pub struct DeviceDisplay {
     pub step: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pwm_val: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polarity: Option<String>,
 }
 
 /// Métadonnées techniques d'un capteur (issues des documentations officielles)
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SensorMeta {
     pub unit: String,
     pub uncertainty: String,
-    pub range_min: f64,
-    pub range_max: f64,
+    pub range: [f64; 2],
 }
 
 /// Retourne les métadonnées pour un capteur donné (en dur, doc constructeur)
@@ -87,70 +114,58 @@ pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
         id if id.ends_with("_T") && id.contains("0x44") => Some(SensorMeta {
             unit: "°C".to_string(),
             uncertainty: "±0.1 °C (typ., 0-75 °C)\n±0.2 °C (max.)".to_string(),
-            range_min: -40.0,
-            range_max: 125.0,
+            range: [-40.0, 125.0],
         }),
         id if id.ends_with("_H") && id.contains("0x44") => Some(SensorMeta {
             unit: "%RH".to_string(),
             uncertainty: "±1.0 %RH (typ., 25-75 %RH)\n±1.5 %RH (max.)".to_string(),
-            range_min: 0.0,
-            range_max: 100.0,
+            range: [0.0, 100.0],
         }),
         // SCD41 (Sensirion) — https://sensirion.com/products/catalog/SCD41
         id if id.contains("0x62") => Some(SensorMeta {
             unit: "ppm".to_string(),
             uncertainty: "±(40 ppm + 5 % de la lecture)".to_string(),
-            range_min: 0.0,
-            range_max: 40000.0,
+            range: [0.0, 40000.0],
         }),
         // DS18B20 (Maxim) — 1-Wire temperature probes
         id if id.starts_with("onewr:") => Some(SensorMeta {
             unit: "°C".to_string(),
             uncertainty: "±0.5 °C (-10 à +85 °C)\n±2 °C (hors plage)".to_string(),
-            range_min: -55.0,
-            range_max: 125.0,
+            range: [-55.0, 125.0],
         }),
         // BME280 (Bosch)
         id if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
             unit: "°C".to_string(),
             uncertainty: "±0.5 °C (à 25 °C)".to_string(),
-            range_min: -40.0,
-            range_max: 85.0,
+            range: [-40.0, 85.0],
         }),
         id if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
             unit: "%RH".to_string(),
             uncertainty: "±3 %RH (20-80 %RH, 25 °C)".to_string(),
-            range_min: 0.0,
-            range_max: 100.0,
+            range: [0.0, 100.0],
         }),
         id if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) => Some(SensorMeta {
             unit: "hPa".to_string(),
             uncertainty: "±0.12 hPa (éq. ±1 m)".to_string(),
-            range_min: 300.0,
-            range_max: 1100.0,
+            range: [300.0, 1100.0],
         }),
         // Capteurs internes
         "vsense" => Some(SensorMeta {
             unit: "V".to_string(),
             uncertainty: "±0.1V".to_string(),
-            range_min: 0.0,
-            range_max: 25.0,
+            range: [0.0, 25.0],
         }),
         "isense" => Some(SensorMeta {
             unit: "A".to_string(),
             uncertainty: "±0.01A".to_string(),
-            range_min: 0.0,
-            range_max: 3.0,
+            range: [0.0, 3.0],
         }),
         _ => None,
     }
 }
 
-/// Récupère la formule de correction stockée en NVS pour un capteur.
-/// Clé NVS : `corr_<device_id>` (ex: corr_i2c:0:0x44_T).
-/// Par défaut: "<device_id>.raw" (la valeur réelle = la valeur brute).
+/// Récupère la formule de correction stockée dans devicesKnow pour un capteur.
 pub fn get_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str) -> String {
-    // Prefer correction formula stored in devicesKnow (if present), fall back to legacy corr_<id> key
     let storage = nvs.lock().unwrap();
     if let Ok(Some(reg_json)) = storage.get_str("devicesKnow") {
         if let Ok(map) = serde_json::from_str::<HashMap<String, PersistEntry>>(&reg_json) {
@@ -161,24 +176,32 @@ pub fn get_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str) -> 
             }
         }
     }
-    // legacy key
-    let key = format!("corr_{}", device_id);
-    storage.get_str(&key).ok().flatten().unwrap_or_else(|| format!("{}.raw", device_id))
+    format!("{}.raw", device_id)
 }
 
-/// Sauvegarde la formule de correction dans le registre (devicesKnow). Persist only for dynamic devices.
+/// Sauvegarde la formule de correction dans le registre (devicesKnow).
 pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, formula: &str) -> Result<(), anyhow::Error> {
     let mut storage = nvs.lock().unwrap();
-    // load existing registry (as PersistEntry map)
     let mut persist_map: HashMap<String, PersistEntry> = if let Ok(Some(j)) = storage.get_str("devicesKnow") {
         serde_json::from_str(&j).unwrap_or_default()
     } else { HashMap::new() };
-    let (name, present, step, pwm_val) = if let Some(existing) = persist_map.get(device_id) {
-        (existing.name.clone(), existing.present, existing.step, existing.pwm_val)
+    if let Some(existing) = persist_map.get_mut(device_id) {
+        existing.correction_formula = Some(formula.to_string());
     } else {
-        (device_id.to_string(), true, None, None)
-    };
-    persist_map.insert(device_id.to_string(), PersistEntry { name, present, correction_formula: Some(formula.to_string()), step, pwm_val });
+        persist_map.insert(device_id.to_string(), PersistEntry {
+            name: device_id.to_string(),
+            present: true,
+            address: None,
+            polarity: None,
+            unit: None,
+            uncertainty: None,
+            range: None,
+            correction_formula: Some(formula.to_string()),
+            step: None,
+            pwm_val: None,
+            schedules: None,
+        });
+    }
     let new_str = serde_json::to_string(&persist_map)?;
     storage.set_str("devicesKnow", &new_str)?;
     Ok(())
@@ -199,21 +222,25 @@ impl DeviceRegistry {
         reg
     }
 
-    /// Load device metadata registry from NVS (dynamic only) + static devices from code
+    /// Load device metadata registry from NVS (devicesKnow) + static devices
     pub fn load_registry(&self) -> HashMap<String, DeviceEntry> {
         let mut map: HashMap<String, DeviceEntry> = HashMap::new();
-        // 1. Static devices — toujours présents, en dur
         for &(id, name) in STATIC_DEVICES {
             map.insert(id.to_string(), DeviceEntry {
                 name: name.to_string(),
                 is_static: true,
                 present: true,
+                address: None,
+                polarity: None,
+                unit: None,
+                uncertainty: None,
+                range: None,
                 correction_formula: None,
                 step: None,
                 pwm_val: None,
+                schedules: None,
             });
         }
-        // 2. Dynamic and customized static devices from NVS
         let storage = self.nvs.lock().unwrap();
         if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
             if let Ok(saved) = serde_json::from_str::<HashMap<String, PersistEntry>>(&json_str) {
@@ -221,18 +248,30 @@ impl DeviceRegistry {
                     if is_static_device(&id) {
                         if let Some(entry) = map.get_mut(&id) {
                             entry.name = pe.name;
+                            entry.address = pe.address;
+                            entry.polarity = pe.polarity;
+                            entry.unit = pe.unit;
+                            entry.uncertainty = pe.uncertainty;
+                            entry.range = pe.range;
                             entry.correction_formula = pe.correction_formula;
                             entry.step = pe.step;
                             entry.pwm_val = pe.pwm_val;
+                            entry.schedules = pe.schedules;
                         }
                     } else {
                         map.insert(id.clone(), DeviceEntry {
                             name: pe.name,
                             is_static: false,
                             present: pe.present,
+                            address: pe.address,
+                            polarity: pe.polarity,
+                            unit: pe.unit,
+                            uncertainty: pe.uncertainty,
+                            range: pe.range,
                             correction_formula: pe.correction_formula,
                             step: pe.step,
                             pwm_val: pe.pwm_val,
+                            schedules: pe.schedules,
                         });
                     }
                 }
@@ -242,7 +281,6 @@ impl DeviceRegistry {
     }
 
     pub fn save_registry(&self, map: &HashMap<String, DeviceEntry>) {
-        println!("DEBUG: Entering save_registry...");
         let mut persist_map: HashMap<String, PersistEntry> = HashMap::new();
         for (k, v) in map.iter() {
             if !v.present { continue; }
@@ -250,20 +288,21 @@ impl DeviceRegistry {
             persist_map.insert(k.clone(), PersistEntry {
                 name: v.name.clone(),
                 present: v.present,
+                address: v.address.clone(),
+                polarity: v.polarity.clone(),
+                unit: v.unit.clone(),
+                uncertainty: v.uncertainty.clone(),
+                range: v.range,
                 correction_formula: v.correction_formula.clone(),
                 step: step_val,
                 pwm_val: v.pwm_val,
+                schedules: v.schedules.clone(),
             });
         }
-        println!("DEBUG: save_registry: locking NVS...");
         let mut storage = self.nvs.lock().unwrap();
-        println!("DEBUG: save_registry: NVS locked. Serializing json...");
         if let Ok(json_str) = serde_json::to_string(&persist_map) {
-            println!("DEBUG: save_registry: writing json_str (len={}) to NVS...", json_str.len());
-            let res = storage.set_str("devicesKnow", &json_str);
-            println!("DEBUG: save_registry: NVS write result: {:?}", res);
+            let _ = storage.set_str("devicesKnow", &json_str);
         }
-        println!("DEBUG: Exiting save_registry...");
     }
 
     /// Scan dynamic and static devices, merge with custom names from NVS.
@@ -271,45 +310,41 @@ impl DeviceRegistry {
         let mut saved = self.load_registry(); // contient statiques (avec nom NVS si existant) + dynamiques (NVS)
         let mut updated = HashMap::new();
 
+        let make_default = |name: String, is_static: bool, present: bool, address: Option<String>| DeviceEntry {
+            name,
+            is_static,
+            present,
+            address,
+            polarity: None,
+            unit: None,
+            uncertainty: None,
+            range: None,
+            correction_formula: None,
+            step: None,
+            pwm_val: None,
+            schedules: None,
+        };
+
         // 1. Static Devices (Always present, avec conservation des noms NVS personnalisés)
         for &(id, default_name) in STATIC_DEVICES {
             let existing_entry = saved.remove(id);
-            let name = existing_entry.map(|e| e.name).unwrap_or_else(|| default_name.to_string());
-            updated.insert(id.to_string(), DeviceEntry {
-                name,
-                is_static: true,
-                present: true,
-                correction_formula: None,
-                step: None,
-                pwm_val: None,
-            });
+            let mut entry = existing_entry.unwrap_or_else(|| make_default(default_name.to_string(), true, true, None));
+            entry.is_static = true;
+            entry.present = true;
+            updated.insert(id.to_string(), entry);
         }
 
         // 2. Dynamic Devices: Screen and Radio
         let screen_present = crate::screen::is_present();
         if screen_present {
-            let mut entry = saved.remove("screen").unwrap_or_else(|| DeviceEntry {
-                name: "Écran ST7789".to_string(),
-                is_static: false,
-                present: screen_present,
-                correction_formula: None,
-                step: None,
-                pwm_val: None,
-            });
+            let mut entry = saved.remove("screen").unwrap_or_else(|| make_default("Écran ST7789".to_string(), false, screen_present, None));
             entry.present = screen_present;
             updated.insert("screen".to_string(), entry);
         }
 
         let radio_present = crate::radio::is_present();
         if radio_present {
-            let mut entry = saved.remove("radio").unwrap_or_else(|| DeviceEntry {
-                name: "Transmetteur Radio RF".to_string(),
-                is_static: false,
-                present: radio_present,
-                correction_formula: None,
-                step: None,
-                pwm_val: None,
-            });
+            let mut entry = saved.remove("radio").unwrap_or_else(|| make_default("Transmetteur Radio RF".to_string(), false, radio_present, None));
             entry.present = radio_present;
             updated.insert("radio".to_string(), entry);
         }
@@ -317,121 +352,74 @@ impl DeviceRegistry {
         // 3. Dynamic Devices: 1-Wire (DS18B20) discovered probes
         for addr in onewr_pins {
             let id = format!("onewr:{}", addr);
-            let mut entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
-                name: format!("Sonde 1-Wire ({})", &addr[..6].to_uppercase()),
-                is_static: false,
-                present: true,
-                correction_formula: None,
-                step: None,
-                pwm_val: None,
-            });
+            let mut entry = saved.remove(&id).unwrap_or_else(|| make_default(
+                format!("Sonde 1-Wire ({})", &addr[..6].to_uppercase()),
+                false,
+                true,
+                Some(addr.clone()),
+            ));
             entry.present = true;
+            if entry.address.is_none() { entry.address = Some(addr); }
             updated.insert(id, entry);
         }
 
-        // 4. Dynamic Devices: I2C (SHT45 and SCD41) channel probes
+        // 4. Dynamic Devices: I2C (SHT45, SCD41, BME280) channel probes
         let i2c_scans = crate::i2c::scan_i2c_devices();
         for (channel, addr) in i2c_scans {
+            let addr_str = format!("0x{:02x}", addr);
             if addr == 0x44 {
                 // SHT45 : séparer en deux capteurs distincts (Température et Humidité)
                 let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
-                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
-                    name: "SHT45-Temp".to_string(),
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
+                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default("SHT45-Temp".to_string(), false, true, Some(addr_str.clone())));
                 entry_t.present = true;
+                if entry_t.address.is_none() { entry_t.address = Some(addr_str.clone()); }
                 updated.insert(id_t, entry_t);
 
                 let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
-                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
-                    name: "SHT45-Hum".to_string(),
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
+                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| make_default("SHT45-Hum".to_string(), false, true, Some(addr_str.clone())));
                 entry_h.present = true;
+                if entry_h.address.is_none() { entry_h.address = Some(addr_str.clone()); }
                 updated.insert(id_h, entry_h);
             } else if addr == 0x62 {
                 let id = format!("i2c:{}:0x{:02x}", channel, addr);
-                let mut entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
-                    name: "Capteur CO2 SCD41".to_string(),
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
+                let mut entry = saved.remove(&id).unwrap_or_else(|| make_default("Capteur CO2 SCD41".to_string(), false, true, Some(addr_str.clone())));
                 entry.present = true;
+                if entry.address.is_none() { entry.address = Some(addr_str.clone()); }
                 updated.insert(id, entry);
             } else if addr == 0x76 || addr == 0x77 {
-                // BME280 : séparer en trois capteurs (Température, Humidité, Pression)
                 let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
-                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| DeviceEntry {
-                    name: format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr),
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
+                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default(format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
                 entry_t.present = true;
+                if entry_t.address.is_none() { entry_t.address = Some(addr_str.clone()); }
                 updated.insert(id_t, entry_t);
 
                 let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
-                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| DeviceEntry {
-                    name: format!("BME280-Hum (i2c:{}:0x{:02x})", channel, addr),
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
+                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| make_default(format!("BME280-Hum (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
                 entry_h.present = true;
+                if entry_h.address.is_none() { entry_h.address = Some(addr_str.clone()); }
                 updated.insert(id_h, entry_h);
 
                 let id_p = format!("i2c:{}:0x{:02x}_P", channel, addr);
-                let mut entry_p = saved.remove(&id_p).unwrap_or_else(|| DeviceEntry {
-                    name: format!("BME280-Pres (i2c:{}:0x{:02x})", channel, addr),
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
+                let mut entry_p = saved.remove(&id_p).unwrap_or_else(|| make_default(format!("BME280-Pres (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
                 entry_p.present = true;
+                if entry_p.address.is_none() { entry_p.address = Some(addr_str.clone()); }
                 updated.insert(id_p, entry_p);
             } else {
                 let id = format!("i2c:{}:0x{:02x}", channel, addr);
-                let mut entry = saved.remove(&id).unwrap_or_else(|| DeviceEntry {
-                    name: format!("Périphérique I2C (Ch{} 0x{:02x})", channel, addr),
-                    is_static: false,
-                    present: true,
-                    correction_formula: None,
-                    step: None,
-                    pwm_val: None,
-                });
+                let mut entry = saved.remove(&id).unwrap_or_else(|| make_default(format!("Périphérique I2C (Ch{} 0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
                 entry.present = true;
+                if entry.address.is_none() { entry.address = Some(addr_str); }
                 updated.insert(id, entry);
             }
         }
 
-        // Any leftover devices in `saved` are currently offline/absent, but we preserve their custom names and set present to false
         for (id, mut entry) in saved {
             entry.present = false;
             updated.insert(id, entry);
         }
 
-        println!("DEBUG: scan_and_register: calling save_registry...");
         self.save_registry(&updated);
-        println!("DEBUG: scan_and_register: save_registry finished. Updating self.devices...");
         self.devices = updated;
-        println!("DEBUG: scan_and_register: completed successfully!");
         Ok(())
     }
 
@@ -658,19 +646,34 @@ impl DeviceRegistry {
                 None
             });
 
+            let final_sensor_meta = if let (Some(u), Some(unc), Some(r)) = (&entry.unit, &entry.uncertainty, &entry.range) {
+                Some(SensorMeta {
+                    unit: u.clone(),
+                    uncertainty: unc.clone(),
+                    range: *r,
+                })
+            } else {
+                sensor_meta
+            };
+
+            let final_unit = entry.unit.clone().unwrap_or(unit);
+            let final_schedules = entry.schedules.clone().or(dev_schedules);
+
             list.push(DeviceDisplay {
                 id: id.to_string(),
                 name: entry.name.clone(),
                 is_static: entry.is_static,
                 present: if is_act { None } else { Some(present) },
                 value,
-                unit,
+                unit: final_unit,
                 raw: raw_field,
-                sensor_meta,
+                sensor_meta: final_sensor_meta,
                 correction_formula: if is_act { None } else { Some(correction) },
-                schedules: dev_schedules,
+                schedules: final_schedules,
                 step: display_step,
                 pwm_val: display_pwm,
+                address: entry.address.clone(),
+                polarity: entry.polarity.clone(),
             });
         }
 
@@ -715,9 +718,15 @@ impl DeviceRegistry {
                 name: name_limit.clone(),
                 is_static,
                 present: true,
+                address: None,
+                polarity: None,
+                unit: None,
+                uncertainty: None,
+                range: None,
                 correction_formula: None,
                 step: None,
                 pwm_val: None,
+                schedules: None,
             });
         }
 
@@ -726,6 +735,38 @@ impl DeviceRegistry {
         }
 
         self.save_registry(&map);
+        Ok(())
+    }
+
+    pub fn update_device_properties(
+        &mut self,
+        id: &str,
+        name: Option<String>,
+        address: Option<String>,
+        polarity: Option<String>,
+        unit: Option<String>,
+        uncertainty: Option<String>,
+        range: Option<[f64; 2]>,
+        correction_formula: Option<String>,
+        step: Option<u8>,
+        pwm_val: Option<u8>,
+        schedules: Option<Vec<crate::actuators::ScheduledAction>>,
+    ) -> Result<(), anyhow::Error> {
+        let mut map = self.load_registry();
+        if let Some(entry) = map.get_mut(id) {
+            if let Some(n) = name { entry.name = n; }
+            if address.is_some() { entry.address = address; }
+            if polarity.is_some() { entry.polarity = polarity; }
+            if unit.is_some() { entry.unit = unit; }
+            if uncertainty.is_some() { entry.uncertainty = uncertainty; }
+            if range.is_some() { entry.range = range; }
+            if correction_formula.is_some() { entry.correction_formula = correction_formula; }
+            if step.is_some() { entry.step = step; }
+            if pwm_val.is_some() { entry.pwm_val = pwm_val; }
+            if schedules.is_some() { entry.schedules = schedules; }
+        }
+        self.save_registry(&map);
+        self.devices = map;
         Ok(())
     }
 }

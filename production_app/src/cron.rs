@@ -1,7 +1,6 @@
 use crate::sensors::{read_sensors, SensorReadings};
-use crate::wifi::{NetManager, NetState};
-use crate::MeshState;
 use anyhow::{Context, Result};
+use crate::wifi::{NetManager, NetState};
 use common::nvs_storage::NvsStorage;
 use log::{info, warn};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -27,8 +26,6 @@ pub struct CronWorker {
     history: Vec<MetricEntry>,
     nvs: Arc<Mutex<NvsStorage>>,
     wifi: Arc<Mutex<NetManager>>,
-    #[allow(dead_code)]
-    mesh_state: Arc<Mutex<MeshState>>,
     actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
     static_devs: Arc<Mutex<crate::actuators::Actuators>>,
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
@@ -44,7 +41,6 @@ impl CronWorker {
         rx: Receiver<CronMessage>,
         nvs: Arc<Mutex<NvsStorage>>,
         wifi: Arc<Mutex<NetManager>>,
-        mesh_state: Arc<Mutex<MeshState>>,
         actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
         static_devs: Arc<Mutex<crate::actuators::Actuators>>,
         scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
@@ -56,7 +52,6 @@ impl CronWorker {
             history: Vec::with_capacity(10),
             nvs,
             wifi,
-            mesh_state,
             actuators_state,
             static_devs,
             scheduled_actions,
@@ -606,7 +601,6 @@ impl CronHandle {
 pub fn spawn_cron_scheduler(
     nvs: Arc<Mutex<NvsStorage>>,
     wifi: Arc<Mutex<NetManager>>,
-    mesh_state: Arc<Mutex<MeshState>>,
     actuators_state: Arc<Mutex<crate::actuators::ActuatorsState>>,
     static_devs: Arc<Mutex<crate::actuators::Actuators>>,
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
@@ -618,7 +612,6 @@ pub fn spawn_cron_scheduler(
     // 1. Spawn Worker Thread with a larger stack size (32KB) to prevent stack overflow
     let worker_nvs = Arc::clone(&nvs);
     let worker_wifi = Arc::clone(&wifi);
-    let worker_mesh = Arc::clone(&mesh_state);
     let worker_act = Arc::clone(&actuators_state);
     let worker_devs = Arc::clone(&static_devs);
     let worker_sched = Arc::clone(&scheduled_actions);
@@ -632,7 +625,6 @@ pub fn spawn_cron_scheduler(
                 rx,
                 worker_nvs,
                 worker_wifi,
-                worker_mesh,
                 worker_act,
                 worker_devs,
                 worker_sched,

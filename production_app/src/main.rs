@@ -8,14 +8,13 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::http::server::{EspHttpServer, Configuration as ServerConfig};
 use esp_idf_svc::sntp::EspSntp;
 use anyhow::{Result, Context};
-use log::{info, warn};
-use std::time::SystemTime;
+use log::info;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.44";
+pub const FW_VERSION: &str = "1.2.45-0018";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -24,17 +23,7 @@ pub const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 pub const AUTHOR_NAME: &str = "LOPEZ Alban";
 pub const AUTHOR_LINK: &str = "https://github.com/sctfic/WhisperEye/blob/main/README.md";
 
-macro_rules! extend_pairing {
-    ($mesh_state:expr) => {
-        {
-            let mut state = $mesh_state.lock().unwrap();
-            if state.pairing_until.is_some() {
-                state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
-                info!("Pairing mode extended by 120 seconds.");
-            }
-        }
-    };
-}
+
 
 mod wifi;
 mod sensors;
@@ -55,7 +44,7 @@ pub mod touch;
 
 use wifi::{NetManager, NetState};
 use common::nvs_storage::NvsStorage;
-use actuators::{Actuators, ActuatorsState, ScheduledActions};
+use actuators::{Actuators, ActuatorsState};
 use board::Board;
 use i2c::I2c;
 use one_wire::OneWire;
@@ -85,15 +74,6 @@ pub enum UrlValidationState {
     NotChecked,
     Checking,
     Checked(bool),
-}
-
-pub struct MeshState {
-    pub is_root: bool,
-    pub distance: i32,
-    pub nodes: std::collections::HashMap<String, std::time::SystemTime>,
-    pub ip_addresses: std::collections::HashMap<String, String>,
-    pub node_names: std::collections::HashMap<String, String>,
-    pub pairing_until: Option<std::time::Instant>,
 }
 
 struct CustomLogger;
@@ -343,19 +323,9 @@ fn main() -> Result<()> {
         }
     }
 
-    let mesh_state = Arc::new(Mutex::new(MeshState {
-        is_root: false,
-        distance: -1,
-        nodes: std::collections::HashMap::new(),
-        ip_addresses: std::collections::HashMap::new(),
-        node_names: std::collections::HashMap::new(),
-        pairing_until: None,
-    }));
-
     // Bouton de boot pour le pairing et le reset d'usine
     let boot_pin = PinDriver::input(boot_pin_gpio, Pull::Up)?;
     let wifi_manager_boot = Arc::clone(&wifi_manager);
-    let mesh_state_boot = Arc::clone(&mesh_state);
     let nvs_boot = Arc::clone(&nvs_storage);
 
     thread::Builder::new()
@@ -372,8 +342,6 @@ fn main() -> Result<()> {
                         net.state = NetState::ApPairing;
                         net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
                         let _ = net.setup_provisioning_ap();
-                        let mut state = mesh_state_boot.lock().unwrap();
-                        state.pairing_until = net.pairing_until;
                     } else if pressed_ticks == 40 {
                         info!("BOOT button held for 4 seconds! Performing factory reset.");
                         common::led::set_reset_flashing(true);
@@ -415,7 +383,6 @@ fn main() -> Result<()> {
     NetManager::start_controller_thread(
         Arc::clone(&wifi_manager),
         Arc::clone(&nvs_storage),
-        Arc::clone(&mesh_state),
     )?;
 
     let scheduled_actions = Arc::new(Mutex::new(actuators::ScheduledActions::default()));
@@ -424,7 +391,6 @@ fn main() -> Result<()> {
     let cron_handle = cron::spawn_cron_scheduler(
         Arc::clone(&nvs_storage),
         Arc::clone(&wifi_manager),
-        Arc::clone(&mesh_state),
         Arc::clone(&actuators_state),
         Arc::clone(&actuators),
         Arc::clone(&scheduled_actions),
@@ -440,7 +406,6 @@ fn main() -> Result<()> {
         &mut server,
         Arc::clone(&nvs_storage),
         Arc::clone(&wifi_manager),
-        Arc::clone(&mesh_state),
         Arc::clone(&url_validation_state),
         Arc::clone(&discovered_probes),
         Arc::clone(&actuators_state),
@@ -455,6 +420,24 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

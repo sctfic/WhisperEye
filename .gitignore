@@ -7,3 +7,5 @@ boards/board_default/firmware-s3.json
 components_esp32s3.lock
 a faire.md
 walkthrough.md
+build_err.log
+build_err.txt

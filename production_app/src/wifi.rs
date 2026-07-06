@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::MeshState;
 use common::nvs_storage::NvsStorage;
 use common::led::{self, LedStaStatus, LedApStatus};
 
@@ -340,7 +339,6 @@ impl NetManager {
     pub fn start_controller_thread(
         this: Arc<Mutex<Self>>,
         nvs: Arc<Mutex<NvsStorage>>,
-        mesh_state: Arc<Mutex<MeshState>>,
     ) -> Result<()> {
         thread::Builder::new()
             .name("net_controller".to_string())
@@ -391,10 +389,6 @@ impl NetManager {
                                 let mut net = this.lock().unwrap();
                                 net.pairing_until = Some(until);
                             }
-                            {
-                                let mut ms = mesh_state.lock().unwrap();
-                                ms.pairing_until = Some(until);
-                            }
                             info!("Provisioning pairing: AP client connected, extended by 120s");
                         }
 
@@ -408,8 +402,6 @@ impl NetManager {
                             net.pairing_until = None;
                             net.state = NetState::WifiPreferred;
                             net.last_state_change = now;
-                            let mut ms = mesh_state.lock().unwrap();
-                            ms.pairing_until = None;
                             // Rétablir le LED AP à Off
                             led::set_ap_status(LedApStatus::Off);
                         }

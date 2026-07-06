@@ -1,4 +1,3 @@
-use serde::Serialize;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use std::sync::Mutex;

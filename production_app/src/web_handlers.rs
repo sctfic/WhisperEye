@@ -11,7 +11,6 @@ use common::nvs_storage::NvsStorage;
 use crate::actuators::{Actuators, ActuatorsState, ScheduledActions};
 use crate::board::Board;
 use crate::i2c::I2c;
-use crate::MeshState;
 use crate::UrlValidationState;
 use crate::ConfigPayload;
 use crate::FW_VERSION;
@@ -303,8 +302,9 @@ pub fn build_capacity_info(
                 });
                 if let Some(ref m) = meta {
                     sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                    sensor_json["range_min"] = serde_json::json!(m.range_min);
-                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    sensor_json["range"] = serde_json::json!(m.range);
+                    sensor_json["range_min"] = serde_json::json!(m.range[0]);
+                    sensor_json["range_max"] = serde_json::json!(m.range[1]);
                 }
                 sensors.push(sensor_json);
             }
@@ -320,8 +320,9 @@ pub fn build_capacity_info(
                 });
                 if let Some(ref m) = meta {
                     sensor_json["uncertainty"] = serde_json::json!(m.uncertainty);
-                    sensor_json["range_min"] = serde_json::json!(m.range_min);
-                    sensor_json["range_max"] = serde_json::json!(m.range_max);
+                    sensor_json["range"] = serde_json::json!(m.range);
+                    sensor_json["range_min"] = serde_json::json!(m.range[0]);
+                    sensor_json["range_max"] = serde_json::json!(m.range[1]);
                 }
                 sensors.push(sensor_json);
             }
@@ -354,59 +355,7 @@ pub fn build_capacity_info(
 
 // --- Route Handlers ---
 
-pub fn handle_proxy(req: Request<&mut EspHttpConnection<'_>>, proxy_mesh: Arc<Mutex<MeshState>>) -> Result<()> {
-    let uri = req.uri();
-    let mac = if let Some(pos) = uri.find("mac=") {
-        let raw_mac = &uri[pos + 4..];
-        raw_mac.split('&').next().unwrap_or("").to_string().to_uppercase()
-    } else {
-        String::new()
-    };
-    let mac = mac.replace("%3A", ":").replace("%3a", ":");
 
-    let target_ip = {
-        let state = proxy_mesh.lock().unwrap();
-        state.ip_addresses.get(&mac).cloned()
-    };
-
-    let target_ip = match target_ip {
-        Some(ip) if ip != "0.0.0.0" => ip,
-        _ => {
-            let mut response = req.into_status_response(404)?;
-            response.write(format!("Noeud enfant avec la MAC '{}' introuvable", mac).as_bytes())?;
-            return Ok(());
-        }
-    };
-
-    info!("Proxying request for child MAC {} to http://{}/", mac, target_ip);
-    
-    let config = esp_idf_svc::http::client::Configuration {
-        buffer_size: Some(512),
-        crt_bundle_attach: None,
-        ..Default::default()
-    };
-    
-    let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-    let target_url = format!("http://{}/", target_ip);
-    connection.initiate_request(esp_idf_svc::http::Method::Get, &target_url, &[])?;
-    connection.initiate_response()?;
-
-    let status = connection.status();
-    let mut response = req.into_response(status, Some("OK"), &[
-        ("Access-Control-Allow-Origin", "*"),
-    ])?;
-    let mut chunk = [0u8; 512];
-    loop {
-        match connection.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                response.write(&chunk[..n])?;
-            }
-            Err(e) => anyhow::bail!("Failed to read proxy response: {:?}", e),
-        }
-    }
-    Ok(())
-}
 
 pub fn handle_captive_redirect(req: Request<&mut EspHttpConnection<'_>>) -> Result<()> {
     let subnet = wifi::AP_IP_B.load(Ordering::Relaxed);
@@ -416,99 +365,19 @@ pub fn handle_captive_redirect(req: Request<&mut EspHttpConnection<'_>>) -> Resu
     Ok(())
 }
 
-pub fn handle_network_knowledge(req: Request<&mut EspHttpConnection<'_>>, nvs_sync: Arc<Mutex<NvsStorage>>, mesh_state_sync: Arc<Mutex<MeshState>>) -> Result<()> {
-    let uri = req.uri();
-    let mut mac = if let Some(pos) = uri.find("mac=") {
-        let raw_mac = &uri[pos + 4..];
-        raw_mac.split('&').next().unwrap_or("").to_string()
-    } else {
-        "unknown".to_string()
-    };
-    mac = mac.replace("%3A", ":").replace("%3a", ":");
-    
-    let ip = if let Some(pos) = uri.find("ip=") {
-        let raw_ip = &uri[pos + 3..];
-        raw_ip.split('&').next().unwrap_or("0.0.0.0").to_string()
-    } else {
-        "0.0.0.0".to_string()
-    };
-    
-    let name = if let Some(pos) = uri.find("name=") {
-        let raw_name = &uri[pos + 5..];
-        let decoded = raw_name.split('&').next().unwrap_or("").to_string();
-        percent_decode(&decoded)
-    } else {
-        String::new()
-    };
-    
-    info!("Received Mesh sync request from MAC: {} (IP: {}, Name: '{}')", mac, ip, name);
-    
-    {
-        let mut state = mesh_state_sync.lock().unwrap();
-        if mac != "unknown" {
-            state.nodes.insert(mac.clone(), SystemTime::now());
-            state.ip_addresses.insert(mac.clone(), ip);
-            if !name.is_empty() {
-                state.node_names.insert(mac, name);
-            }
-        }
-        if state.pairing_until.is_some() {
-            state.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(10));
-            info!("Mesh sync called during pairing mode. Reducing remaining pairing time to 10 seconds.");
-        }
-    }
-    
-    let (wifi_ssid, wifi_psk) = {
-        let storage = nvs_sync.lock().unwrap();
-        let known = storage.get_known_networks().unwrap_or_default();
-        known.iter()
-            .find(|(_, entry)| entry.default.unwrap_or(false))
-            .map(|(ssid, entry)| (ssid.clone(), entry.psk.clone()))
-            .unwrap_or_default()
-    };
-    let ntp_server = {
-        let storage = nvs_sync.lock().unwrap();
-        storage.get_str("ntpServer").ok().flatten().unwrap_or_default()
-    };
-    let distance = {
-        let state = mesh_state_sync.lock().unwrap();
-        state.distance
-    };
-    let last_seen = {
-        let storage = nvs_sync.lock().unwrap();
-        storage.get_default_network_last_seen().unwrap_or(None)
-    };
-    
-    let json = serde_json::json!({
-        "wifi_ssid": wifi_ssid,
-        "wifi_psk": wifi_psk,
-        "ntp_server": ntp_server,
-        "distance": distance,
-        "last_seen": last_seen,
-    });
-    
-    let response_data = serde_json::to_string(&json)?;
-    let mut response = req.into_response(200, Some("OK"), &[
-        ("Content-Type", "application/json"),
-        ("Access-Control-Allow-Origin", "*")
-    ])?;
-    response.write(response_data.as_bytes())?;
-    Ok(())
-}
+
 
 pub fn handle_api_status(
     req: Request<&mut EspHttpConnection<'_>>,
     nvs_clone: Arc<Mutex<NvsStorage>>,
     wifi_clone: Arc<Mutex<NetManager>>,
-    mesh_state_clone: Arc<Mutex<MeshState>>,
     url_state_clone: Arc<Mutex<UrlValidationState>>,
 ) -> Result<()> {
     let storage = nvs_clone.lock().unwrap();
     let wifi = wifi_clone.lock().unwrap();
     
     let pairing_remaining = {
-        let state = mesh_state_clone.lock().unwrap();
-        if let Some(until) = state.pairing_until {
+        if let Some(until) = wifi.pairing_until {
             let now = std::time::Instant::now();
             if now < until {
                 (until - now).as_secs() as i64
@@ -876,18 +745,24 @@ pub fn handle_api_peripherals(
 
 pub fn handle_rename_peripherals(mut req: Request<&mut EspHttpConnection<'_>>, rename_nvs: Arc<Mutex<NvsStorage>>) -> Result<()> {
     #[derive(serde::Deserialize)]
-    struct RenamePayload {
+    struct PeripheralPayload {
         id: String,
-        name: String,
+        name: Option<String>,
+        address: Option<String>,
+        polarity: Option<String>,
+        unit: Option<String>,
+        uncertainty: Option<String>,
+        range: Option<[f64; 2]>,
+        correction_formula: Option<String>,
+        step: Option<u8>,
+        pwm_val: Option<u8>,
+        schedules: Option<Vec<crate::actuators::ScheduledAction>>,
     }
-    let mut buf = vec![0u8; 512];
+    let mut buf = vec![0u8; 1024];
     let bytes_read = req.read(&mut buf)?;
     log::info!("[POST /api/peripherals] Bytes read: {}", bytes_read);
 
-    let body_str = String::from_utf8_lossy(&buf[..bytes_read]);
-    log::info!("[POST /api/peripherals] Body payload: {}", body_str);
-
-    let payload: RenamePayload = match serde_json::from_slice(&buf[..bytes_read]) {
+    let payload: PeripheralPayload = match serde_json::from_slice(&buf[..bytes_read]) {
         Ok(p) => p,
         Err(e) => {
             log::warn!("[POST /api/peripherals] JSON deserialization failed: {:?}", e);
@@ -897,26 +772,38 @@ pub fn handle_rename_peripherals(mut req: Request<&mut EspHttpConnection<'_>>, r
         }
     };
 
-    log::info!("[POST /api/peripherals] Decoded payload: id='{}', name='{}'", payload.id, payload.name);
-
-    if !is_valid_peripheral_name(&payload.name, 24) {
-        log::warn!("[POST /api/peripherals] Invalid name validation failed for: '{}'", payload.name);
-        let mut response = req.into_status_response(400)?;
-        response.write(b"Nom de peripherique invalide. Il doit faire 24 caracteres max, sans ' ou ` ou :.")?;
-        return Ok(());
+    if let Some(ref n) = payload.name {
+        if !is_valid_peripheral_name(n, 64) {
+            log::warn!("[POST /api/peripherals] Invalid name validation failed for: '{}'", n);
+            let mut response = req.into_status_response(400)?;
+            response.write(b"Nom de peripherique invalide. Il doit faire 64 caracteres max, sans ' ou ` ou :.")?;
+            return Ok(());
+        }
     }
 
     let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&rename_nvs));
-    if let Err(e) = registry.rename_device(&payload.id, &payload.name) {
-        log::warn!("[POST /api/peripherals] rename_device failed for id '{}': {:?}", payload.id, e);
+    if let Err(e) = registry.update_device_properties(
+        &payload.id,
+        payload.name,
+        payload.address,
+        payload.polarity,
+        payload.unit,
+        payload.uncertainty,
+        payload.range,
+        payload.correction_formula,
+        payload.step,
+        payload.pwm_val,
+        payload.schedules,
+    ) {
+        log::warn!("[POST /api/peripherals] update_device_properties failed for id '{}': {:?}", payload.id, e);
         let mut response = req.into_status_response(400)?;
         response.write(format!("Error: {}", e).as_bytes())?;
         return Ok(());
     }
 
-    log::info!("[POST /api/peripherals] Rename successful!");
+    log::info!("[POST /api/peripherals] Properties update successful!");
     let mut response = req.into_ok_response()?;
-    response.write(b"Rename Successful")?;
+    response.write(b"Update Successful")?;
     Ok(())
 }
 

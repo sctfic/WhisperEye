@@ -307,5 +307,46 @@ Describe "WhisperEye Production API Integration" {
                 $bad_clear_res.StatusCode | Should Be 403
             }
         }
+
+
+
+        It "should update sensor correction formula (POST /api/sensor-correction)" {
+            $body = '{"id": "sht45_temp", "formula": "x + 0.5"}'
+            $res = Get-HttpStatus "$BaseUrl/api/sensor-correction" -Method POST -Body $body
+            $res.StatusCode | Should Be 200
+            $res.Content | Should Be "OK"
+        }
+
+        It "should control actuator state via control endpoint (POST /api/actuators/control)" {
+            $body = '{"id": "rla", "state": true, "token": ""}'
+            $res = Get-HttpStatus "$BaseUrl/api/actuators/control" -Method POST -Body $body
+            $res.StatusCode | Should Be 200
+            $res.Content | Should Like "*Action executee avec succes*"
+        }
+
+        It "should toggle identify LED mode (POST /api/identify and POST /api/identify/stop)" {
+            $res = Get-HttpStatus "$BaseUrl/api/identify" -Method POST
+            $res.StatusCode | Should Be 200
+            $j = $res.Content | ConvertFrom-Json
+            $j.status | Should Be "ok"
+
+            $res_stop = Get-HttpStatus "$BaseUrl/api/identify/stop" -Method POST
+            $res_stop.StatusCode | Should Be 200
+            $j_stop = $res_stop.Content | ConvertFrom-Json
+            $j_stop.status | Should Be "ok"
+        }
+
+        It "should enable Wi-Fi AP provisioning pairing mode (POST /api/network/ApPairing)" {
+            $res = Get-HttpStatus "$BaseUrl/api/network/ApPairing" -Method POST
+            $res.StatusCode | Should Be 200
+            $res.Content | Should Like "*Provisioning mode enabled*"
+        }
+
+        It "should trigger system restart (POST /api/restart)" {
+            $res = Get-HttpStatus "$BaseUrl/api/restart" -Method POST
+            $res.StatusCode | Should Be 200
+            $j = $res.Content | ConvertFrom-Json
+            $j.status | Should Be "ok"
+        }
     }
 }

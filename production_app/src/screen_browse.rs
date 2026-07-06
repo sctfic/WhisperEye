@@ -545,9 +545,15 @@ impl BrowseController {
                                 name: "Écran ST7789".to_string(),
                                 is_static: false,
                                 present: true,
+                                address: None,
+                                polarity: None,
+                                unit: None,
+                                uncertainty: None,
+                                range: None,
                                 correction_formula: None,
                                 step: None,
                                 pwm_val: Some(val as u8),
+                                schedules: None,
                             });
                         }
                         registry.save_registry(&map);
@@ -775,7 +781,7 @@ impl BrowseController {
             return Ok(());
         }
 
-        let needs_redraw_full = self.needs_redraw;
+        let _needs_redraw_full = self.needs_redraw;
         self.needs_redraw = false;
         let val_changed = self.value_changed;
         self.value_changed = false;

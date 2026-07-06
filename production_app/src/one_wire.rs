@@ -3,7 +3,7 @@ pub mod one_wire_ds18b20;
 use esp_idf_hal::gpio::{PinDriver, InputOutput, Gpio39, Pull};
 use esp_idf_hal::delay::Ets;
 use esp_idf_sys as sys;
-use log::{info, warn, error, debug};
+use log::{info, warn, debug};
 
 pub static ONEWIRE_DEVICES_COUNT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 pub static ONEWIRE_TEMPERATURES: std::sync::Mutex<Option<std::collections::HashMap<String, f32>>> = std::sync::Mutex::new(None);

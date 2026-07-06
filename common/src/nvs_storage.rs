@@ -248,21 +248,9 @@ impl NvsStorage {
                 Err(e) => info!("  {} : Error({:?})", key, e),
             }
         }
-        // Also try to dump device registry and per-device correction formulas if present
+        // Dump device registry (devicesKnow) JSON if present
         match self.get_str("devicesKnow") {
             Ok(Some(reg_json)) => {
-                // Try to parse registry and dump any corr_<id> keys first
-                if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&reg_json) {
-                    for (id, _entry) in map {
-                        let corr_key = format!("corr_{}", id);
-                        match self.get_str(&corr_key) {
-                            Ok(Some(c)) => info!("  {} : \"{}\"", corr_key, c),
-                            Ok(None) => info!("  {} : [not set]", corr_key),
-                            Err(e) => info!("  {} : Error({:?})", corr_key, e),
-                        }
-                    }
-                }
-                // Dump devicesKnow registry JSON in pretty-printed multiline format at the very end
                 if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&reg_json) {
                     if let Ok(pretty) = serde_json::to_string_pretty(&json_val) {
                         info!("  devicesKnow :\n{}", pretty);
