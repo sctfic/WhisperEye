@@ -2,7 +2,7 @@
 
 use embedded_graphics::{
     prelude::*,
-    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+    mono_font::{iso_8859_1::FONT_6X10, MonoTextStyleBuilder},
     pixelcolor::Rgb565,
     text::Text,
     primitives::{Rectangle, PrimitiveStyle},
@@ -276,6 +276,28 @@ where
     Ok(())
 }
 
+fn draw_warning_icon<D>(display: &mut D, start_point: Point) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use embedded_graphics::primitives::Triangle;
+    let color = Rgb565::new(31, 45, 0); // Orange/Yellow warning color
+    
+    let _ = Triangle::new(
+        Point::new(start_point.x + 4, start_point.y),
+        Point::new(start_point.x, start_point.y + 8),
+        Point::new(start_point.x + 8, start_point.y + 8)
+    )
+    .into_styled(PrimitiveStyle::with_fill(color))
+    .draw(display);
+
+    let _ = Pixel(Point::new(start_point.x + 4, start_point.y + 3), Rgb565::BLACK).draw(display);
+    let _ = Pixel(Point::new(start_point.x + 4, start_point.y + 4), Rgb565::BLACK).draw(display);
+    let _ = Pixel(Point::new(start_point.x + 4, start_point.y + 6), Rgb565::BLACK).draw(display);
+
+    Ok(())
+}
+
 // ── 2. INITIALISATION ET BOUCLE PRINCIPALE IHM ──
 
 pub fn run_ihm(
@@ -289,12 +311,11 @@ pub fn run_ihm(
 ) -> Result<(), anyhow::Error> {
     log::info!("Starting Screen IHM thread (screen_display & screen_browse)...");
 
-    let (mut last_brightness, mut timeout_mins) = {
-        let mut storage = nvs_storage.lock().unwrap();
-        let b = storage.get_i32("scrBrightness").ok().flatten().unwrap_or(20) as u32;
-        let t = storage.get_i32("scrTimeout").ok().flatten().unwrap_or(5);
-        (b, t)
+    let mut last_brightness = {
+        let storage = nvs_storage.lock().unwrap();
+        storage.get_i32("scrBrightness").ok().flatten().unwrap_or(20) as u32
     };
+    let mut timeout_mins;
     let _ = screen.set_backlight(last_brightness);
 
     let mut last_user_activity = std::time::Instant::now();
@@ -350,7 +371,7 @@ pub fn run_ihm(
 
     loop {
         let current_touch = {
-            let mut b = board.lock().unwrap();
+            let b = board.lock().unwrap();
             b.is_touch_pressed()
         };
 
@@ -383,7 +404,7 @@ pub fn run_ihm(
         }
 
         let (brightness_val, timeout_mins_val) = {
-            let mut storage = nvs_storage.lock().unwrap();
+            let storage = nvs_storage.lock().unwrap();
             let b = storage.get_i32("scrBrightness").ok().flatten().unwrap_or(20) as u32;
             let t = storage.get_i32("scrTimeout").ok().flatten().unwrap_or(5);
             (b, t)
@@ -397,13 +418,9 @@ pub fn run_ihm(
                 let _ = screen.set_backlight(brightness_val);
                 screen_is_off = false;
                 // Ignorer l'entrée de réveil en remettant à zéro les clics et le delta encodeur
-                btn2_clicked = false;
-                btn3_clicked = false;
-                
                 screen.clear_encoder();
                 let fresh_encoder = screen.get_encoder_count();
                 last_encoder_val = fresh_encoder;
-                current_encoder_delta_val = fresh_encoder;
                 
                 // Synchroniser le contrôleur de navigation pour éviter tout saut
                 controller.last_encoder_raw = fresh_encoder;
@@ -514,6 +531,14 @@ pub fn run_ihm(
 
             let _ = Text::new("utc", Point::new(1, 11), status_style_gray).draw(&mut display);
             let _ = Text::new(&current_time_str, Point::new(20, 11), status_style_white).draw(&mut display);
+
+            if !ntp_synced {
+                let _ = draw_warning_icon(&mut display, Point::new(54, 3));
+            } else {
+                let _ = Rectangle::new(Point::new(54, 2), Size::new(9, 9))
+                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                    .draw(&mut display);
+            }
         }
 
         let _ = draw_i2c_icon(&mut display, Point::new(68, 1), current_i2c > 0);

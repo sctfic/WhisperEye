@@ -3,7 +3,30 @@ pub mod one_wire_ds18b20;
 use esp_idf_hal::gpio::{PinDriver, InputOutput, Gpio39, Pull};
 use esp_idf_hal::delay::Ets;
 use esp_idf_sys as sys;
-use log::{info, warn, debug};
+macro_rules! info {
+    ($fmt:literal) => {
+        log::info!(concat!("\x1b[36m", $fmt, "\x1b[0m"));
+    };
+    ($fmt:literal, $($arg:tt)*) => {
+        log::info!(concat!("\x1b[36m", $fmt, "\x1b[0m"), $($arg)*);
+    };
+}
+macro_rules! warn {
+    ($fmt:literal) => {
+        log::warn!(concat!("\x1b[36m", $fmt, "\x1b[0m"));
+    };
+    ($fmt:literal, $($arg:tt)*) => {
+        log::warn!(concat!("\x1b[36m", $fmt, "\x1b[0m"), $($arg)*);
+    };
+}
+macro_rules! debug {
+    ($fmt:literal) => {
+        log::debug!(concat!("\x1b[36m", $fmt, "\x1b[0m"));
+    };
+    ($fmt:literal, $($arg:tt)*) => {
+        log::debug!(concat!("\x1b[36m", $fmt, "\x1b[0m"), $($arg)*);
+    };
+}
 
 pub static ONEWIRE_DEVICES_COUNT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 pub static ONEWIRE_TEMPERATURES: std::sync::Mutex<Option<std::collections::HashMap<String, f32>>> = std::sync::Mutex::new(None);
@@ -92,7 +115,7 @@ impl<'d> OneWire<'d> {
             Ets::delay_us(415);
             let state_end = self.pin.is_high();
             
-            warn!(
+            info!(
                 "[1-Wire Reset] Avant: {}, Transition 15us: {}, Présence (65us): {}, Fin: {}",
                 if state_before { "H" } else { "B" },
                 if state_after_15us { "H" } else { "B" },
@@ -127,11 +150,11 @@ impl<'d> OneWire<'d> {
     pub fn read_bit(&mut self) -> bool {
         critical_section::with(|_| {
             self.pin.set_low().unwrap();
-            Ets::delay_us(2); // Flanc descendant de 2µs (détection du slot de lecture par le capteur)
+            Ets::delay_us(3); // Flanc descendant : 3µs (spec : 1-15µs, on garde de la marge)
             self.pin.set_high().unwrap();
-            Ets::delay_us(8); // Attente de 8µs (total 10µs du slot) pour échantillonner la ligne au milieu de la fenêtre de validité (15µs max)
+            Ets::delay_us(12); // Échantillonnage à 15µs total depuis le début du slot (fenêtre valide : 15µs max)
             let bit = self.pin.is_high();
-            Ets::delay_us(60); // Fin du cycle (durée minimale du slot 1-wire : 60µs)
+            Ets::delay_us(55); // Fin du cycle (slot 1-wire : 60µs minimum, ici 70µs total pour la robustesse)
             bit
         })
     }
@@ -153,6 +176,24 @@ impl<'d> OneWire<'d> {
             }
         }
         byte
+    }
+
+    /// Lecture du scratchpad d'un capteur (retourne les 9 octets bruts).
+    /// Appelé après un Reset + Match ROM + 0xBE.
+    fn read_scratchpad_raw(&mut self, rom_bytes: &[u8; 8]) -> Option<[u8; 9]> {
+        if !self.reset() {
+            return None;
+        }
+        self.write_byte(0x55); // Match ROM
+        for &byte in rom_bytes {
+            self.write_byte(byte);
+        }
+        self.write_byte(0xBE); // Read Scratchpad
+        let mut scratchpad = [0u8; 9];
+        for i in 0..9 {
+            scratchpad[i] = self.read_byte();
+        }
+        Some(scratchpad)
     }
 
     /// Scanne le bus à la recherche de capteurs DS18B20 connectés.
@@ -179,22 +220,24 @@ impl<'d> OneWire<'d> {
             let calculated_crc = calculate_crc8(&rom[0..7]);
             let is_crc_valid = calculated_crc == rom[7];
 
-            info!(
-                "[1-Wire Search] ROM trouvée : 0x{} (CRC: {})",
-                hex_addr.to_uppercase(),
-                if is_crc_valid { "OK" } else { "ERREUR" }
-            );
-
             if rom[0] == 0x28 && is_crc_valid {
                 if !devices.contains(&hex_addr) {
-                    info!("[1-Wire Search] DS18B20 ajouté : 0x{}", hex_addr.to_uppercase());
+                    info!(
+                        "[1-Wire Search] ROM trouvée : 0x{} (CRC: OK) -> DS18B20 ajouté",
+                        hex_addr.to_uppercase()
+                    );
                     devices.push(hex_addr);
                 } else {
                     warn!("[1-Wire Search] Doublon détecté, arrêt de la recherche.");
                     break;
                 }
-            } else if rom[0] != 0x28 {
-                info!("[1-Wire Search] Périphérique de famille 0x{:02x} ignoré.", rom[0]);
+            } else {
+                info!(
+                    "[1-Wire Search] ROM trouvée : 0x{} (CRC: {}) - Famille 0x{:02x} ignorée",
+                    hex_addr.to_uppercase(),
+                    if is_crc_valid { "OK" } else { "ERREUR" },
+                    rom[0]
+                );
             }
 
             if state.last_device {
@@ -234,7 +277,7 @@ impl<'d> OneWire<'d> {
 
                     if ibit && ibit_complement {
                         // 1,1 -> aucun dispositif sur le bus
-                        debug!("[1-Wire Search] Pas de réponse au bit {} (1,1). Fin de la branche.", rom_bit_number);
+                        info!("[1-Wire Search] Pas de réponse au bit {} (1,1). Fin de la branche.", rom_bit_number);
                         state.last_device = true;
                         return;
                     }
@@ -272,16 +315,15 @@ impl<'d> OneWire<'d> {
             state.last_discrepancy = discrepancy_marker;
             state.last_device = discrepancy_marker == 0;
 
-            debug!(
+            info!(
                 "[1-Wire Search] Fin d’un parcours : last_discrepancy={}, last_device={}",
                 state.last_discrepancy, state.last_device
             );
         });
     }
 
-    /// Lance la conversion de température globale pour tous les capteurs (Skip ROM).
     pub fn start_conversion(&mut self) -> Result<(), anyhow::Error> {
-        debug!("[DS18B20] Envoi de la commande de conversion globale (Skip ROM 0xCC + Convert T 0x44)...");
+        info!("réveil 1Wire brodcast (Skip ROM (0xCC))");
         if !self.reset() {
             anyhow::bail!("Aucun capteur n'a répondu au Reset avant la commande de conversion");
         }
@@ -302,55 +344,68 @@ impl<'d> OneWire<'d> {
         }
 
         let hex_rom = rom.to_uppercase();
-        debug!("[DS18B20] Début de la lecture du scratchpad pour le capteur 0x{}...", hex_rom);
-        
-        if !self.reset() {
-            anyhow::bail!("Le capteur 0x{} n'a pas répondu au Reset avant la lecture", hex_rom);
-        }
-        
-        // Match ROM
-        self.write_byte(0x55);
-        for &byte in &rom_bytes {
-            self.write_byte(byte);
-        }
+        const MAX_RETRIES: usize = 3;
 
-        // Read Scratchpad
-        self.write_byte(0xBE);
-        
-        // Lire les 9 octets du scratchpad
-        let mut scratchpad = [0u8; 9];
-        for i in 0..9 {
-            scratchpad[i] = self.read_byte();
-        }
-
-        // Calculer et vérifier le CRC8 du scratchpad
-        let calculated_crc = calculate_crc8(&scratchpad[0..8]);
-        let received_crc = scratchpad[8];
-        
-        debug!(
-            "[DS18B20] Scratchpad reçu pour 0x{} : [{}] CRC calculé: 0x{:02x}, CRC reçu: 0x{:02x}",
-            hex_rom,
-            scratchpad.iter().map(|b| format!("0x{:02x}", b)).collect::<Vec<String>>().join(", "),
-            calculated_crc,
-            received_crc
-        );
-
-        if calculated_crc != received_crc {
-            anyhow::bail!(
-                "Erreur de CRC scratchpad pour le capteur 0x{} (attendu: 0x{:02x}, reçu: 0x{:02x})",
-                hex_rom, calculated_crc, received_crc
+        for attempt in 1..=MAX_RETRIES {
+            info!(
+                "[DS18B20] Lecture scratchpad 0x{} (tentative {}/{})",
+                hex_rom, attempt, MAX_RETRIES
             );
+
+            let scratchpad = match self.read_scratchpad_raw(&rom_bytes) {
+                Some(sp) => sp,
+                None => {
+                    warn!(
+                        "[DS18B20] 0x{} : pas de réponse au Reset (tentative {})",
+                        hex_rom, attempt
+                    );
+                    // Recovery : laisser le bus se stabiliser
+                    Ets::delay_ms(10);
+                    continue;
+                }
+            };
+
+            let calculated_crc = calculate_crc8(&scratchpad[0..8]);
+            let received_crc = scratchpad[8];
+
+            info!(
+                "[DS18B20] Scratchpad 0x{} : [{}] CRC calc=0x{:02x} recu=0x{:02x}",
+                hex_rom,
+                scratchpad.iter().map(|b| format!("{:02x}", b)).collect::<Vec<String>>().join(" "),
+                calculated_crc,
+                received_crc
+            );
+
+            if calculated_crc != received_crc {
+                warn!(
+                    "[DS18B20] 0x{} : erreur CRC (attendu 0x{:02x}, recu 0x{:02x}) - tentative {}/{}",
+                    hex_rom, calculated_crc, received_crc, attempt, MAX_RETRIES
+                );
+                // Recovery bus : reset pour purger l'état du capteur
+                let _ = self.reset();
+                Ets::delay_ms(5);
+                continue;
+            }
+
+            // CRC OK -> extraction température (12-bit, résolution 0.0625°C)
+            let lsb = scratchpad[0];
+            let msb = scratchpad[1];
+            let temp_raw = ((msb as i16) << 8) | (lsb as i16);
+            let temp_c = (temp_raw as f32) / 16.0;
+
+            if attempt > 1 {
+                info!(
+                    "[DS18B20] 0x{} : lecture réussie après {} tentatives -> {:.2}C",
+                    hex_rom, attempt, temp_c
+                );
+            }
+
+            return Ok(temp_c);
         }
 
-        // Extraction de la température (12-bit par défaut, LSB à l'index 0, MSB à l'index 1)
-        let lsb = scratchpad[0];
-        let msb = scratchpad[1];
-        
-        // Sign extend sur 16 bits
-        let temp_raw = ((msb as i16) << 8) | (lsb as i16);
-        // La résolution est de 0.0625 °C (1/16 °C) par bit pour 12-bit
-        let temp_c = (temp_raw as f32) / 16.0;
-
-        Ok(temp_c)
+        anyhow::bail!(
+            "[DS18B20] 0x{} : échec après {} tentatives (CRC ou Reset)",
+            hex_rom, MAX_RETRIES
+        )
     }
 }

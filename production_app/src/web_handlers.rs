@@ -89,7 +89,7 @@ pub fn is_valid_name(name: &str, max_len: usize) -> bool {
         return false;
     }
     for c in trimmed.chars() {
-        if c == ' ' || c == '\'' || c == '`' || c == ':' {
+        if c == '\'' || c == '`' || c == ':' {
             return false;
         }
     }
@@ -135,10 +135,67 @@ pub fn is_valid_fqdn(name: &str) -> bool {
     true
 }
 
+lazy_static::lazy_static! {
+    static ref UPDATE_CACHE: std::sync::Mutex<Option<(serde_json::Value, std::time::Instant)>> = std::sync::Mutex::new(None);
+    static ref HTTP_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ref LAST_HTTPS_ATTEMPT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+}
+
 pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, anyhow::Error> {
     if update_url.is_empty() {
         return Err(anyhow::anyhow!("URL vide"));
     }
+
+    // 1. Check if we have a valid cache (2 minutes = 120 seconds)
+    {
+        let cache = UPDATE_CACHE.lock().unwrap();
+        if let Some((val, instant)) = &*cache {
+            if instant.elapsed() < std::time::Duration::from_secs(120) {
+                info!("[check_updates_internal] Cache hit! Returning cached versions.");
+                return Ok(val.clone());
+            }
+        }
+    }
+
+    // 1.5. Rate-limiting : max 1 tentative de requête réseau toutes les 30 secondes
+    {
+        let mut last_attempt = LAST_HTTPS_ATTEMPT.lock().unwrap();
+        if let Some(instant) = *last_attempt {
+            if instant.elapsed() < std::time::Duration::from_secs(30) {
+                return Err(anyhow::anyhow!("Requête HTTPS trop fréquente, attente requise"));
+            }
+        }
+        *last_attempt = Some(std::time::Instant::now());
+    }
+
+    // Acquisition du verrou exclusif TLS/Scan pour éviter les Out Of Memory
+    use std::sync::atomic::Ordering;
+    if crate::wifi::TLS_OR_SCAN_ACTIVE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        info!("[check_updates_internal] HTTPS update check postponed: Wi-Fi scan or another TLS operation is active");
+        return Err(anyhow::anyhow!("Système occupé (scan en cours)"));
+    }
+
+    struct TlsReleaseGuard;
+    impl Drop for TlsReleaseGuard {
+        fn drop(&mut self) {
+            crate::wifi::TLS_OR_SCAN_ACTIVE.store(false, Ordering::SeqCst);
+        }
+    }
+    let _tls_guard = TlsReleaseGuard;
+
+    // 2. Lock HTTP_MUTEX to serialize HTTPS requests and avoid out-of-memory crashes
+    let _http_guard = HTTP_MUTEX.lock().unwrap();
+
+    // 3. Re-check cache in case another thread updated it while we were waiting for the lock
+    {
+        let cache = UPDATE_CACHE.lock().unwrap();
+        if let Some((val, instant)) = &*cache {
+            if instant.elapsed() < std::time::Duration::from_secs(120) {
+                return Ok(val.clone());
+            }
+        }
+    }
+
     let rand_val = unsafe { esp_idf_sys::esp_random() };
     let mut cache_busted_url = update_url.to_string();
     if cache_busted_url.contains('?') {
@@ -148,9 +205,12 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
     }
     info!("[check_updates_internal] Querying URL: {}", cache_busted_url);
 
+    // use_global_ca_store utilise le store CA préchargé par esp-tls sans allouer
+    // de mémoire supplémentaire par handshake (contrairement à crt_bundle_attach)
     let config = esp_idf_svc::http::client::Configuration {
-        buffer_size: Some(2048),
-        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+        buffer_size: Some(1024),
+        use_global_ca_store: true,
+        crt_bundle_attach: None,
         ..Default::default()
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
@@ -172,6 +232,13 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
         }
     }
     let val: serde_json::Value = serde_json::from_slice(&body)?;
+
+    // 4. Update the cache
+    {
+        let mut cache = UPDATE_CACHE.lock().unwrap();
+        *cache = Some((val.clone(), std::time::Instant::now()));
+    }
+
     Ok(val)
 }
 
@@ -846,7 +913,7 @@ pub fn handle_post_actuators(
     let bytes_read = req.read(&mut buf)?;
     let payload: ActuatorsState = serde_json::from_slice(&buf[..bytes_read])?;
     
-    info!("Updating actuators state: {:?}", payload);
+    info!("\x1b[35mUpdating actuators state: {:?}\x1b[0m", payload);
     {
         let mut state = act_clone.lock().unwrap();
         *state = payload.clone();
@@ -1324,12 +1391,11 @@ struct SyncResponse {
     wifi_ssid: String,
     wifi_psk: String,
     ntp_server: String,
-    distance: i32,
     #[serde(default)]
     last_seen: Option<u32>,
 }
 
-fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str, my_name: &str) -> Result<SyncResponse, anyhow::Error> {
+fn request_peer_provisioning(gateway_ip: std::net::Ipv4Addr, my_ip: &str, my_name: &str) -> Result<SyncResponse, anyhow::Error> {
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         crt_bundle_attach: None,
@@ -1357,11 +1423,11 @@ fn try_mesh_sync_request(gateway_ip: std::net::Ipv4Addr, my_ip: &str, my_name: &
     }
     
     let res: SyncResponse = serde_json::from_slice(&body)?;
-    info!("Mesh sync response from parent: SSID='{}', distance={}, last_seen={:?}", res.wifi_ssid, res.distance, res.last_seen);
+    info!("Provisioning sync response from parent: SSID='{}', last_seen={:?}", res.wifi_ssid, res.last_seen);
     Ok(res)
 }
 
-pub fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Addr) -> Result<(i32, bool), anyhow::Error> {
+pub fn sync_from_provisioning_peer(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv4Addr) -> Result<bool, anyhow::Error> {
     let my_ip = unsafe {
         let netif = esp_idf_sys::esp_netif_get_handle_from_ifkey(b"WIFI_STA_DEF\0".as_ptr() as *const _);
         if !netif.is_null() {
@@ -1384,10 +1450,10 @@ pub fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv
     let mut last_err = anyhow::anyhow!("no attempt");
     for attempt in 0..3 {
         if attempt > 0 {
-            info!("Mesh sync retry {}/3...", attempt + 1);
+            info!("Provisioning sync retry {}/3...", attempt + 1);
             thread::sleep(std::time::Duration::from_millis(1500));
         }
-        match try_mesh_sync_request(gateway_ip, my_ip.as_str(), &ext_name) {
+        match request_peer_provisioning(gateway_ip, my_ip.as_str(), &ext_name) {
             Ok(res) => {
                 let should_save_wifi = {
                     let (known_psk, my_last_seen) = {
@@ -1434,14 +1500,65 @@ pub fn perform_mesh_sync(nvs: &Arc<Mutex<NvsStorage>>, gateway_ip: std::net::Ipv
                         storage.set_str("ntpServer", &res.ntp_server)?;
                     }
                 }
-                return Ok((res.distance, should_save_wifi));
+                return Ok(should_save_wifi);
             }
             Err(e) => {
-                warn!("Mesh sync attempt {} failed: {:?}", attempt + 1, e);
+                warn!("Provisioning sync attempt {} failed: {:?}", attempt + 1, e);
                 last_err = e;
             }
         }
     }
     Err(last_err)
 }
+
+pub fn handle_api_network_knowledge(
+    req: Request<&mut EspHttpConnection<'_>>,
+    nvs: Arc<Mutex<NvsStorage>>,
+    wifi: Arc<Mutex<NetManager>>,
+) -> Result<(), anyhow::Error> {
+    use log::warn;
+    use embedded_svc::http::server::Request;
+    use esp_idf_svc::http::server::EspHttpConnection;
+    
+    let is_pairing = {
+        let net = wifi.lock().unwrap();
+        net.state == NetState::ApPairing
+    };
+
+    if !is_pairing {
+        warn!("Blocked access to /api/network/knowledge: device is not in pairing mode");
+        let mut response = req.into_response(403, Some("Forbidden"), &[
+            ("Content-Type", "text/plain"),
+            ("Access-Control-Allow-Origin", "*")
+        ])?;
+        response.write(b"Forbidden: Pairing mode is not active")?;
+        return Ok(());
+    }
+
+    let storage = nvs.lock().unwrap();
+    let known = storage.get_known_networks()?;
+    let default_net = known.iter().find(|(_, e)| e.default.unwrap_or(false));
+
+    let response_json = if let Some((ssid, entry)) = default_net {
+        serde_json::json!({
+            "wifi_ssid": ssid,
+            "wifi_psk": entry.psk,
+            "ntp_server": storage.get_str("ntpServer")?.unwrap_or_default(),
+            "last_seen": entry.last_seen.unwrap_or(0),
+        })
+    } else {
+        serde_json::json!({
+            "wifi_ssid": "",
+            "wifi_psk": "",
+            "ntp_server": "",
+            "last_seen": 0,
+        })
+    };
+
+    let response_data = serde_json::to_string(&response_json)?;
+    let mut response = req.into_ok_response()?;
+    response.write(response_data.as_bytes())?;
+    Ok(())
+}
+
 

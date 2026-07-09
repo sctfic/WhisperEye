@@ -58,6 +58,7 @@ impl Board {
         })
     }
 
+    #[allow(dead_code)]
     pub fn detect(&self) -> bool {
         // La carte mère principale est toujours considérée comme présente
         true

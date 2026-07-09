@@ -143,7 +143,7 @@ impl Actuators {
         gpio36: Gpio36<'static>,
         gpio35: Gpio35<'static>,
     ) -> Result<Self, anyhow::Error> {
-        log::info!("Initializing actuators (RLA, RLB, INA, INB, SWPWR)...");
+        log::info!("\x1b[35mInitializing actuators (RLA, RLB, INA, INB, SWPWR)...\x1b[0m");
 
         let mut sw_pwr = PinDriver::output(gpio21)?;
         sw_pwr.set_high()?; // Garder le système alimenté par défaut
@@ -210,7 +210,7 @@ impl Actuators {
             "ina" => self.ina.set_level(state.into()),
             "inb" => self.inb.set_level(state.into()),
             _ => {
-                log::warn!("Unknown actuator id: {}", id);
+                log::warn!("\x1b[35mUnknown actuator id: {}\x1b[0m", id);
                 Ok(())
             }
         }

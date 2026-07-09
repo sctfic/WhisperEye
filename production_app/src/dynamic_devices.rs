@@ -540,7 +540,7 @@ impl DeviceRegistry {
                 }
             }
 
-            let mut value = serde_json::Value::Null;
+            let mut value;
             let mut unit = String::new();
             match id.as_str() {
                 "rla" | "rlb" | "swpwr" | "ina" | "inb" => {
@@ -771,7 +771,7 @@ impl DeviceRegistry {
     }
 }
 
-fn tokenize(formula: &str, raw_values: &HashMap<String, f64>, current_val: f64) -> Vec<String> {
+pub fn tokenize(formula: &str, raw_values: &HashMap<String, f64>, current_val: f64) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current_word = String::new();
     
@@ -825,7 +825,7 @@ fn resolve_token(token: String, raw_values: &HashMap<String, f64>, current_val: 
     }
 }
 
-fn evaluate_expression(tokens: &[String]) -> Result<f64, anyhow::Error> {
+pub fn evaluate_expression(tokens: &[String]) -> Result<f64, anyhow::Error> {
     let mut output: Vec<String> = Vec::new();
     let mut operators: Vec<String> = Vec::new();
     

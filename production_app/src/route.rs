@@ -288,6 +288,13 @@ pub fn register_routes(
         Ok(())
     })?;
 
+    // GET /api/network/knowledge
+    let knowledge_nvs = Arc::clone(&nvs_storage);
+    let knowledge_wifi = Arc::clone(&wifi_manager);
+    server.api_handler("/api/network/knowledge", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        web_handlers::handle_api_network_knowledge(req, Arc::clone(&knowledge_nvs), Arc::clone(&knowledge_wifi))
+    })?;
+
     // POST /api/config
     let config_nvs = Arc::clone(&nvs_storage);
     let config_wifi = Arc::clone(&wifi_manager);

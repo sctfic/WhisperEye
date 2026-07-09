@@ -84,7 +84,7 @@ impl I2c {
         let target_addresses = [0x44, 0x45, 0x62, 0x76, 0x77];
 
         for &ch in &channels {
-            log::info!("[I2C SCAN] --- Scanning channel {} ---", ch);
+            log::debug!("[I2C SCAN] #{}", ch);
 
             // 1. Essayer avec la polarité standard (SDA=38, SCL=37)
             if let Ok(mut driver) = get_driver(false) {

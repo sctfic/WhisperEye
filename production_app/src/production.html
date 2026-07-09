@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr">
+<!-- FRONTEND -->
 
 <head>
     <meta charset="UTF-8">
@@ -18,6 +19,24 @@
             --border-color: #1e293b;
             --danger: #ef4444;
             --warning: #f59e0b;
+        }
+
+        @keyframes successFlashText {
+            0% {
+                color: #10b981 !important;
+                text-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
+                transform: scale(1.05);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .save-success-flash {
+            animation: successFlashText 1.5s ease-out;
+            display: inline-block;
+            transition: transform 0.2s ease;
         }
 
         * {
@@ -286,6 +305,15 @@
             margin-top: 1rem;
         }
 
+        .slider-wrapper {
+            position: relative;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            height: 24px;
+            margin: 1rem 0;
+        }
+
         .range-slider {
             -webkit-appearance: none;
             width: 100%;
@@ -293,7 +321,9 @@
             border-radius: 5px;
             background: #334155;
             outline: none;
-            margin: 1rem 0;
+            margin: 0;
+            position: relative;
+            z-index: 2;
         }
 
         .range-slider::-webkit-slider-thumb {
@@ -309,6 +339,18 @@
 
         .range-slider::-webkit-slider-thumb:hover {
             transform: scale(1.2);
+        }
+
+        .real-state-thumb {
+            position: absolute;
+            pointer-events: none;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #60a5fa;
+            opacity: 0.6;
+            z-index: 1;
+            transition: left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
         }
 
         /* FORM STYLING */
@@ -1210,6 +1252,7 @@
 
     <script>
         window.deviceRenamable = true;
+        window.realActuatorValues = {};
         const SPINNER_SVG = `<svg class="spinner" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle></svg>`;
 
         function truncateCenter(str, maxLen = 64) {
@@ -1541,16 +1584,8 @@
                             diffSec = 86400 - diffSec;
                         }
 
-                        if (diffSec <= 3) {
-                            ntpStatusSvg = getStatusSvg('green', `Synchronisé (décalage : ${diffSec.toFixed(1)}s)`);
-                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', 'Synchronisée');
-                        } else if (diffSec <= 10) {
-                            ntpStatusSvg = getStatusSvg('yellow', `Désynchronisé (décalage : ${diffSec.toFixed(1)}s)`);
-                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('yellow', `Décalage de ${diffSec.toFixed(1)}s`);
-                        } else {
-                            ntpStatusSvg = getStatusSvg('red', `Décalage important (décalage : ${diffSec.toFixed(1)}s)`);
-                            document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('red', `Décalage de ${diffSec.toFixed(1)}s`);
-                        }
+                        ntpStatusSvg = getStatusSvg('green', `Synchronisé (décalage navigateur : ${diffSec.toFixed(1)}s)`);
+                        document.getElementById('sys_time').innerHTML = data.sys_time + getStatusSvg('green', `Synchronisée (décalage navigateur : ${diffSec.toFixed(1)}s)`);
                     } else {
                         document.getElementById('sys_time').innerHTML = deviceTimeDisplay + getStatusSvg('red', 'Invalide / Non synchronisée');
                     }
@@ -1791,9 +1826,17 @@
 
                             const sliderEl = document.getElementById(`range_${dev.id}`);
                             if (sliderEl) {
-                                sliderEl.value = dev.pwm_val || 0;
-                                const lblEl = document.getElementById(`range_val_${dev.id}`);
-                                if (lblEl) lblEl.innerText = (dev.pwm_val || 0) + '%';
+                                const realVal = dev.pwm_val || 0;
+                                window.realActuatorValues[dev.id] = realVal;
+                                if (document.activeElement !== sliderEl) {
+                                    sliderEl.value = realVal;
+                                    const lblEl = document.getElementById(`range_val_${dev.id}`);
+                                    if (lblEl) lblEl.innerText = realVal + '%';
+                                }
+                                const realThumb = document.getElementById(`real_thumb_${dev.id}`);
+                                if (realThumb) {
+                                    realThumb.style.left = `calc(${realVal}% - ${realVal * 0.18}px + 4px)`;
+                                }
                             }
                         });
 
@@ -1820,17 +1863,22 @@
                                 } else {
                                     const valPct = dev.pwm_val !== undefined && dev.pwm_val !== null ? dev.pwm_val : 0;
                                     const isPwmError = isPowerMissing && (dev.id === 'ina' || dev.id === 'inb');
-                                    const inputClass = isPwmError ? 'class="slider-danger"' : '';
+                                    const inputClass = isPwmError ? 'slider-danger' : '';
                                     const inputStyle = isPwmError ? 'accent-color: #ef4444; filter: drop-shadow(0 0 2px rgba(239,68,68,0.5));' : '';
                                     const labelStyle = isPwmError ? 'color: #ef4444 !important;' : 'color: var(--accent-color);';
                                     const warningTitle = isPwmError ? 'title="Power Supply Missing !"' : '';
 
                                     valueHtml = `
-                                        <div style="display: flex; align-items: center; gap: 0.5rem; width: 150px;" ${warningTitle}>
-                                            <input type="range" id="range_${dev.id}" min="0" max="100" step="${dev.step || 10}" value="${valPct}" 
-                                                style="flex: 1; ${inputStyle}" ${inputClass} oninput="updateRangeLabel('${dev.id}', this.value)" onchange="sendRangeValue('${dev.id}', this.value)">
-                                            <span id="range_val_${dev.id}" style="font-weight: 700; ${labelStyle} font-size: 0.95rem; min-width: 38px; text-align: right;">${valPct}%</span>
-                                        </div>`;
+                                         <div style="display: flex; align-items: center; gap: 0.5rem; width: 150px;" ${warningTitle}>
+                                             <div class="slider-wrapper">
+                                                 <input type="range" id="range_${dev.id}" min="0" max="100" step="${dev.step || 10}" value="${valPct}" 
+                                                     class="range-slider ${inputClass}"
+                                                     style="${inputStyle}" oninput="updateRangeLabel('${dev.id}', this.value)" onchange="sendRangeValue('${dev.id}', this.value)"
+                                                     onwheel="event.preventDefault(); const step = parseFloat(this.step) || 10; let newVal = parseFloat(this.value) + (event.deltaY < 0 ? step : -step); newVal = Math.max(0, Math.min(100, newVal)); this.value = newVal; updateRangeLabel('${dev.id}', newVal); sendRangeValue('${dev.id}', newVal);">
+                                                 <div id="real_thumb_${dev.id}" class="real-state-thumb" style="left: calc(${valPct}% - ${valPct * 0.18}px + 4px);"></div>
+                                             </div>
+                                             <span id="range_val_${dev.id}" style="font-weight: 700; ${labelStyle} font-size: 0.95rem; min-width: 38px; text-align: right;">${valPct}%</span>
+                                         </div>`;
                                 }
 
                                 // Render active schedules for this actuator
@@ -1953,6 +2001,26 @@
                         }
                         sensContainer.innerHTML = html;
                     }
+
+                    if (window.successFlashId) {
+                        const el = document.getElementById('name_display_' + window.successFlashId);
+                        if (el) {
+                            el.classList.remove('save-success-flash');
+                            void el.offsetWidth;
+                            el.classList.add('save-success-flash');
+                        }
+                        window.successFlashId = null;
+                    }
+                    if (window.successFlashCorrId) {
+                        const safeId = window.successFlashCorrId.replace(/[^a-zA-Z0-9]/g, '_');
+                        const el = document.getElementById('corr_display_' + safeId);
+                        if (el) {
+                            el.classList.remove('save-success-flash');
+                            void el.offsetWidth;
+                            el.classList.add('save-success-flash');
+                        }
+                        window.successFlashCorrId = null;
+                    }
                 })
                 .catch(err => console.error('Erreur peripherals:', err));
         }
@@ -2002,9 +2070,9 @@
                 return;
             }
 
-            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>.,;%\$€*^]{1,24}$/;
+            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>.,;%\$€*^ ]{1,24}$/;
             if (!nameRegex.test(newName)) {
-                alert("Nom de périphérique invalide. Le nom doit faire 24 caractères maximum, ne pas contenir d'espaces, et n'utiliser que des caractères alphanumériques ou -_()[]<>,;%$€*^");
+                alert("Nom de périphérique invalide. Le nom doit faire 24 caractères maximum, et n'utiliser que des caractères alphanumériques, des espaces, ou -_()[]<>,;%$€*^");
                 cancelEditing(id);
                 return;
             }
@@ -2030,6 +2098,8 @@
         function saveRename(id, newName) {
             editingDeviceId = null;
             editingOriginalName = null;
+            cancelEditing(id);
+            window.successFlashId = id;
 
             fetch('/api/peripherals', {
                 method: 'POST',
@@ -2040,11 +2110,13 @@
                     if (res.ok) {
                         fetchDevices();
                     } else {
+                        window.successFlashId = null;
                         alert('Erreur lors du changement de nom');
                         fetchDevices();
                     }
                 })
                 .catch(err => {
+                    window.successFlashId = null;
                     console.error(err);
                     fetchDevices();
                 });
@@ -2094,9 +2166,9 @@
                 return;
             }
 
-            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>,;%\$€*^]{1,16}$/;
+            const nameRegex = /^[a-zA-Z0-9\-_()\[\]<>,;%\$€*^ ]{1,16}$/;
             if (!nameRegex.test(newName)) {
-                alert("Nom de l'extendeur invalide. Le nom doit faire 16 caractères maximum, ne pas contenir d'espaces, et n'utiliser que des caractères alphanumériques ou -_()[]<>,;%$€*^");
+                alert("Nom de l'extendeur invalide. Le nom doit faire 16 caractères maximum, et n'utiliser que des caractères alphanumériques, des espaces, ou -_()[]<>,;%$€*^");
                 cancelEditingExtName();
                 return;
             }
@@ -2238,6 +2310,8 @@
 
         function sendRangeValue(id, val) {
             const valNum = parseInt(val);
+            const previousRealVal = window.realActuatorValues[id] || 0;
+
             if (id === 'screen') {
                 window.actuatorStates.screen_brightness = valNum;
             } else {
@@ -2253,11 +2327,22 @@
                 .then(res => {
                     if (!res.ok) {
                         alert('Erreur lors de la modification de la vitesse');
+                        const sliderEl = document.getElementById(`range_${id}`);
+                        if (sliderEl) {
+                            sliderEl.value = previousRealVal;
+                            updateRangeLabel(id, previousRealVal);
+                        }
                     }
                     fetchDevices();
                 })
                 .catch(err => {
                     console.error(err);
+                    alert('Erreur lors de la modification de la vitesse');
+                    const sliderEl = document.getElementById(`range_${id}`);
+                    if (sliderEl) {
+                        sliderEl.value = previousRealVal;
+                        updateRangeLabel(id, previousRealVal);
+                    }
                     fetchDevices();
                 });
         }
@@ -2967,7 +3052,11 @@
             const inputEl = document.getElementById('corr_input_' + safeId);
             if (displayEl) displayEl.style.display = 'none';
             if (containerEl) containerEl.style.display = 'flex';
-            if (inputEl) { inputEl.focus(); inputEl.select(); }
+            if (inputEl) {
+                inputEl.dataset.original = inputEl.value;
+                inputEl.focus();
+                inputEl.select();
+            }
         }
 
         function handleBlurCorrection(deviceId) {
@@ -2975,7 +3064,15 @@
             const inputEl = document.getElementById('corr_input_' + safeId);
             if (!inputEl) return;
             const newFormula = inputEl.value.trim();
-            saveCorrection(deviceId, newFormula);
+            const originalFormula = (inputEl.dataset.original || '').trim();
+            if (newFormula !== originalFormula) {
+                saveCorrection(deviceId, newFormula);
+            } else {
+                const displayEl = document.getElementById('corr_display_' + safeId);
+                const containerEl = document.getElementById('corr_edit_container_' + safeId);
+                if (displayEl) displayEl.style.display = 'inline';
+                if (containerEl) containerEl.style.display = 'none';
+            }
         }
 
         function handleKeyDownCorrection(event, deviceId) {
@@ -2985,15 +3082,29 @@
                 if (inputEl) inputEl.blur();
             } else if (event.key === 'Escape') {
                 const safeId = deviceId.replace(/[^a-zA-Z0-9]/g, '_');
-                const displayEl = document.getElementById('corr_display_' + safeId);
-                const containerEl = document.getElementById('corr_edit_container_' + safeId);
-                if (displayEl) displayEl.style.display = 'inline';
-                if (containerEl) containerEl.style.display = 'none';
+                const inputEl = document.getElementById('corr_input_' + safeId);
+                if (inputEl) {
+                    inputEl.value = inputEl.dataset.original || '';
+                    inputEl.blur();
+                }
             }
         }
 
         function saveCorrection(deviceId, formula) {
             if (!formula) return;
+
+            // Masquer immédiatement l'input et réafficher la formule
+            const safeId = deviceId.replace(/[^a-zA-Z0-9]/g, '_');
+            const displayEl = document.getElementById('corr_display_' + safeId);
+            const containerEl = document.getElementById('corr_edit_container_' + safeId);
+            if (displayEl) {
+                displayEl.innerText = formula;
+                displayEl.style.display = 'inline';
+            }
+            if (containerEl) containerEl.style.display = 'none';
+
+            window.successFlashCorrId = deviceId;
+
             fetch('/api/sensor-correction', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -3003,11 +3114,16 @@
                     if (res.ok) {
                         fetchDevices();
                     } else {
+                        window.successFlashCorrId = null;
                         alert('Erreur lors de l\'enregistrement de la formule.');
                         fetchDevices();
                     }
                 })
-                .catch(err => { console.error(err); fetchDevices(); });
+                .catch(err => {
+                    window.successFlashCorrId = null;
+                    console.error(err);
+                    fetchDevices();
+                });
         }
 
 

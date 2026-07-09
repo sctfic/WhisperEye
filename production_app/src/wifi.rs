@@ -26,6 +26,14 @@ static DNS_SERVER_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 pub static API_DOWNLOAD_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub static API_UPLOAD_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static TLS_OR_SCAN_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+struct TlsOrScanGuard;
+impl Drop for TlsOrScanGuard {
+    fn drop(&mut self) {
+        TLS_OR_SCAN_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 pub static AP_IP_R: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(192);
 pub static AP_IP_G: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(168);
 pub static AP_IP_B: std::sync::atomic::AtomicU8 =
@@ -269,6 +277,12 @@ impl NetManager {
     }
 
     pub fn scan_available_networks(&mut self) -> Result<Vec<(String, i32)>> {
+        use std::sync::atomic::Ordering;
+        if TLS_OR_SCAN_ACTIVE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            anyhow::bail!("Wi-Fi scan failed: TLS or scan already active");
+        }
+        let _guard = TlsOrScanGuard;
+
         if !self.wifi.is_started().unwrap_or(false) {
             info!("Wi-Fi driver not started. Starting Wi-Fi before scan.");
             self.wifi.start()?;
@@ -316,24 +330,87 @@ impl NetManager {
         anyhow::bail!("Active scan timed out")
     }
 
-    #[allow(dead_code)]
-    pub fn start_async_scan(&mut self, ssid: &str, is_box: bool) -> bool {
-        self.scan_target_ssid = ssid.to_string();
-        self.scan_is_box = is_box;
-        self.scan_pending = true;
-        self.scan_start = Some(Instant::now());
-        true
+    pub fn initiate_async_scan(&mut self) -> Result<()> {
+        use std::sync::atomic::Ordering;
+        if TLS_OR_SCAN_ACTIVE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            anyhow::bail!("Async scan postponed: TLS or scan already active");
+        }
+
+        let mut start_scan_internal = || -> Result<()> {
+            if !self.wifi.is_started().unwrap_or(false) {
+                info!("Wi-Fi driver not started. Starting Wi-Fi before scan.");
+                self.wifi.start()?;
+            }
+            info!("Starting non-blocking active Wi-Fi scan");
+            let config = ScanConfig {
+                ssid: None,
+                scan_type: ScanType::Active {
+                    min: Duration::from_millis(120),
+                    max: Duration::from_millis(300),
+                },
+                ..Default::default()
+            };
+
+            self.wifi
+                .wifi_mut()
+                .start_scan(&config, false)
+                .context("Failed to start active scan")?;
+            
+            self.scan_pending = true;
+            self.scan_start = Some(Instant::now());
+            Ok(())
+        };
+
+        if let Err(e) = start_scan_internal() {
+            TLS_OR_SCAN_ACTIVE.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
+
+        Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn check_async_scan_result(&mut self) -> Option<bool> {
+    pub fn check_async_scan_complete(&mut self) -> Result<Option<Vec<(String, i32)>>> {
         if !self.scan_pending {
-            return None;
+            return Ok(None);
         }
-        self.scan_pending = false;
-        self.scan_start = None;
-        let ssid = self.scan_target_ssid.clone();
-        Some(self.active_scan_ssid(&ssid))
+
+        use std::sync::atomic::Ordering;
+        let is_done = self.wifi.wifi().is_scan_done().unwrap_or(false);
+        if is_done {
+            self.scan_pending = false;
+            self.scan_start = None;
+            TLS_OR_SCAN_ACTIVE.store(false, Ordering::SeqCst);
+            let ap_list = self.wifi.wifi_mut().get_scan_result()?;
+            let mut best: HashMap<String, i32> = HashMap::new();
+            for ap in ap_list {
+                let ssid = ap.ssid.to_string();
+                if ssid.is_empty() {
+                    continue;
+                }
+                best.entry(ssid)
+                    .and_modify(|rssi| *rssi = (*rssi).max(ap.signal_strength as i32))
+                    .or_insert(ap.signal_strength as i32);
+            }
+            let mut networks: Vec<(String, i32)> = best.clone().into_iter().collect();
+            networks.sort_by(|a, b| b.1.cmp(&a.1));
+            self.scan_results = best;
+            self.scan_cache = networks.iter().map(|(ssid, _)| ssid.clone()).collect();
+            info!("Async scan completed. Found visible SSIDs: {:?}", self.scan_cache);
+            return Ok(Some(networks));
+        }
+
+        if let Some(start) = self.scan_start {
+            if start.elapsed() >= Duration::from_secs(4) {
+                warn!("Async Wi-Fi scan timed out");
+                let _ = self.wifi.wifi_mut().stop_scan();
+                self.scan_pending = false;
+                self.scan_start = None;
+                TLS_OR_SCAN_ACTIVE.store(false, Ordering::SeqCst);
+                return Err(anyhow::anyhow!("Scan timeout"));
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn start_controller_thread(
@@ -384,10 +461,11 @@ impl NetManager {
                         // (déjà positionné par WifiOk/ProvisioningOk) et on ajoute le orange AP
                         led::set_ap_status(LedApStatus::ApPairing);
                         if AP_CLIENT_CONNECTED.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                            let until = Instant::now() + PAIRING_DURATION;
+                            let until = AP_CLIENT_CONNECTED.load(std::sync::atomic::Ordering::Relaxed); // Placeholder, unused in calculation
+                            let new_until = Instant::now() + PAIRING_DURATION;
                             {
                                 let mut net = this.lock().unwrap();
-                                net.pairing_until = Some(until);
+                                net.pairing_until = Some(new_until);
                             }
                             info!("Provisioning pairing: AP client connected, extended by 120s");
                         }
@@ -424,17 +502,68 @@ impl NetManager {
                             }
                         }
 
-                        NetState::WifiPreferred | NetState::ProvisioningScan => {
+                        NetState::WifiPreferred => {
                             led::set_sta_status(LedStaStatus::WifiAttempting);
                             if now.duration_since(last_wifi_cycle) < WIFI_RETRY_DELAY {
                                 continue;
                             }
                             last_wifi_cycle = now;
 
-                            if try_known_wifi_cycle(&this, &nvs, false).unwrap_or(false) {
+                            // 1. Tenter le réseau par défaut
+                            if try_default_wifi(&this, &nvs).unwrap_or(false) {
                                 continue;
                             }
 
+                            // 2. Si échec ou absent, lancer le scan asynchrone
+                            let mut net = this.lock().unwrap();
+                            info!("Default Wi-Fi failed or not found. Starting async scan for other known networks.");
+                            if let Err(e) = net.initiate_async_scan() {
+                                warn!("Failed to start async scan: {:?}", e);
+                                // Si le scan ne peut pas démarrer, on tente le provisioning peer directement
+                                drop(net);
+                                if try_provisioning_peer(&this, &nvs).unwrap_or(false) {
+                                    last_wifi_cycle = now - WIFI_RETRY_DELAY;
+                                    continue;
+                                }
+                                // Sinon AP provisioning
+                                let mut net = this.lock().unwrap();
+                                net.state = NetState::ProvisioningAp;
+                                net.last_state_change = now;
+                                led::set_sta_status(LedStaStatus::ProvisioningOk);
+                                led::set_ap_status(LedApStatus::ProvisioningSsid);
+                                let _ = net.setup_provisioning_ap();
+                            } else {
+                                net.state = NetState::ProvisioningScan;
+                                net.last_state_change = now;
+                            }
+                        }
+
+                        NetState::ProvisioningScan => {
+                            led::set_sta_status(LedStaStatus::WifiAttempting);
+                            let scan_res = {
+                                let mut net = this.lock().unwrap();
+                                net.check_async_scan_complete()
+                            };
+
+                            match scan_res {
+                                Ok(None) => {
+                                    // Scan toujours en cours, on rend la main (non-bloquant)
+                                    continue;
+                                }
+                                Ok(Some(visible)) => {
+                                    // Scan terminé avec succès, on tente de se connecter aux réseaux connus visibles
+                                    if try_known_wifi_from_visible(&this, &nvs, &visible).unwrap_or(false) {
+                                        continue;
+                                    }
+                                }
+                                Err(e) => {
+                                    // Scan en timeout ou erreur, on continue avec une liste vide
+                                    warn!("Async scan failed during cycle: {:?}", e);
+                                }
+                            }
+
+                            // Si on arrive ici, le scan est terminé (ou a échoué) et aucune connexion Wi-Fi connue n'a marché.
+                            // On tente de trouver un WhisperEye de provisioning.
                             if try_provisioning_peer(&this, &nvs).unwrap_or(false) {
                                 last_wifi_cycle = now - WIFI_RETRY_DELAY;
                                 continue;
@@ -473,10 +602,9 @@ impl NetManager {
     }
 }
 
-fn try_known_wifi_cycle(
+fn try_default_wifi(
     this: &Arc<Mutex<NetManager>>,
     nvs: &Arc<Mutex<NvsStorage>>,
-    scan_only_after_default: bool,
 ) -> Result<bool> {
     let known = {
         let storage = nvs.lock().unwrap();
@@ -503,25 +631,24 @@ fn try_known_wifi_cycle(
             }
             return Ok(true);
         }
-    } else {
-        info!("No default Wi-Fi configured; scanning known Wi-Fi networks.");
     }
+    Ok(false)
+}
 
-    let visible = {
-        let mut net = this.lock().unwrap();
-        net.state = NetState::ProvisioningScan;
-        match net.scan_available_networks() {
-            Ok(list) => list,
-            Err(e) => {
-                warn!("Wi-Fi scan failed: {:?}", e);
-                Vec::new()
-            }
-        }
+fn try_known_wifi_from_visible(
+    this: &Arc<Mutex<NetManager>>,
+    nvs: &Arc<Mutex<NvsStorage>>,
+    visible: &[(String, i32)],
+) -> Result<bool> {
+    let known = {
+        let storage = nvs.lock().unwrap();
+        storage.get_known_networks().unwrap_or_default()
     };
 
-    if scan_only_after_default {
-        return Ok(false);
-    }
+    let default_network = known
+        .iter()
+        .find(|(_, e)| e.default.unwrap_or(false))
+        .map(|(s, e)| (s.clone(), e.psk.clone()));
 
     let visible_ssids: HashSet<String> = visible.iter().map(|(ssid, _)| ssid.clone()).collect();
     for (ssid, entry) in known.iter() {
@@ -578,8 +705,8 @@ fn try_provisioning_peer(
             .unwrap_or(std::net::Ipv4Addr::new(192, 168, PROVISIONING_SUBNET, 1))
     };
 
-    match crate::web_handlers::perform_mesh_sync(nvs, gateway_ip) {
-        Ok((_distance, had_new_wifi)) => {
+    match crate::web_handlers::sync_from_provisioning_peer(nvs, gateway_ip) {
+        Ok(had_new_wifi) => {
             info!(
                 "Provisioning sync completed from {}. New/updated Wi-Fi: {}",
                 gateway_ip, had_new_wifi

@@ -1,8 +1,8 @@
-// screen_browse.rs
+// screen_browse.rs IHM
 
 use embedded_graphics::{
     prelude::*,
-    mono_font::{ascii::{FONT_10X20, FONT_6X10}, MonoTextStyleBuilder},
+    mono_font::{iso_8859_1::{FONT_10X20, FONT_6X10}, MonoTextStyleBuilder},
     pixelcolor::Rgb565,
     text::Text,
     primitives::{Rectangle, PrimitiveStyle},
@@ -208,7 +208,7 @@ impl BrowseController {
             result.push(SensorItemInfo {
                 id: "bme280_t".to_string(),
                 name: bme_t_name,
-                desc: "Température environnement BME280".to_string(),
+                desc: "Temperature environnement BME280".to_string(),
                 corrected_val: format!("{:.1}", t),
                 raw_val: format!("{:.2}", t),
                 unit: "°C".to_string(),
@@ -220,7 +220,7 @@ impl BrowseController {
             result.push(SensorItemInfo {
                 id: "bme280_h".to_string(),
                 name: bme_h_name,
-                desc: "Humidité relative BME280".to_string(),
+                desc: "Humidite relative BME280".to_string(),
                 corrected_val: format!("{:.1}", h),
                 raw_val: format!("{:.2}", h),
                 unit: "%RH".to_string(),
@@ -232,7 +232,7 @@ impl BrowseController {
             result.push(SensorItemInfo {
                 id: "bme280_p".to_string(),
                 name: bme_p_name,
-                desc: "Pression atmosphérique BME280".to_string(),
+                desc: "Pression atmospherique BME280".to_string(),
                 corrected_val: format!("{:.0}", p),
                 raw_val: format!("{:.2}", p),
                 unit: "hPa".to_string(),
@@ -241,18 +241,49 @@ impl BrowseController {
         }
 
         // 5. Sondes 1-Wire DS18B20
-        let ow_count = crate::one_wire::ONEWIRE_DEVICES_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-        for idx in 0..ow_count {
-            let key = format!("onewr:ds18b20_{}", idx);
-            let ds_name = registry_map.get(&key).map(|e| e.name.clone()).unwrap_or_else(|| format!("Sonde Temp #{}", idx + 1));
+        let mut onewire_devices: Vec<(String, String)> = registry_map
+            .iter()
+            .filter(|(k, _)| k.starts_with("onewr:"))
+            .map(|(k, v)| (k.clone(), v.name.clone()))
+            .collect();
+        onewire_devices.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let opt_temps = crate::one_wire::ONEWIRE_TEMPERATURES.lock().ok();
+        for (idx, (key, ds_name)) in onewire_devices.into_iter().enumerate() {
+            let addr = key[6..].to_string();
+            let raw_temp = opt_temps.as_ref()
+                .and_then(|guard| guard.as_ref())
+                .and_then(|map| map.get(&addr).copied())
+                .unwrap_or(-255.0);
+
+            let (corrected_val, raw_val) = if raw_temp == -255.0 {
+                ("--.--".to_string(), "--.--".to_string())
+            } else {
+                let mut final_val = raw_temp as f64;
+                if let Some(entry) = registry_map.get(&key) {
+                    let correction = entry.correction_formula.clone().unwrap_or_else(|| {
+                        crate::dynamic_devices::get_correction_formula(nvs, &key)
+                    });
+                    if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+                        let mut raw_values = std::collections::HashMap::new();
+                        raw_values.insert(key.clone(), raw_temp as f64);
+                        let tokens = crate::dynamic_devices::tokenize(&correction, &raw_values, raw_temp as f64);
+                        if let Ok(evaluated) = crate::dynamic_devices::evaluate_expression(&tokens) {
+                            final_val = evaluated;
+                        }
+                    }
+                }
+                (format!("{:.1}", final_val), format!("{:.2}", raw_temp))
+            };
+
             result.push(SensorItemInfo {
                 id: key,
                 name: ds_name,
-                desc: format!("Sonde de température étanche 1-Wire #{}", idx + 1),
-                corrected_val: "--.--".to_string(),
-                raw_val: "--.--".to_string(),
+                desc: format!("Sonde de temperature etanche 1-Wire #{}", idx + 1),
+                corrected_val,
+                raw_val,
                 unit: "°C".to_string(),
-                model_bus: format!("DS18B20 sur 1-Wire:{} (Pin 39)", idx),
+                model_bus: format!("DS18B20 sur 1-Wire (Pin 39, Addr: {})", &addr[..std::cmp::min(addr.len(), 8)]),
             });
         }
 
@@ -542,7 +573,7 @@ impl BrowseController {
                             entry.step = None;
                         } else {
                             map.insert("screen".to_string(), crate::dynamic_devices::DeviceEntry {
-                                name: "Écran ST7789".to_string(),
+                                name: "Ecran ST7789".to_string(),
                                 is_static: false,
                                 present: true,
                                 address: None,
@@ -785,6 +816,7 @@ impl BrowseController {
         self.needs_redraw = false;
         let val_changed = self.value_changed;
         self.value_changed = false;
+        let periodic_update = periodic_update && !_needs_redraw_full;
 
         let layout_changed = has_layout_changed(self.last_rendered_state, self.state);
 
@@ -810,8 +842,8 @@ impl BrowseController {
         // Zone 1: Main menu (Y=17..32) -> Jamais effacée, juste réécrite.
 
         let exited_modal = matches!(self.last_rendered_state, Some(AppState::ConfirmerAction { .. })) && !matches!(self.state, AppState::ConfirmerAction { .. });
-        let main_changed = self.last_main_index != Some(current_main) || exited_modal;
-        let sub_changed = self.last_sub_index != Some(current_sub) || main_changed || layout_changed;
+        let main_changed = self.last_main_index != Some(current_main) || exited_modal || _needs_redraw_full;
+        let sub_changed = self.last_sub_index != Some(current_sub) || main_changed || layout_changed || _needs_redraw_full;
 
         if !in_modal && !periodic_update && !val_changed {
             if current_main == 2 {
@@ -897,10 +929,11 @@ impl BrowseController {
                 .draw(display);
         }
 
-        // ── 2. COLONNE DES SOUS-MENUS (X=2..98, Y=38) ──
-        let sensors_list = Self::get_sensors_list(nvs, board, actuators_state);
+        if !in_modal {
+            // ── 2. COLONNE DES SOUS-MENUS (X=2..98, Y=38) ──
+            let sensors_list = Self::get_sensors_list(nvs, board, actuators_state);
 
-        let sub_titles: Vec<String> = match current_main {
+            let sub_titles: Vec<String> = match current_main {
             0 => {
                 let mut list: Vec<String> = sensors_list.iter().map(|s| {
                     format!("{:.15}", s.name)
@@ -1131,7 +1164,13 @@ impl BrowseController {
                 }
             }
             2 => {
-                // Schema: zone vide
+                if sub_changed {
+                    let text = "320x186 pixels";
+                    let text_w = text.len() as i32 * 10;
+                    let x = (320 - text_w) / 2;
+                    let y = 33 + (186 / 2);
+                    let _ = Text::new(text, Point::new(x, y), font_big_green).draw(display);
+                }
             }
             3 => {
                 match current_sub {
@@ -1490,8 +1529,9 @@ impl BrowseController {
             }
             _ => {}
         }
+    }
 
-        if let AppState::ConfirmerAction { action_type, choice } = self.state {
+    if let AppState::ConfirmerAction { action_type, choice } = self.state {
             if layout_changed {
                 // Cadre extérieur vert
                 let _ = Rectangle::new(Point::new(68, 75), Size::new(184, 84))

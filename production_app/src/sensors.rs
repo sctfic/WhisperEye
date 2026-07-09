@@ -3,6 +3,31 @@ use std::time::SystemTime;
 use std::sync::Mutex;
 use crate::one_wire::OneWire;
 
+macro_rules! info {
+    ($fmt:literal) => {
+        log::info!(concat!("\x1b[36m", $fmt, "\x1b[0m"));
+    };
+    ($fmt:literal, $($arg:tt)*) => {
+        log::info!(concat!("\x1b[36m", $fmt, "\x1b[0m"), $($arg)*);
+    };
+}
+macro_rules! warn {
+    ($fmt:literal) => {
+        log::warn!(concat!("\x1b[36m", $fmt, "\x1b[0m"));
+    };
+    ($fmt:literal, $($arg:tt)*) => {
+        log::warn!(concat!("\x1b[36m", $fmt, "\x1b[0m"), $($arg)*);
+    };
+}
+macro_rules! debug {
+    ($fmt:literal) => {
+        log::debug!(concat!("\x1b[36m", $fmt, "\x1b[0m"));
+    };
+    ($fmt:literal, $($arg:tt)*) => {
+        log::debug!(concat!("\x1b[36m", $fmt, "\x1b[0m"), $($arg)*);
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct SensorReadings {
     pub temperature_sht45: f32,
@@ -33,9 +58,15 @@ impl serde::Serialize for SensorReadings {
 
 pub fn read_sensors(
     onewire_bus: Option<&Mutex<OneWire>>,
-    ds18b20_probes: &[String]
+    ds18b20_probes: &[String],
+    names_map: &HashMap<String, String>,
 ) -> SensorReadings {
     let mut ds_temps = HashMap::new();
+
+    let sensor_names: Vec<String> = ds18b20_probes.iter()
+        .map(|addr| names_map.get(addr).cloned().unwrap_or_else(|| format!("Sonde Temp ({})", &addr[..std::cmp::min(addr.len(), 6)])))
+        .collect();
+    debug!("Demande de collecte des valeurs ({})", sensor_names.join(", "));
 
     if let Some(bus_mutex) = onewire_bus {
         if let Ok(mut bus) = bus_mutex.lock() {
@@ -45,24 +76,26 @@ pub fn read_sensors(
                 std::thread::sleep(std::time::Duration::from_millis(750));
 
                 for addr in ds18b20_probes {
+                    let name = names_map.get(addr).cloned().unwrap_or_else(|| format!("Sonde Temp ({})", &addr[..std::cmp::min(addr.len(), 6)]));
                     match bus.read_temperature(addr) {
                         Ok(temp) => {
+                            debug!("lecture par capteur, {} : {:.2}°C", name, temp);
                             ds_temps.insert(addr.clone(), temp);
                         }
                         Err(e) => {
-                            log::warn!("Failed to read temperature for probe {}: {:?}", addr, e);
+                            warn!("lecture par capteur en échec pour {}, erreur : {:?}", name, e);
                             ds_temps.insert(addr.clone(), -255.0);
                         }
                     }
                 }
             } else {
-                log::warn!("Failed to start temperature conversion on 1-Wire bus");
+                warn!("Failed to start temperature conversion on 1-Wire bus");
                 for addr in ds18b20_probes {
                     ds_temps.insert(addr.clone(), -255.0);
                 }
             }
         } else {
-            log::warn!("Failed to lock 1-Wire bus");
+            warn!("Failed to lock 1-Wire bus");
             for addr in ds18b20_probes {
                 ds_temps.insert(addr.clone(), -255.0);
             }
@@ -78,7 +111,10 @@ pub fn read_sensors(
 
         for (i, addr) in ds18b20_probes.iter().enumerate() {
             let offset = (i as f32) * 0.15 + temp_offset * 0.8;
-            ds_temps.insert(addr.clone(), 22.8 + offset);
+            let temp = 22.8 + offset;
+            let name = names_map.get(addr).cloned().unwrap_or_else(|| format!("Sonde Temp ({})", &addr[..std::cmp::min(addr.len(), 6)]));
+            info!("lecture par capteur, {} : {:.2}°C (Simulation)", name, temp);
+            ds_temps.insert(addr.clone(), temp);
         }
     }
 
@@ -89,4 +125,3 @@ pub fn read_sensors(
         ds18b20_temperatures: ds_temps,
     }
 }
-

@@ -1,5 +1,7 @@
+#[allow(dead_code)]
 pub struct Radio;
 
+#[allow(dead_code)]
 impl Radio {
     pub fn init() -> Result<Self, anyhow::Error> {
         log::info!("Initializing Radio...");
@@ -16,6 +18,7 @@ impl Radio {
     }
 }
 
+#[allow(dead_code)]
 pub fn is_present() -> bool {
     true
 }

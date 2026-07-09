@@ -2,7 +2,7 @@ use crate::sensors::{read_sensors, SensorReadings};
 use anyhow::{Context, Result};
 use crate::wifi::{NetManager, NetState};
 use common::nvs_storage::NvsStorage;
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -139,7 +139,7 @@ impl CronWorker {
                         for (id, list) in scheds.schedules.iter_mut() {
                             while !list.is_empty() && list[0].datetime_utc <= now_str {
                                 let action = list.remove(0);
-                                info!("Executing scheduled action for actuator {}: setting state to {}", id, action.state);
+                                info!("\x1b[35mExecuting scheduled action for actuator {}: setting state to {}\x1b[0m", id, action.state);
                                 match id.as_str() {
                                     "rla" => { acts.rla = action.state; }
                                     "rlb" => { acts.rlb = action.state; }
@@ -155,7 +155,7 @@ impl CronWorker {
                             }
                         }
                         if changed {
-                            info!("Actuators state updated from schedules: {:?}", *acts);
+                            info!("\x1b[35mActuators state updated from schedules: {:?}\x1b[0m", *acts);
                         }
                     }
                 }
@@ -171,15 +171,16 @@ impl CronWorker {
     }
 
     fn collect_sensor_metrics(&mut self) {
-        info!("[CRON] collect_sensor_metrics() starting...");
+        debug!("\x1b[36m[CRON] collect_sensor_metrics() starting...\x1b[0m");
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let onewr_probes = {
+        let (onewr_probes, onewr_names) = {
             let storage = self.nvs.lock().unwrap();
             let mut list = Vec::new();
+            let mut names = std::collections::HashMap::new();
             if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
                 if let Ok(map) = serde_json::from_str::<
                     std::collections::HashMap<String, serde_json::Value>,
@@ -191,8 +192,12 @@ impl CronWorker {
                                 .get("present")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
+                            let addr = id[6..].to_string();
+                            if let Some(name_val) = val.get("name").and_then(|n| n.as_str()) {
+                                names.insert(addr.clone(), name_val.to_string());
+                            }
                             if present {
-                                list.push(id[6..].to_string());
+                                list.push(addr);
                             }
                         }
                     }
@@ -203,7 +208,7 @@ impl CronWorker {
                 list.push("28ff641e8315029c".to_string());
                 list.push("28aa412e831501fa".to_string());
             }
-            list
+            (list, names)
         };
 
         // Lire les valeurs réelles du capteur matériel I2C
@@ -217,7 +222,7 @@ impl CronWorker {
             if let Ok(mut g_p) = crate::i2c::i2c_bme280::BME280_PRESS.lock() { *g_p = bme.pressure; }
         }
 
-        let mut readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes);
+        let mut readings = read_sensors(self.onewire_bus.as_ref().map(|b| b.as_ref()), &onewr_probes, &onewr_names);
         if let Ok(mut opt_temps) = crate::one_wire::ONEWIRE_TEMPERATURES.lock() {
             if opt_temps.is_none() {
                 *opt_temps = Some(std::collections::HashMap::new());
@@ -244,18 +249,19 @@ impl CronWorker {
         }
         self.history.push(entry);
 
-        let mut msg_log = "Task 30s: Collected sensor metrics.".to_string();
         let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(&self.nvs));
         let devices = registry.load_registry();
-        
+
+        let mut lines: Vec<String> = vec!["\x1b[36m[CRON] Task 30s: Collected sensor metrics:".to_string()];
+
         let sht_present = devices.values().any(|e| e.name.contains("SHT45") && e.present);
         if sht_present {
-            msg_log.push_str(" Temp SHT45: 23.4°C, Humi SHT45: 45.2%,");
+            lines.push(format!("  SHT45 : Temp={:.1}C  Humi={:.1}%", readings.temperature_sht45, readings.humidity_sht45));
         }
-        
+
         let scd_present = devices.values().any(|e| e.name.contains("SCD41") && e.present);
         if scd_present {
-            msg_log.push_str(" CO2: 680 ppm,");
+            lines.push(format!("  SCD41 : CO2={} ppm", readings.co2_scd41));
         }
 
         let bme_present = devices.values().any(|e| e.name.contains("BME280") && e.present);
@@ -263,19 +269,30 @@ impl CronWorker {
             let t = *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap();
             let h = *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap();
             let p = *crate::i2c::i2c_bme280::BME280_PRESS.lock().unwrap();
-            msg_log.push_str(&format!(" BME280: Temp={:.1}°C, Hum={:.1}%, Pres={:.1} hPa,", t, h, p));
+            lines.push(format!("  BME280: Temp={:.1}C  Hum={:.1}%  Pres={:.1} hPa", t, h, p));
         }
 
-        let probes_count = readings.ds18b20_temperatures.iter().filter(|(_, &t)| t != -255.0).count();
-        msg_log.push_str(&format!(" Probes count: {}.", probes_count));
-        for (addr, temp) in &readings.ds18b20_temperatures {
-            msg_log.push_str(&format!(" [0x{}]: {:.2}°C,", addr.to_uppercase(), temp));
+        let valid_probes: Vec<_> = readings.ds18b20_temperatures.iter()
+            .filter(|(_, &t)| t != -255.0)
+            .collect();
+        if !valid_probes.is_empty() {
+            lines.push(format!("  DS18B20 ({} probe(s)):", valid_probes.len()));
+            for (addr, temp) in &valid_probes {
+                lines.push(format!("    [0x{}]: {:.2}C", addr.to_uppercase(), temp));
+            }
         }
-        msg_log.push_str(&format!(" Sliding history size: {}", self.history.len()));
-        
-        info!("{}", msg_log);
+
+        lines.push(format!("  History: {}/{} entries\x1b[0m", self.history.len(), 10));
+
+        info!("{}", lines.join("\n"));
 
         // Reconnection handled asynchronously by the net_controller thread
+        let mut net = self.wifi.lock().unwrap();
+        if net.state == NetState::ProvisioningAp {
+            info!("\x1b[36m[CRON] WhisperEye in captive portal (ProvisioningAp). Requesting periodic retry of known Wi-Fi networks (30s interval).\x1b[0m");
+            net.state = NetState::WifiPreferred;
+            net.last_state_change = std::time::Instant::now();
+        }
     }
 
     fn trigger_simulated_http_api(&self) {
@@ -288,12 +305,12 @@ impl CronWorker {
         };
 
         if metrics_url.is_empty() || metrics_url == "empty" {
-            info!("Telemetry skipped: metricsUrl is empty or not defined");
+            info!("\x1b[36mTelemetry skipped: metricsUrl is empty or not defined\x1b[0m");
             return;
         }
 
         info!(
-            "Task 300s: Sending HTTP PUT telemetry to {}...",
+            "\x1b[36mTask 300s: Sending HTTP PUT telemetry to {}...\x1b[0m",
             metrics_url
         );
 
