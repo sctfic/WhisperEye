@@ -205,12 +205,10 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
     }
     info!("[check_updates_internal] Querying URL: {}", cache_busted_url);
 
-    // use_global_ca_store utilise le store CA préchargé par esp-tls sans allouer
-    // de mémoire supplémentaire par handshake (contrairement à crt_bundle_attach)
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
-        use_global_ca_store: true,
-        crt_bundle_attach: None,
+        use_global_ca_store: false,
+        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
         ..Default::default()
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;

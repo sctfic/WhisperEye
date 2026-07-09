@@ -298,6 +298,26 @@ where
     Ok(())
 }
 
+fn draw_check_icon<D>(display: &mut D, start_point: Point) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let color = Rgb565::GREEN;
+    let x = start_point.x;
+    let y = start_point.y;
+    
+    let _ = Pixel(Point::new(x + 1, y + 4), color).draw(display);
+    let _ = Pixel(Point::new(x + 2, y + 5), color).draw(display);
+    let _ = Pixel(Point::new(x + 3, y + 6), color).draw(display);
+    
+    let _ = Pixel(Point::new(x + 4, y + 5), color).draw(display);
+    let _ = Pixel(Point::new(x + 5, y + 4), color).draw(display);
+    let _ = Pixel(Point::new(x + 6, y + 3), color).draw(display);
+    let _ = Pixel(Point::new(x + 7, y + 2), color).draw(display);
+    Ok(())
+}
+
+
 // ── 2. INITIALISATION ET BOUCLE PRINCIPALE IHM ──
 
 pub fn run_ihm(
@@ -533,11 +553,15 @@ pub fn run_ihm(
             let _ = Text::new(&current_time_str, Point::new(20, 11), status_style_white).draw(&mut display);
 
             if !ntp_synced {
+                let _ = Rectangle::new(Point::new(54, 2), Size::new(9, 9))
+                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                    .draw(&mut display);
                 let _ = draw_warning_icon(&mut display, Point::new(54, 3));
             } else {
                 let _ = Rectangle::new(Point::new(54, 2), Size::new(9, 9))
                     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                     .draw(&mut display);
+                let _ = draw_check_icon(&mut display, Point::new(54, 2));
             }
         }
 

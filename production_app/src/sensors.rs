@@ -76,6 +76,9 @@ pub fn read_sensors(
                 std::thread::sleep(std::time::Duration::from_millis(750));
 
                 for addr in ds18b20_probes {
+                    // Délai de repos entre les transactions de capteurs distincts
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    
                     let name = names_map.get(addr).cloned().unwrap_or_else(|| format!("Sonde Temp ({})", &addr[..std::cmp::min(addr.len(), 6)]));
                     match bus.read_temperature(addr) {
                         Ok(temp) => {

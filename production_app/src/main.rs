@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.83-0001";
+pub const FW_VERSION: &str = "1.2.95-0001";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -247,6 +247,9 @@ fn main() -> Result<()> {
     println!("DEBUG: Starting 1-Wire bus initialization...");
     let (discovered_probes, onewire_bus) = if let Ok(mut ow) = OneWire::new(onewr_pin) {
         let probes = ow.search_roms();
+        for probe in &probes {
+            let _ = ow.verify_authenticity(probe);
+        }
         (probes, Some(Arc::new(Mutex::new(ow))))
     } else {
         (Vec::new(), None)
@@ -420,6 +423,20 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

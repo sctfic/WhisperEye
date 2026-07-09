@@ -286,6 +286,80 @@ impl CronWorker {
 
         info!("{}", lines.join("\n"));
 
+        // Calcul et affichage de l'historique (bleu clair) et de la moyenne (bleu foncé)
+        if !self.history.is_empty() {
+            let count = self.history.len();
+
+            // 1. Historique (Bleu clair \x1b[96m)
+            let mut hist_lines = vec!["\x1b[96m[CRON] Historique des mesures (10 dernières) :".to_string()];
+            for (idx, entry) in self.history.iter().enumerate() {
+                let mut sensors_states = Vec::new();
+                if sht_present {
+                    sensors_states.push(format!("SHT45: {:.1}C/{:.1}%", entry.readings.temperature_sht45, entry.readings.humidity_sht45));
+                }
+                if scd_present {
+                    sensors_states.push(format!("SCD41: {}ppm", entry.readings.co2_scd41));
+                }
+                if bme_present {
+                    let bt = *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap();
+                    let bh = *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap();
+                    sensors_states.push(format!("BME280: {:.1}C/{:.1}%", bt, bh));
+                }
+                let ds_states: Vec<_> = entry.readings.ds18b20_temperatures.iter()
+                    .filter(|(_, &t)| t != -255.0)
+                    .map(|(addr, t)| format!("DS[{:.6}]: {:.1}C", addr, t))
+                    .collect();
+                if !ds_states.is_empty() {
+                    sensors_states.push(ds_states.join(" "));
+                }
+                hist_lines.push(format!("  [{}] {}", idx + 1, sensors_states.join(" | ")));
+            }
+            hist_lines.push("\x1b[0m".to_string());
+            info!("{}", hist_lines.join("\n"));
+
+            // 2. Moyennes (Bleu foncé \x1b[34m)
+            let mut avg_lines = vec!["\x1b[34m[CRON] Moyenne des mesures historiques :".to_string()];
+            
+            if sht_present {
+                let sum_t: f32 = self.history.iter().map(|e| e.readings.temperature_sht45).sum();
+                let sum_h: f32 = self.history.iter().map(|e| e.readings.humidity_sht45).sum();
+                avg_lines.push(format!("  SHT45 : Temp={:.2}C  Humi={:.2}%", sum_t / count as f32, sum_h / count as f32));
+            }
+            if scd_present {
+                let sum_co2: i32 = self.history.iter().map(|e| e.readings.co2_scd41).sum();
+                avg_lines.push(format!("  SCD41 : CO2={:.1} ppm", sum_co2 as f32 / count as f32));
+            }
+            if bme_present {
+                let sum_t: f32 = self.history.iter().map(|_| *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap()).sum();
+                let sum_h: f32 = self.history.iter().map(|_| *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap()).sum();
+                avg_lines.push(format!("  BME280: Temp={:.2}C  Hum={:.2}%", sum_t / count as f32, sum_h / count as f32));
+            }
+
+            // Pour DS18B20, on regroupe par adresse de sonde
+            let mut ds_sums = std::collections::HashMap::new();
+            let mut ds_counts = std::collections::HashMap::new();
+            for entry in &self.history {
+                for (addr, &t) in &entry.readings.ds18b20_temperatures {
+                    if t != -255.0 {
+                        *ds_sums.entry(addr.clone()).or_insert(0.0) += t;
+                        *ds_counts.entry(addr.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+            if !ds_sums.is_empty() {
+                avg_lines.push("  DS18B20 :".to_string());
+                let mut sorted_keys: Vec<_> = ds_sums.keys().collect();
+                sorted_keys.sort();
+                for addr in sorted_keys {
+                    let sum = ds_sums[addr];
+                    let c = ds_counts[addr];
+                    avg_lines.push(format!("    [0x{}]: {:.2}C (sur {} entrées)", addr.to_uppercase(), sum / c as f32, c));
+                }
+            }
+            avg_lines.push("\x1b[0m".to_string());
+            info!("{}", avg_lines.join("\n"));
+        }
+
         // Reconnection handled asynchronously by the net_controller thread
         let mut net = self.wifi.lock().unwrap();
         if net.state == NetState::ProvisioningAp {

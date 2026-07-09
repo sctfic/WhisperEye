@@ -92,6 +92,7 @@ impl<'d> OneWire<'d> {
     }
 
     /// Effectue un Reset du bus 1-Wire et vérifie la présence d'un composant.
+    #[inline(always)]
     pub fn reset(&mut self) -> bool {
         critical_section::with(|_| {
             // Ligne au repos doit être haute
@@ -128,14 +129,15 @@ impl<'d> OneWire<'d> {
     }
 
     /// Écrit un bit sur le bus 1-Wire.
+    #[inline(always)]
     pub fn write_bit(&mut self, bit: bool) {
         critical_section::with(|_| {
             if bit {
                 // Écriture d'un bit 1
                 self.pin.set_low().unwrap();
-                Ets::delay_us(6);
+                Ets::delay_us(2); // Flanc descendant court (réduit de 6 à 2µs pour compenser l'overhead de l'appel set_high)
                 self.pin.set_high().unwrap();
-                Ets::delay_us(64);
+                Ets::delay_us(58);
             } else {
                 // Écriture d'un bit 0
                 self.pin.set_low().unwrap();
@@ -147,19 +149,21 @@ impl<'d> OneWire<'d> {
     }
 
     /// Lit un bit sur le bus 1-Wire.
+    #[inline(always)]
     pub fn read_bit(&mut self) -> bool {
         critical_section::with(|_| {
             self.pin.set_low().unwrap();
-            Ets::delay_us(3); // Flanc descendant : 3µs (spec : 1-15µs, on garde de la marge)
+            Ets::delay_us(1); // Temps bas minimum (l'overhead de l'appel set_high donnera ~2-3µs réel)
             self.pin.set_high().unwrap();
-            Ets::delay_us(12); // Échantillonnage à 15µs total depuis le début du slot (fenêtre valide : 15µs max)
+            Ets::delay_us(8); // Échantillonnage à ~10-11µs réels après le début (sécurité avant la fin de la fenêtre de 15µs)
             let bit = self.pin.is_high();
-            Ets::delay_us(55); // Fin du cycle (slot 1-wire : 60µs minimum, ici 70µs total pour la robustesse)
+            Ets::delay_us(50); // Fin du cycle
             bit
         })
     }
 
     /// Écrit un octet complet (LSB first).
+    #[inline(always)]
     pub fn write_byte(&mut self, mut byte: u8) {
         for _ in 0..8 {
             self.write_bit((byte & 0x01) != 0);
@@ -168,6 +172,7 @@ impl<'d> OneWire<'d> {
     }
 
     /// Lit un octet complet (LSB first).
+    #[inline(always)]
     pub fn read_byte(&mut self) -> u8 {
         let mut byte = 0u8;
         for i in 0..8 {
@@ -181,9 +186,17 @@ impl<'d> OneWire<'d> {
     /// Lecture du scratchpad d'un capteur (retourne les 9 octets bruts).
     /// Appelé après un Reset + Match ROM + 0xBE.
     fn read_scratchpad_raw(&mut self, rom_bytes: &[u8; 8]) -> Option<[u8; 9]> {
+        // Laisser impérativement le bus au repos à l'état HAUT pendant 5ms
+        // avant d'entamer une nouvelle transaction. Évite les collisions et dysfonctionnements transitoires.
+        self.pin.set_high().unwrap();
+        Ets::delay_ms(5);
+
         if !self.reset() {
             return None;
         }
+        // Délai de stabilisation après Reset et présence
+        Ets::delay_ms(2);
+
         self.write_byte(0x55); // Match ROM
         for &byte in rom_bytes {
             self.write_byte(byte);
@@ -194,6 +207,61 @@ impl<'d> OneWire<'d> {
             scratchpad[i] = self.read_byte();
         }
         Some(scratchpad)
+    }
+
+    /// Vérifie l'authenticité du capteur DS18B20 en lisant ses valeurs par défaut
+    /// au démarrage (Power-On Reset) avant toute conversion de température.
+    /// Un vrai DS18B20 doit contenir :
+    /// - Octets 0 & 1 (Température) : 0x50 et 0x05 (+85.0 °C d'usine)
+    /// - Octet 4 (Configuration) : 0x7F (Résolution 12-bits par défaut)
+    pub fn verify_authenticity(&mut self, rom: &str) -> bool {
+        if rom.len() != 16 {
+            return false;
+        }
+        let mut rom_bytes = [0u8; 8];
+        for i in 0..8 {
+            if let Ok(b) = u8::from_str_radix(&rom[i * 2..i * 2 + 2], 16) {
+                rom_bytes[i] = b;
+            } else {
+                return false;
+            }
+        }
+
+        let hex_rom = rom.to_uppercase();
+        info!("[1-Wire] Vérification authenticité de la sonde 0x{}...", hex_rom);
+
+        // Lecture du scratchpad à froid (sans lancer de conversion)
+        if let Some(scratchpad) = self.read_scratchpad_raw(&rom_bytes) {
+            let calculated_crc = calculate_crc8(&scratchpad[0..8]);
+            let received_crc = scratchpad[8];
+
+            if calculated_crc != received_crc {
+                warn!("[1-Wire]   Sonde 0x{} : Erreur de CRC à froid (calc: 0x{:02x}, recu: 0x{:02x}). Authenticité indéterminée.", hex_rom, calculated_crc, received_crc);
+                return false;
+            }
+
+            let t_lsb = scratchpad[0];
+            let t_msb = scratchpad[1];
+            let config = scratchpad[4];
+
+            let is_authentic = t_lsb == 0x50 && t_msb == 0x05 && config == 0x7F;
+
+            if is_authentic {
+                info!(
+                    "[1-Wire]   Sonde 0x{} : AUTHENTIQUE (Temp d'usine: 0x{:02x} 0x{:02x} (+85C), Config: 0x{:02x} (12-bit))",
+                    hex_rom, t_lsb, t_msb, config
+                );
+            } else {
+                warn!(
+                    "[1-Wire]   Sonde 0x{} : CLONE / CONTREFAÇON suspectée ! Valeurs à froid : Temp=0x{:02x} 0x{:02x}, Config=0x{:02x} (attendu: 0x50 0x05 et 0x7F)",
+                    hex_rom, t_lsb, t_msb, config
+                );
+            }
+            is_authentic
+        } else {
+            warn!("[1-Wire]   Sonde 0x{} : Impossible de lire le scratchpad à froid.", hex_rom);
+            false
+        }
     }
 
     /// Scanne le bus à la recherche de capteurs DS18B20 connectés.
