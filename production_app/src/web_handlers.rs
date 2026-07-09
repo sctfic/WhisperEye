@@ -212,7 +212,14 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
         ..Default::default()
     };
     let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-    connection.initiate_request(esp_idf_svc::http::Method::Get, &cache_busted_url, &[])?;
+    
+    // Headers anti-cache pour forcer le CDN de GitHub et les proxies à nous donner le fichier frais
+    let headers = [
+        ("Cache-Control", "no-cache"),
+        ("Pragma", "no-cache"),
+        ("User-Agent", "WhisperEye-ESP32S3"),
+    ];
+    connection.initiate_request(esp_idf_svc::http::Method::Get, &cache_busted_url, &headers)?;
     connection.initiate_response()?;
 
     let status = connection.status();
@@ -230,6 +237,7 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
         }
     }
     let val: serde_json::Value = serde_json::from_slice(&body)?;
+    info!("[check_updates_internal] JSON reçu de GitHub : {}", serde_json::to_string(&val).unwrap_or_default());
 
     // 4. Update the cache
     {

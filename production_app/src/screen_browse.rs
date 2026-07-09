@@ -858,6 +858,10 @@ impl BrowseController {
             } else {
                 // Zone 2: Sous-menus de gauche (X=0..101, Y=33..218) -> Effacée seulement au changement de main menu ou à la sortie de la modale
                 if main_changed {
+                    // Si on change de menu principal, on invalide la liste OTA pour forcer un rafraîchissement au prochain affichage
+                    if let Ok(mut guard) = OTA_VERSIONS.lock() {
+                        *guard = None;
+                    }
                     // Efface le volet sous-menu de gauche lors d'un changement de menu principal
                     let _ = Rectangle::new(Point::new(0, 33), Size::new(101, 186))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
@@ -1431,6 +1435,14 @@ impl BrowseController {
                                         .name("ota_list_fetch".to_string())
                                         .stack_size(8192)
                                         .spawn(move || {
+                                            struct FetchGuard;
+                                            impl Drop for FetchGuard {
+                                                fn drop(&mut self) {
+                                                    OTA_FETCH_RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
+                                                }
+                                            }
+                                            let _guard = FetchGuard;
+
                                             let result = crate::web_handlers::check_updates_internal(&update_url);
                                             let mut list = Vec::new();
                                             if let Ok(json) = result {
@@ -1457,11 +1469,19 @@ impl BrowseController {
                                                         }
                                                     }
                                                 }
+                                                
+                                                if let Ok(mut guard) = OTA_VERSIONS.lock() {
+                                                    if !list.is_empty() {
+                                                        *guard = Some(list);
+                                                    } else {
+                                                        *guard = None; // Retenter plus tard si vide
+                                                    }
+                                                }
+                                            } else {
+                                                if let Ok(mut guard) = OTA_VERSIONS.lock() {
+                                                    *guard = None; // Permettre des re-tentatives ultérieures
+                                                }
                                             }
-                                            if let Ok(mut guard) = OTA_VERSIONS.lock() {
-                                                *guard = Some(list);
-                                            }
-                                            OTA_FETCH_RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
                                         });
                                 }
                             }
