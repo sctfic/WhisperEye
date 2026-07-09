@@ -400,6 +400,54 @@ impl<'d> OneWire<'d> {
         Ok(())
     }
 
+    /// Configure la résolution d'un DS18B20 spécifique à 10 bits (0.25°C).
+    /// Enregistre cette configuration dans la mémoire EEPROM du DS18B20.
+    pub fn configure_resolution_10bit(&mut self, rom: &str) -> Result<(), anyhow::Error> {
+        if rom.len() != 16 {
+            anyhow::bail!("Invalid ROM length: must be 16 hex characters");
+        }
+        let mut rom_bytes = [0u8; 8];
+        for i in 0..8 {
+            rom_bytes[i] = u8::from_str_radix(&rom[i * 2..i * 2 + 2], 16)?;
+        }
+        let hex_rom = rom.to_uppercase();
+        info!("[1-Wire] Configuration de la sonde 0x{} en 10-bits...", hex_rom);
+
+        if !self.reset() {
+            anyhow::bail!("Le capteur 0x{} n'a pas répondu au Reset pour configurer la résolution", hex_rom);
+        }
+        Ets::delay_ms(2);
+
+        // 1. Match ROM
+        self.write_byte(0x55);
+        for &byte in &rom_bytes {
+            self.write_byte(byte);
+        }
+
+        // 2. Write Scratchpad (0x4E)
+        // Les octets suivants sont : TH (User 1), TL (User 2), Config Register
+        self.write_byte(0x4E);
+        self.write_byte(0x4B); // TH par défaut
+        self.write_byte(0x46); // TL par défaut
+        self.write_byte(0x3F); // Configuration : 10-bits (R1=0, R0=1) -> 0x3F (0b00111111)
+
+        // 3. Sauvegarder dans l'EEPROM (Copy Scratchpad 0x48) pour persister après extinction
+        if !self.reset() {
+            anyhow::bail!("Échec de communication lors de la sauvegarde EEPROM");
+        }
+        Ets::delay_ms(2);
+        self.write_byte(0x55);
+        for &byte in &rom_bytes {
+            self.write_byte(byte);
+        }
+        self.write_byte(0x48); // Copy Scratchpad
+
+        // Laisser du temps pour l'écriture EEPROM (10ms minimum)
+        Ets::delay_ms(15);
+        info!("[1-Wire]   Sonde 0x{} configurée en 10-bits avec succès !", hex_rom);
+        Ok(())
+    }
+
     /// Lit le scratchpad d'un DS18B20 spécifique et extrait la température après validation du CRC.
     pub fn read_temperature(&mut self, rom: &str) -> Result<f32, anyhow::Error> {
         if rom.len() != 16 {
@@ -455,16 +503,30 @@ impl<'d> OneWire<'d> {
                 continue;
             }
 
-            // CRC OK -> extraction température (12-bit, résolution 0.0625°C)
-            let lsb = scratchpad[0];
+            // CRC OK -> extraction température.
+            // Pour 10-bits de résolution :
+            // Les bits 0 et 1 (de l'octet LSB) sont indéfinis et doivent être mis à 0.
+            let mut lsb = scratchpad[0];
             let msb = scratchpad[1];
-            let temp_raw = ((msb as i16) << 8) | (lsb as i16);
+
+            // Configuration :
+            let config = scratchpad[4];
+            let is_10bit = (config & 0x60) == 0x20; // R1=0, R0=1
+
+            let temp_raw = if is_10bit {
+                lsb &= 0xFC; // Masque les bits 0 et 1
+                let raw = ((msb as i16) << 8) | (lsb as i16);
+                raw
+            } else {
+                ((msb as i16) << 8) | (lsb as i16)
+            };
+
             let temp_c = (temp_raw as f32) / 16.0;
 
             if attempt > 1 {
                 info!(
-                    "[DS18B20] 0x{} : lecture réussie après {} tentatives -> {:.2}C",
-                    hex_rom, attempt, temp_c
+                    "[DS18B20] 0x{} : lecture réussie après {} tentatives -> {:.2}C (10-bit: {})",
+                    hex_rom, attempt, temp_c, is_10bit
                 );
             }
 

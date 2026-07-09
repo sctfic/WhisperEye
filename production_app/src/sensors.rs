@@ -72,8 +72,8 @@ pub fn read_sensors(
         if let Ok(mut bus) = bus_mutex.lock() {
             // Lancer la conversion de température sur toutes les sondes connectées
             if let Ok(()) = bus.start_conversion() {
-                // Attendre la conversion (750ms). On utilise std::thread::sleep pour libérer le CPU
-                std::thread::sleep(std::time::Duration::from_millis(750));
+                // Attendre la conversion (200ms pour résolution 10-bit). On utilise std::thread::sleep pour libérer le CPU
+                std::thread::sleep(std::time::Duration::from_millis(200));
 
                 for addr in ds18b20_probes {
                     // Délai de repos entre les transactions de capteurs distincts
