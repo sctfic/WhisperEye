@@ -276,27 +276,63 @@ where
     Ok(())
 }
 
+/// Icône Warning ⚠ (9x9 px)
+const WARNING_ROWS: usize = 9;
+const WARNING_COLS: usize = 9;
+const WARNING_BITMAP: [u16; WARNING_ROWS] = [
+    0b000010000,
+    0b000111000,
+    0b000101000,
+    0b001101100,
+    0b001101100,
+    0b011111110,
+    0b011101110,
+    0b111111111,
+    0b000000000,
+];
+
 fn draw_warning_icon<D>(display: &mut D, start_point: Point) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    use embedded_graphics::primitives::Triangle;
-    let color = Rgb565::new(31, 45, 0); // Orange/Yellow warning color
-    
-    let _ = Triangle::new(
-        Point::new(start_point.x + 4, start_point.y),
-        Point::new(start_point.x, start_point.y + 8),
-        Point::new(start_point.x + 8, start_point.y + 8)
-    )
-    .into_styled(PrimitiveStyle::with_fill(color))
-    .draw(display);
+    let color = Rgb565::new(31, 45, 0); // Orange/Jaune
+    let border_color = Rgb565::BLACK;
+    let x = start_point.x;
+    let y = start_point.y;
 
-    let _ = Pixel(Point::new(start_point.x + 4, start_point.y + 3), Rgb565::BLACK).draw(display);
-    let _ = Pixel(Point::new(start_point.x + 4, start_point.y + 4), Rgb565::BLACK).draw(display);
-    let _ = Pixel(Point::new(start_point.x + 4, start_point.y + 6), Rgb565::BLACK).draw(display);
+    // Effacer le rectangle d'accueil (9x9) pour éviter les superpositions
+    let _ = Rectangle::new(Point::new(x, y), Size::new(9, 9))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(display);
 
+    for row in 0..WARNING_ROWS {
+        for col in 0..WARNING_COLS {
+            let bit = (WARNING_BITMAP[row] >> (WARNING_COLS - 1 - col)) & 1;
+            if bit == 1 {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    color,
+                ).draw(display);
+            }
+        }
+    }
     Ok(())
 }
+
+/// Icône Check ✓ (9x9 px)
+const CHECK_ROWS: usize = 9;
+const CHECK_COLS: usize = 9;
+const CHECK_BITMAP: [u16; CHECK_ROWS] = [
+    0b000000000,
+    0b000000010,
+    0b000000110,
+    0b000001100,
+    0b010011000,
+    0b011110000,
+    0b001100000,
+    0b000000000,
+    0b000000000,
+];
 
 fn draw_check_icon<D>(display: &mut D, start_point: Point) -> Result<(), D::Error>
 where
@@ -305,15 +341,23 @@ where
     let color = Rgb565::GREEN;
     let x = start_point.x;
     let y = start_point.y;
-    
-    let _ = Pixel(Point::new(x + 1, y + 4), color).draw(display);
-    let _ = Pixel(Point::new(x + 2, y + 5), color).draw(display);
-    let _ = Pixel(Point::new(x + 3, y + 6), color).draw(display);
-    
-    let _ = Pixel(Point::new(x + 4, y + 5), color).draw(display);
-    let _ = Pixel(Point::new(x + 5, y + 4), color).draw(display);
-    let _ = Pixel(Point::new(x + 6, y + 3), color).draw(display);
-    let _ = Pixel(Point::new(x + 7, y + 2), color).draw(display);
+
+    // Effacer le rectangle d'accueil (9x9) pour éviter les superpositions
+    let _ = Rectangle::new(Point::new(x, y), Size::new(9, 9))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(display);
+
+    for row in 0..CHECK_ROWS {
+        for col in 0..CHECK_COLS {
+            let bit = (CHECK_BITMAP[row] >> (CHECK_COLS - 1 - col)) & 1;
+            if bit == 1 {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    color,
+                ).draw(display);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -553,14 +597,8 @@ pub fn run_ihm(
             let _ = Text::new(&current_time_str, Point::new(20, 11), status_style_white).draw(&mut display);
 
             if !ntp_synced {
-                let _ = Rectangle::new(Point::new(54, 2), Size::new(9, 9))
-                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                    .draw(&mut display);
                 let _ = draw_warning_icon(&mut display, Point::new(54, 3));
             } else {
-                let _ = Rectangle::new(Point::new(54, 2), Size::new(9, 9))
-                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                    .draw(&mut display);
                 let _ = draw_check_icon(&mut display, Point::new(54, 2));
             }
         }
