@@ -135,9 +135,9 @@ impl<'d> OneWire<'d> {
             if bit {
                 // Écriture d'un bit 1
                 self.pin.set_low().unwrap();
-                Ets::delay_us(2); // Flanc descendant court (réduit de 6 à 2µs pour compenser l'overhead de l'appel set_high)
+                Ets::delay_us(6); // Flanc descendant robuste de 6µs
                 self.pin.set_high().unwrap();
-                Ets::delay_us(58);
+                Ets::delay_us(64);
             } else {
                 // Écriture d'un bit 0
                 self.pin.set_low().unwrap();
@@ -153,11 +153,11 @@ impl<'d> OneWire<'d> {
     pub fn read_bit(&mut self) -> bool {
         critical_section::with(|_| {
             self.pin.set_low().unwrap();
-            Ets::delay_us(1); // Temps bas minimum (l'overhead de l'appel set_high donnera ~2-3µs réel)
+            Ets::delay_us(3); // Temps bas de 3µs pour assurer le déclenchement du slot par le capteur
             self.pin.set_high().unwrap();
-            Ets::delay_us(8); // Échantillonnage à ~10-11µs réels après le début (sécurité avant la fin de la fenêtre de 15µs)
+            Ets::delay_us(10); // Échantillonnage à 13µs total depuis le début du slot (milieu de la fenêtre de 15µs)
             let bit = self.pin.is_high();
-            Ets::delay_us(50); // Fin du cycle
+            Ets::delay_us(55); // Fin du cycle
             bit
         })
     }
