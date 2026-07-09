@@ -1,31 +1,27 @@
 {
     "ChipType": "ESP32-S3",
     "stable": {
-        "version": "1.2.92",
-        "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.92.bin"
+        "version": "1.2.100",
+        "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.100.bin"
     },
     "previous_stable": [
         {
-            "version": "1.2.82",
-            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.82.bin"
+            "version": "1.2.96",
+            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.96.bin"
         },
         {
-            "version": "1.2.50",
-            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.50.bin"
-        },
-        {
-            "version": "1.2.48",
-            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.48.bin"
+            "version": "1.2.88",
+            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.88.bin"
         }
     ],
     "unstable": [
         {
-            "version": "1.2.99-0001",
-            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.99-0001.bin"
+            "version": "1.2.101-0001",
+            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.101-0001.bin"
         },
         {
-            "version": "1.2.97-0001",
-            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.97-0001.bin"
+            "version": "1.2.99-0002",
+            "url": "https://github.com/sctfic/WhisperEye/raw/main/boards/board_default/firmware-s3-1.2.99-0002.bin"
         }
     ]
 }
