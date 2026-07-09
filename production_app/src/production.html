@@ -39,6 +39,40 @@
             transition: transform 0.2s ease;
         }
 
+        /* Styles pour le spinner rotatif */
+        .spinner {
+            animation: rotate 2s linear infinite;
+            width: 18px;
+            height: 18px;
+            vertical-align: middle;
+            margin-right: 6px;
+            display: inline-block;
+        }
+        .spinner .path {
+            stroke: var(--accent-color);
+            stroke-linecap: round;
+            animation: dash 1.5s ease-in-out infinite;
+        }
+        @keyframes rotate {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        @keyframes dash {
+            0% {
+                stroke-dasharray: 1, 150;
+                stroke-dashoffset: 0;
+            }
+            50% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -35;
+            }
+            100% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -124;
+            }
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -1980,7 +2014,7 @@
                                         </div>
                                         <div class="info-group">
                                             <span class="info-label">Plage de mesure</span>
-                                            <span class="info-value" style="font-size: 0.85rem;">${meta.range_min ?? '-'} → ${meta.range_max ?? '-'} ${meta.unit || ''}</span>
+                                            <span class="info-value" style="font-size: 0.85rem;">${meta.range?.min ?? '-'} → ${meta.range?.max ?? '-'} ${meta.unit || ''}</span>
                                         </div>
                                         <div class="info-group" style="border-bottom: none; flex-direction: column; align-items: stretch;">
                                             <span class="info-label">Formule de correction</span>

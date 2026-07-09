@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.103-0002";
+pub const FW_VERSION: &str = "1.2.104";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -249,7 +249,7 @@ fn main() -> Result<()> {
         let probes = ow.search_roms();
         for probe in &probes {
             let _ = ow.verify_authenticity(probe);
-            let _ = ow.configure_resolution_10bit(probe);
+            let _ = ow.configure_resolution_10bit(probe); // 0.25
         }
         (probes, Some(Arc::new(Mutex::new(ow))))
     } else {
@@ -424,6 +424,7 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
 
 
 
