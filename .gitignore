@@ -9,3 +9,7 @@ a faire.md
 walkthrough.md
 build_err.log
 build_err.txt
+production_app/src/screen_browse.rs
+diagram.json
+wokwi.toml
+production_app.elf

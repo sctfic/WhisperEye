@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.111-0009";
+pub const FW_VERSION: &str = "1.2.111-0020";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -80,7 +80,7 @@ struct CustomLogger;
 
 impl log::Log for CustomLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Info
+        metadata.level() <= log::Level::Debug
     }
 
     fn log(&self, record: &log::Record) {
@@ -104,7 +104,7 @@ static LOGGER: CustomLogger = CustomLogger;
 
 fn main() -> Result<()> {
     log::set_logger(&LOGGER)
-        .map(|()| log::set_max_level(log::LevelFilter::Info))
+        .map(|()| log::set_max_level(log::LevelFilter::Debug))
         .expect("Failed to initialize custom logger");
     
     unsafe {
@@ -420,6 +420,17 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

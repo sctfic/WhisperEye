@@ -57,7 +57,7 @@ const UPLOAD_BITMAP: [u8; UPLOAD_ROWS] = [
     0b1000000,
 ];
 
-fn draw_upload_icon<D>(display: &mut D, start_point: Point, active: bool) -> Result<(), D::Error>
+pub fn draw_upload_icon<D>(display: &mut D, start_point: Point, active: bool) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -92,7 +92,7 @@ const DOWNLOAD_BITMAP: [u8; DOWNLOAD_ROWS] = [
     0b1111100,
 ];
 
-fn draw_download_icon<D>(display: &mut D, start_point: Point, active: bool) -> Result<(), D::Error>
+pub fn draw_download_icon<D>(display: &mut D, start_point: Point, active: bool) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -695,17 +695,19 @@ pub fn run_ihm(
             let _ = Text::new(&format!("{:<9} ", b_text), Point::new(2, 237), b_style).draw(&mut display);
         } else {
             // Mode inverseur
-
+            let _ = Rectangle::new(Point::new(1, 230), Size::new(40, 8))
+                .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+                .draw(&mut display);
             if !has_power {
-                let _ = Text::new("H:ERR ", Point::new(2, 232), status_style_red).draw(&mut display);
+                let _ = Text::new("H:ERR ", Point::new(2, 227), status_style_red).draw(&mut display);
             } else if h0_state.inverseur == -1 && current_ina {
-                let _ = draw_upload_icon(&mut display, Point::new(2, 226), true);
-                let _ = Text::new(&format!(" {}% ", h0_state.speed_a), Point::new(11, 232), status_style_green).draw(&mut display);
+                let _ = Text::new(&format!("   {}% ", h0_state.speed_a), Point::new(0, 227), status_style_green).draw(&mut display);
+                let _ = draw_upload_icon(&mut display, Point::new(2, 221), true);
             } else if h0_state.inverseur == 1 && current_inb {
-                let _ = draw_download_icon(&mut display, Point::new(2, 226), true);
-                let _ = Text::new(&format!(" {}% ", h0_state.speed_b), Point::new(11, 232), status_style_green).draw(&mut display);
+                let _ = Text::new(&format!("   {}% ", h0_state.speed_b), Point::new(0, 227), status_style_green).draw(&mut display);
+                let _ = draw_download_icon(&mut display, Point::new(2, 221), true);
             } else {
-                let _ = Text::new("H Off ", Point::new(2, 232), status_style_red).draw(&mut display);
+                let _ = Text::new("H Off ", Point::new(2, 227), status_style_red).draw(&mut display);
             }
         }
 

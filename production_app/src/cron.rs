@@ -263,6 +263,9 @@ impl CronWorker {
         if let Some(ref sht) = sht4_opt {
             readings.temperature_sht45 = sht.temperature;
             readings.humidity_sht45 = sht.humidity;
+        } else if let Some(ref sht) = _sht3_opt {
+            readings.temperature_sht45 = sht.temperature;
+            readings.humidity_sht45 = sht.humidity;
         }
         if let Some(ref scd) = scd_opt {
             readings.co2_scd41 = scd.co2;
@@ -507,23 +510,30 @@ impl CronWorker {
             return Ok(());
         }
 
-        let mut storage = self.nvs.lock().unwrap();
-        let auto_update = storage.get_i32("autoUpdate")?.unwrap_or(1);
+        let (auto_update, next_check_str, url, fw) = {
+            let storage = self.nvs.lock().unwrap();
+            let auto = storage.get_i32("autoUpdate")?.unwrap_or(1);
+            let next = storage.get_str("nextCheck")?.unwrap_or_default();
+            let repo_url = storage.get_str("updateRepoList")?.unwrap_or_default();
+            let fw_version = storage.get_str("fwVersion")?.unwrap_or_else(|| "v1.0.0-poc".to_string());
+            (auto, next, repo_url, fw_version)
+        };
+
         if auto_update == 0 {
-            let next_check_str = storage.get_str("nextCheck")?.unwrap_or_default();
             if next_check_str != "4102387200" {
+                let mut storage = self.nvs.lock().unwrap();
                 storage.set_str("nextCheck", "4102387200")?;
                 info!("autoUpdate is false, nextCheck set to 2099-12-31 (4102387200)");
             }
             return Ok(());
         }
 
-        let next_check_str = storage.get_str("nextCheck")?.unwrap_or_default();
         let mut next_check: u64 = next_check_str.parse().unwrap_or(0);
 
         if next_check == 0 || next_check_str == "4102387200" {
             // First run or transitioning from disabled: initialize target date to tomorrow at 14:00 UTC
             next_check = ((now / 86400) + 1) * 86400 + 14 * 3600;
+            let mut storage = self.nvs.lock().unwrap();
             storage.set_str("nextCheck", &next_check.to_string())?;
             info!("NVS target 'nextCheck' initialized to tomorrow 14:00 UTC: {} (after transition or first run)", next_check);
             return Ok(());
@@ -534,10 +544,11 @@ impl CronWorker {
                 "Task 7 Days: Running check_update() check (target nextCheck: {}, current: {})",
                 next_check, now
             );
-            self.perform_check_update(&mut *storage)?;
+            self.perform_check_update(&url, &fw)?;
 
             // Set new target check date to exactly 7 days from now
             let new_next_check = now + 7 * 86400;
+            let mut storage = self.nvs.lock().unwrap();
             storage.set_str("nextCheck", &new_next_check.to_string())?;
             info!(
                 "NVS target 'nextCheck' updated to: {} (Next 7-day target)",
@@ -548,12 +559,7 @@ impl CronWorker {
         Ok(())
     }
 
-    fn perform_check_update(&self, storage: &mut NvsStorage) -> Result<()> {
-        let url = storage.get_str("updateRepoList")?.unwrap_or_default();
-        let fw = storage
-            .get_str("fwVersion")?
-            .unwrap_or_else(|| "v1.0.0-poc".to_string());
-
+    fn perform_check_update(&self, url: &str, fw: &str) -> Result<()> {
         if url.is_empty() {
             warn!("check_update skipped: no updateRepoList URL configured");
             return Ok(());
@@ -567,7 +573,7 @@ impl CronWorker {
             ..Default::default()
         };
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
-        connection.initiate_request(esp_idf_svc::http::Method::Get, &url, &[])?;
+        connection.initiate_request(esp_idf_svc::http::Method::Get, url, &[])?;
         connection.initiate_response()?;
 
         if connection.status() != 200 {
@@ -600,9 +606,9 @@ impl CronWorker {
                         for v_obj in version_entries(stable_val) {
                             if let Some(ver_str) = v_obj.get("version").and_then(|v| v.as_str()) {
                                 if let Some(url_str) = v_obj.get("url").and_then(|v| v.as_str()) {
-                                    if parse_version(ver_str) > parse_version(&fw) {
+                                    if parse_version(ver_str) > parse_version(fw) {
                                         let current_best =
-                                            new_version.as_deref().unwrap_or(fw.as_str());
+                                            new_version.as_deref().unwrap_or(fw);
                                         if parse_version(ver_str) > parse_version(current_best) {
                                             new_stable_url = Some(url_str.to_string());
                                             new_version = Some(ver_str.to_string());
@@ -621,8 +627,11 @@ impl CronWorker {
                 "Periodic update found version: {}. Arming OTA and rebooting to recovery...",
                 ver
             );
-            storage.set_str("updateDlUrl", &dl_url)?;
-            storage.set_i32("otaRetry", 3)?;
+            {
+                let mut storage = self.nvs.lock().unwrap();
+                storage.set_str("updateDlUrl", &dl_url)?;
+                storage.set_i32("otaRetry", 3)?;
+            }
 
             thread::sleep(Duration::from_secs(2));
             crate::web_handlers::set_boot_to_recovery();
@@ -642,7 +651,6 @@ impl CronWorker {
 
 fn parse_version(v: &str) -> (u32, u32, u32, u32) {
     let clean = v.trim().trim_start_matches('v');
-    // Handle both "1.0.1" and "1.0.1-0125" formats
     let (base, build_str) = if let Some(dash) = clean.find('-') {
         (&clean[..dash], &clean[dash + 1..])
     } else {

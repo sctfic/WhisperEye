@@ -114,6 +114,7 @@ pub struct BrowseController {
     pub last_rlb_val: i16,
     pub last_screen_val: i16,
     pub clear_zone_req: u8,
+    pub last_h0_mode: i8,
 }
 
 fn has_layout_changed(s1: Option<AppState>, s2: AppState) -> bool {
@@ -157,6 +158,7 @@ impl BrowseController {
             last_rlb_val: -999,
             last_screen_val: -999,
             clear_zone_req: 3, // effacer tout au démarrage
+            last_h0_mode: -2,
         }
     }
 
@@ -609,7 +611,7 @@ impl BrowseController {
                                 sub_step: 0,
                             };
                         }
-                        self.needs_redraw = true;
+                        self.needs_redraw = false;
                         self.value_changed = true;
                         return;
                     } else {
@@ -772,8 +774,12 @@ impl BrowseController {
                                     step_idx: current_step_idx,
                                     sub_step: 1,
                                 };
-                                self.needs_redraw = true;
+                                self.needs_redraw = false; // Ne pas effacer la zone de détail
                                 self.value_changed = true;
+                                // Invalider le cache des deux jauges pour rafraîchir leur couleur de focus
+                                let mut self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
+                                self_mut.last_h0_val_a = -999;
+                                self_mut.last_h0_val_b = -999;
                             } else {
                                 self.state = AppState::NaviguerSousMenu { main_index, sub_index };
                             }
@@ -951,12 +957,25 @@ impl BrowseController {
 
         let in_modal = matches!(self.state, AppState::ConfirmerAction { .. });
 
+        let h0_mode = {
+            let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+            let map = registry.load_registry();
+            map.get("H0").and_then(|e| e.inverseur).unwrap_or(0)
+        };
+
         let exited_modal = matches!(self.last_rendered_state, Some(AppState::ConfirmerAction { .. })) && !matches!(self.state, AppState::ConfirmerAction { .. });
+        let h0_mode_changed = self.last_h0_mode != h0_mode;
         let main_changed = self.last_main_index != Some(current_main) || exited_modal || _needs_redraw_full;
         let sub_changed = self.last_sub_index != Some(current_sub) || main_changed || layout_changed || _needs_redraw_full;
 
         // Mettre à jour les besoins d'effacement
         let mut self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
+        if h0_mode_changed {
+            self_mut.last_h0_mode = h0_mode;
+            self_mut.last_h0_val_a = -999;
+            self_mut.last_h0_val_b = -999;
+        }
+
         if main_changed {
             self_mut.clear_zone_req |= 3;
             self_mut.last_main_index = Some(current_main);
@@ -976,7 +995,7 @@ impl BrowseController {
             self_mut.last_screen_val = -999;
         }
 
-        if !in_modal && !periodic_update && !val_changed {
+        if !in_modal && !periodic_update && (!val_changed || self.clear_zone_req != 0) {
             if current_main == 2 {
                 if (self.clear_zone_req & 3) != 0 {
                     let _ = Rectangle::new(Point::new(1, 34), Size::new(318, 184))
@@ -1257,11 +1276,11 @@ impl BrowseController {
                         // ── MODE INDÉPENDANT : 2 BARRES (INA & INB) ──
                         let st = actuators_state.lock().unwrap();
                         let (val_a, val_b) = (st.H0.speed_a, st.H0.speed_b);
-                        
-                        // Barre A
+
+                        // Légende Barre A : à gauche, même Y que le %
+                        let _ = Text::new(&format!("A ({})   ", h0_ina_name), Point::new(right_x, 84), font_small_green).draw(display);
                         let is_editing_a = is_editing && cur_sub_step == 0;
                         let fill_color_a = if is_editing_a { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
-                        let label_a = format!("A ({}): {}%", h0_ina_name, val_a);
                         let _ = self.draw_progress_bar(
                             display,
                             bar_x, 88, bar_w, bar_h,
@@ -1271,13 +1290,12 @@ impl BrowseController {
                             stroke_color,
                             fill_color_a,
                             sub_changed,
-                            &label_a,
                         );
 
-                        // Barre B
+                        // Légende Barre B : à gauche, même Y que le %
+                        let _ = Text::new(&format!("B ({})   ", h0_inb_name), Point::new(right_x, 116), font_small_green).draw(display);
                         let is_editing_b = is_editing && cur_sub_step == 1;
                         let fill_color_b = if is_editing_b { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
-                        let label_b = format!("B ({}): {}%", h0_inb_name, val_b);
                         let _ = self.draw_progress_bar(
                             display,
                             bar_x, 120, bar_w, bar_h,
@@ -1287,7 +1305,6 @@ impl BrowseController {
                             stroke_color,
                             fill_color_b,
                             sub_changed,
-                            &label_b,
                         );
 
                         let _ = Text::new("Mode: Independant (BTN3)", Point::new(right_x, 145), font_small_gray).draw(display);
@@ -1297,14 +1314,23 @@ impl BrowseController {
                         let bar_y = 88;
 
                         if current_sub == 0 {
+                            
+                            let ina_label = format!("{} ", h0_ina_name);
+                            let inb_label = format!(" {}", h0_inb_name);
+                            let inb_w = inb_label.len() as i32 * 6;
+                            
+                            let _ = Text::new(&ina_label, Point::new(bar_x + 10, bar_y - 4), font_small_green).draw(display);
+                            let _ = Text::new(&inb_label, Point::new(bar_x + bar_w - inb_w - 10, bar_y - 4), font_small_green).draw(display);
+
                             // Mode inverseur bidirectionnel (-100 à 100)
-                            let val_label = if cur_val > 0 {
-                                format!("INA: {}%", cur_val)
-                            } else if cur_val < 0 {
-                                format!("INB: {}%", -cur_val)
-                            } else {
-                                "OFF".to_string()
-                            };
+                            let is_ina_active = cur_val > 0;
+                            let is_inb_active = cur_val < 0;
+                            
+                            // Flèche download (↙) en tout début de ligne
+                            let _ = crate::screen_display::draw_download_icon(display, Point::new(bar_x, bar_y - 9), is_inb_active);
+                            // Flèche upload (↗) en toute fin de ligne
+                            let _ = crate::screen_display::draw_upload_icon(display, Point::new(bar_x + bar_w - 7, bar_y - 9), is_ina_active);
+                            
                             let fill_color = if is_editing { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
                             let _ = self.draw_progress_bar(
                                 display,
@@ -1315,15 +1341,24 @@ impl BrowseController {
                                 stroke_color,
                                 fill_color,
                                 sub_changed,
-                                &val_label,
                             );
+
+                            if sub_changed {
+                                // Effacer l'ancienne zone de la jauge B (de Y=110 à 136)
+                                let _ = Rectangle::new(Point::new(bar_x-1, 110), Size::new(bar_w as u32, 26))
+                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+                                    .draw(display);
+                            }
 
                             let step_val = SLIDER_STEPS[step_idx];
                             let _ = Text::new("Mode: Inverseur (BTN3)   ", Point::new(right_x, 145), font_small_gray).draw(display);
                             let _ = Text::new(&format!("Step (Rot): {}%        ", step_val), Point::new(right_x, 160), font_small_gray).draw(display);
                         } else {
                             // Mode classique relais (0 ou 100)
-                            let val_label = format!("{}%", cur_val);
+                            // Légende : nom du relais à gauche, même Y que le %
+                            let relay_name = if current_sub == 1 { "RLA" } else { "RLB" };
+                            let _ = Text::new(&format!("  {}  ", relay_name), Point::new(bar_x, bar_y - 4), font_small_green).draw(display);
+
                             let fill_color = if is_editing { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
                             let cache_ref = if current_sub == 1 {
                                 &mut self_mut.last_rla_val
@@ -1339,7 +1374,6 @@ impl BrowseController {
                                 stroke_color,
                                 fill_color,
                                 sub_changed,
-                                &val_label,
                             );
 
                             let step_val = SLIDER_STEPS[step_idx];
@@ -1357,8 +1391,8 @@ impl BrowseController {
 
                     if current_sub == 0 {
                         let isense_a = board.lock().unwrap().read_value(ina_act, inb_act).isense_amps;
-                        let isense_str = isense_a.map_or("---".to_string(), |a| format!("{:.1}", a));
-                        let _ = Text::new(&format!("{:.1}A ", isense_str), Point::new(right_x + 160, 210), font_small_white).draw(display);
+                        let isense_str = isense_a.map_or("--".to_string(), |a| format!("{:.1}", a));
+                        let _ = Text::new(&format!("{:>4} A ", isense_str), Point::new(right_x + 190, 215), font_small_white).draw(display);
                     }
                 }
             }
@@ -1821,18 +1855,17 @@ impl BrowseController {
         stroke_color: Rgb565,
         fill_color: Rgb565,
         draw_border: bool,
-        label: &str,
     ) -> Result<(), D::Error>
     where
         D: DrawTarget<Color = Rgb565>,
     {
         let font_small_green = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::GREEN).background_color(Rgb565::BLACK).build();
 
-        // 1. Dessiner le pourcentage centré au-dessus de la barre avec des espaces pour effacer
-        let val_label = format!("  {}  ", label);
-        let val_w = val_label.len() as i32 * 6;
-        let label_x = x + (w - val_w) / 2;
-        let _ = Text::new(&val_label, Point::new(label_x, y - 4), font_small_green).draw(display);
+        // 1. Afficher uniquement le pourcentage centré au-dessus de la barre
+        let pct_label = format!("  {}%  ", cur_val);
+        let pct_w = pct_label.len() as i32 * 6;
+        let pct_x = x + (w - pct_w) / 2;
+        let _ = Text::new(&pct_label, Point::new(pct_x, y - 4), font_small_green).draw(display);
 
         // 2. Dessiner le contour de la barre seulement si demandé
         if draw_border {
