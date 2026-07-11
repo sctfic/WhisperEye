@@ -1,7 +1,6 @@
 pub mod i2c_scd41;
 pub mod i2c_bme280;
-pub mod i2c_sht3x;
-pub mod i2c_sht4x;
+pub mod i2c_sht3x_4x;
 
 use esp_idf_hal::i2c::{I2cDriver, I2cConfig, I2C0};
 use esp_idf_hal::gpio::{Gpio37, Gpio38};
@@ -21,8 +20,8 @@ pub fn scan_i2c_devices() -> Vec<(u8, u8)> {
 pub struct I2c {
     pub bme280s: Vec<i2c_bme280::I2cBme280>,
     pub scd41s: Vec<i2c_scd41::I2cScd41>,
-    pub sht3xs: Vec<i2c_sht3x::I2cSht3x>,
-    pub sht4xs: Vec<i2c_sht4x::I2cSht4x>,
+    pub sht3xs: Vec<i2c_sht3x_4x::I2cSht>,
+    pub sht4xs: Vec<i2c_sht3x_4x::I2cSht>,
     pub found_devices: Vec<(u8, u8)>,
 }
 
@@ -163,18 +162,18 @@ impl I2c {
             let mut dev = i2c_scd41::I2cScd41::new(channel, addr);
             let _ = dev.init(driver);
             self.scd41s.push(dev);
-        } else if i2c_sht3x::DETECT_ADDRESSES.contains(&addr) {
-            let mut dev = i2c_sht3x::I2cSht3x::new(channel, addr);
+        } else if addr == 0x45 {
+            let mut dev = i2c_sht3x_4x::I2cSht::new(channel, addr);
             let _ = dev.init(driver);
             self.sht3xs.push(dev);
-        } else if i2c_sht4x::DETECT_ADDRESSES.contains(&addr) {
-            let mut dev = i2c_sht4x::I2cSht4x::new(channel, addr);
+        } else if addr == 0x44 {
+            let mut dev = i2c_sht3x_4x::I2cSht::new(channel, addr);
             let _ = dev.init(driver);
             self.sht4xs.push(dev);
         }
     }
 
-    pub fn read_value(&mut self) -> (Option<i2c_bme280::Bme280Readings>, Option<i2c_scd41::Scd41Readings>, Option<i2c_sht3x::Sht3xReadings>, Option<i2c_sht4x::Sht4xReadings>) {
+    pub fn read_value(&mut self) -> (Option<i2c_bme280::Bme280Readings>, Option<i2c_scd41::Scd41Readings>, Option<i2c_sht3x_4x::ShtReadings>, Option<i2c_sht3x_4x::ShtReadings>) {
         let mut bme_res = None;
         let mut scd_res = None;
         let mut sht3_res = None;

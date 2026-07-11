@@ -757,8 +757,7 @@ pub fn handle_api_sensors(
     _sensors_nvs: Arc<Mutex<NvsStorage>>,
     i2c: Arc<Mutex<I2c>>,
 ) -> Result<()> {
-    // Adapter sensors::read_sensors pour utiliser le nouveau module i2c
-    let (bme_opt, scd_opt, _sht3_opt, sht4_opt) = {
+    let (bme_opt, scd_opt, sht3_opt, sht4_opt) = {
         let mut bus = i2c.lock().unwrap();
         bus.read_value()
     };
@@ -767,6 +766,8 @@ pub fn handle_api_sensors(
     let mut readings = serde_json::json!({
         "i2c:0:0x44_T": sht4_opt.as_ref().map(|s| s.temperature).unwrap_or(-255.0),
         "i2c:0:0x44_H": sht4_opt.as_ref().map(|s| s.humidity).unwrap_or(-255.0),
+        "i2c:0:0x45_T": sht3_opt.as_ref().map(|s| s.temperature).unwrap_or(-255.0),
+        "i2c:0:0x45_H": sht3_opt.as_ref().map(|s| s.humidity).unwrap_or(-255.0),
         "i2c:0:0x62": scd_opt.as_ref().map(|s| s.co2).unwrap_or(-255),
     });
 

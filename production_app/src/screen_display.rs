@@ -695,8 +695,8 @@ pub fn run_ihm(
             let _ = Text::new(&format!("{:<9} ", b_text), Point::new(2, 237), b_style).draw(&mut display);
         } else {
             // Mode inverseur
-            let _ = Rectangle::new(Point::new(1, 230), Size::new(40, 8))
-                .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+            let _ = Rectangle::new(Point::new(1, 231), Size::new(50, 8))
+                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                 .draw(&mut display);
             if !has_power {
                 let _ = Text::new("H:ERR ", Point::new(2, 227), status_style_red).draw(&mut display);

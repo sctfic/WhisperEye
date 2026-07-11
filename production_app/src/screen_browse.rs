@@ -590,23 +590,23 @@ impl BrowseController {
                             };
                         } else {
                             st.H0.inverseur = 2;
-                            st.H0.speed_a = 30;
-                            st.H0.speed_b = 30;
+                            st.H0.speed_a = 0;
+                            st.H0.speed_b = 0;
                             let _ = acts.write_h0(&st.H0);
                             
                             let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
                             let mut map = registry.load_registry();
                             if let Some(entry) = map.get_mut("H0") {
                                 entry.inverseur = Some(2);
-                                if let Some(ref mut ina) = entry.ina { ina.pwm_val = 30; }
-                                if let Some(ref mut inb) = entry.inb { inb.pwm_val = 30; }
+                                if let Some(ref mut ina) = entry.ina { ina.pwm_val = 0; }
+                                if let Some(ref mut inb) = entry.inb { inb.pwm_val = 0; }
                             }
                             registry.save_registry(&map);
                             
                             self.state = AppState::AjusterSlider {
                                 main_index,
                                 sub_index,
-                                value: 30,
+                                value: 0,
                                 step_idx,
                                 sub_step: 0,
                             };
@@ -1278,9 +1278,13 @@ impl BrowseController {
                         let (val_a, val_b) = (st.H0.speed_a, st.H0.speed_b);
 
                         // Légende Barre A : à gauche, même Y que le %
-                        let _ = Text::new(&format!("A ({})   ", h0_ina_name), Point::new(right_x, 84), font_small_green).draw(display);
+                        let _ = Rectangle::new(Point::new(102, 78), Size::new(216, 8))
+                            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                            .draw(display);
+                        let _ = Text::new(&format!("  {}   ", h0_ina_name), Point::new(right_x, 84), font_small_green).draw(display);
                         let is_editing_a = is_editing && cur_sub_step == 0;
                         let fill_color_a = if is_editing_a { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
+                        let draw_border_a = sub_changed || self.last_h0_val_a == -999;
                         let _ = self.draw_progress_bar(
                             display,
                             bar_x, 88, bar_w, bar_h,
@@ -1289,13 +1293,14 @@ impl BrowseController {
                             false,
                             stroke_color,
                             fill_color_a,
-                            sub_changed,
+                            draw_border_a,
                         );
 
                         // Légende Barre B : à gauche, même Y que le %
-                        let _ = Text::new(&format!("B ({})   ", h0_inb_name), Point::new(right_x, 116), font_small_green).draw(display);
+                        let _ = Text::new(&format!("  {}   ", h0_inb_name), Point::new(right_x, 116), font_small_green).draw(display);
                         let is_editing_b = is_editing && cur_sub_step == 1;
                         let fill_color_b = if is_editing_b { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
+                        let draw_border_b = sub_changed || self.last_h0_val_b == -999;
                         let _ = self.draw_progress_bar(
                             display,
                             bar_x, 120, bar_w, bar_h,
@@ -1304,7 +1309,7 @@ impl BrowseController {
                             false,
                             stroke_color,
                             fill_color_b,
-                            sub_changed,
+                            draw_border_b,
                         );
 
                         let _ = Text::new("Mode: Independant (BTN3)", Point::new(right_x, 145), font_small_gray).draw(display);
@@ -1315,8 +1320,8 @@ impl BrowseController {
 
                         if current_sub == 0 {
                             
-                            let ina_label = format!("{} ", h0_ina_name);
-                            let inb_label = format!(" {}", h0_inb_name);
+                            let ina_label = format!("{}    ", h0_ina_name);
+                            let inb_label = format!("    {}", h0_inb_name);
                             let inb_w = inb_label.len() as i32 * 6;
                             
                             let _ = Text::new(&ina_label, Point::new(bar_x + 10, bar_y - 4), font_small_green).draw(display);
@@ -1332,6 +1337,7 @@ impl BrowseController {
                             let _ = crate::screen_display::draw_upload_icon(display, Point::new(bar_x + bar_w - 7, bar_y - 9), is_ina_active);
                             
                             let fill_color = if is_editing { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
+                            let draw_border_a = sub_changed || self.last_h0_val_a == -999;
                             let _ = self.draw_progress_bar(
                                 display,
                                 bar_x, bar_y, bar_w, bar_h,
@@ -1340,13 +1346,13 @@ impl BrowseController {
                                 true,
                                 stroke_color,
                                 fill_color,
-                                sub_changed,
+                                draw_border_a,
                             );
 
-                            if sub_changed {
-                                // Effacer l'ancienne zone de la jauge B (de Y=110 à 136)
-                                let _ = Rectangle::new(Point::new(bar_x-1, 110), Size::new(bar_w as u32, 26))
-                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+                            if self.last_h0_val_b == -999 {
+                                // Effacer l'ancienne zone de la jauge B (de Y=110 à 136) en noir
+                                let _ = Rectangle::new(Point::new(bar_x - 1, 110), Size::new((bar_w + 2) as u32, 26))
+                                    .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                                     .draw(display);
                             }
 
@@ -1392,7 +1398,7 @@ impl BrowseController {
                     if current_sub == 0 {
                         let isense_a = board.lock().unwrap().read_value(ina_act, inb_act).isense_amps;
                         let isense_str = isense_a.map_or("--".to_string(), |a| format!("{:.1}", a));
-                        let _ = Text::new(&format!("{:>4} A ", isense_str), Point::new(right_x + 190, 215), font_small_white).draw(display);
+                        let _ = Text::new(&format!("{:>4} A ", isense_str), Point::new(right_x + 176, 215), font_small_white).draw(display);
                     }
                 }
             }

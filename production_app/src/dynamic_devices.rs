@@ -146,6 +146,17 @@ pub fn get_sensor_meta(device_id: &str) -> Option<SensorMeta> {
             uncertainty: "±1.0 %RH (typ., 25-75 %RH)\n±1.5 %RH (max.)".to_string(),
             range: [0.0, 100.0],
         }),
+        // SHT3x (Sensirion) — https://sensirion.com/products/catalog/SHT30-DIS-B
+        id if id.ends_with("_T") && id.contains("0x45") => Some(SensorMeta {
+            unit: "°C".to_string(),
+            uncertainty: "±0.2 °C (typ., 0-65 °C)\n±0.5 °C (max.)".to_string(),
+            range: [-40.0, 125.0],
+        }),
+        id if id.ends_with("_H") && id.contains("0x45") => Some(SensorMeta {
+            unit: "%RH".to_string(),
+            uncertainty: "±2.0 %RH (typ., 0-90 %RH)\n±4.0 %RH (max.)".to_string(),
+            range: [0.0, 100.0],
+        }),
         // SCD41 (Sensirion) — https://sensirion.com/products/catalog/SCD41
         id if id.contains("0x62") => Some(SensorMeta {
             unit: "ppm".to_string(),
@@ -354,7 +365,7 @@ impl DeviceRegistry {
     }
 
     /// Scan dynamic and static devices, merge with custom names from NVS.
-    pub fn scan_and_register(&mut self, onewr_pins: Vec<String>) -> Result<(), anyhow::Error> {
+    pub fn scan_and_register(&mut self, onewr_pins: Vec<String>, i2c: &Arc<Mutex<crate::i2c::I2c>>) -> Result<(), anyhow::Error> {
         let mut saved = self.load_registry(); // contient statiques (avec nom NVS si existant) + dynamiques (NVS)
         let mut updated = HashMap::new();
 
@@ -418,18 +429,49 @@ impl DeviceRegistry {
         let i2c_scans = crate::i2c::scan_i2c_devices();
         for (channel, addr) in i2c_scans {
             let addr_str = format!("0x{:02x}", addr);
-            if addr == 0x44 {
-                // SHT45 : séparer en deux capteurs distincts (Température et Humidité)
+            if addr == 0x44 || addr == 0x45 {
+                // Déterminer le modèle réel (SHT30 ou SHT45)
+                let model_name = {
+                    let i2c_lock = i2c.lock().unwrap();
+                    let mut name = if addr == 0x44 { "SHT45".to_string() } else { "SHT30".to_string() };
+                    
+                    // Chercher dans sht4xs ou sht3xs selon la liste d'enregistrement d'I2C
+                    let found_dev = if addr == 0x44 {
+                        i2c_lock.sht4xs.iter().find(|d| d.channel == channel && d.address == addr)
+                    } else {
+                        i2c_lock.sht3xs.iter().find(|d| d.channel == channel && d.address == addr)
+                    };
+
+                    if let Some(dev) = found_dev {
+                        if let Some(m) = dev.model {
+                            name = match m {
+                                crate::i2c::i2c_sht3x_4x::ShtModel::Sht3x => "SHT30".to_string(),
+                                crate::i2c::i2c_sht3x_4x::ShtModel::Sht4x => "SHT45".to_string(),
+                            };
+                        }
+                    }
+                    name
+                };
+
                 let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
-                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default("SHT45-Temp".to_string(), false, true, Some(addr_str.clone())));
+                let default_name_t = format!("{}-Temp", model_name);
+                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default(default_name_t.clone(), false, true, Some(addr_str.clone())));
                 entry_t.present = true;
                 if entry_t.address.is_none() { entry_t.address = Some(addr_str.clone()); }
+                // Ajuster le nom si c'est l'ancien nom par défaut ou s'il correspond au modèle
+                if entry_t.name == "SHT45-Temp" || entry_t.name == "SHT30-Temp" {
+                    entry_t.name = default_name_t;
+                }
                 updated.insert(id_t, entry_t);
 
                 let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
-                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| make_default("SHT45-Hum".to_string(), false, true, Some(addr_str.clone())));
+                let default_name_h = format!("{}-Hum", model_name);
+                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| make_default(default_name_h.clone(), false, true, Some(addr_str.clone())));
                 entry_h.present = true;
                 if entry_h.address.is_none() { entry_h.address = Some(addr_str.clone()); }
+                if entry_h.name == "SHT45-Hum" || entry_h.name == "SHT30-Hum" {
+                    entry_h.name = default_name_h;
+                }
                 updated.insert(id_h, entry_h);
             } else if addr == 0x62 {
                 let id = format!("i2c:{}:0x{:02x}", channel, addr);
@@ -507,8 +549,15 @@ impl DeviceRegistry {
         raw_values.insert("ina".to_string(), if ina_on { 1.0 } else { 0.0 });
         raw_values.insert("inb".to_string(), if inb_on { 1.0 } else { 0.0 });
         
-        raw_values.insert("i2c:0:0x44_T".to_string(), 23.40);
-        raw_values.insert("i2c:0:0x44_H".to_string(), 45.20);
+        let sht4_t = *crate::i2c::i2c_sht3x_4x::SHT4X_TEMP.lock().unwrap() as f64;
+        let sht4_h = *crate::i2c::i2c_sht3x_4x::SHT4X_HUM.lock().unwrap() as f64;
+        let sht3_t = *crate::i2c::i2c_sht3x_4x::SHT3X_TEMP.lock().unwrap() as f64;
+        let sht3_h = *crate::i2c::i2c_sht3x_4x::SHT3X_HUM.lock().unwrap() as f64;
+
+        raw_values.insert("i2c:0:0x44_T".to_string(), (sht4_t * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x44_H".to_string(), (sht4_h * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x45_T".to_string(), (sht3_t * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x45_H".to_string(), (sht3_h * 100.0).round() / 100.0);
         raw_values.insert("i2c:0:0x62".to_string(), 680.00);
         
         raw_values.insert("i2c:0:0x76_T".to_string(), (bme_t * 100.0).round() / 100.0);
@@ -566,9 +615,17 @@ impl DeviceRegistry {
                 _ if id.starts_with("i2c:") => {
                     present = entry.present;
                     if id.ends_with("_T") && id.contains("0x44") {
-                        raw_val = 23.4;
+                        raw_val = sht4_t;
+                        present = sht4_t != -255.0 && sht4_t != -254.0 && sht4_t != -253.0;
                     } else if id.ends_with("_H") && id.contains("0x44") {
-                        raw_val = 45.2;
+                        raw_val = sht4_h;
+                        present = sht4_h != -255.0 && sht4_h != -254.0 && sht4_h != -253.0;
+                    } else if id.ends_with("_T") && id.contains("0x45") {
+                        raw_val = sht3_t;
+                        present = sht3_t != -255.0 && sht3_t != -254.0 && sht3_t != -253.0;
+                    } else if id.ends_with("_H") && id.contains("0x45") {
+                        raw_val = sht3_h;
+                        present = sht3_h != -255.0 && sht3_h != -254.0 && sht3_h != -253.0;
                     } else if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") {
                         raw_val = 680.0;
                     } else if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) {

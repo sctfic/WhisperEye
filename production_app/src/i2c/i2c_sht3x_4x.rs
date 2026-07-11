@@ -1,8 +1,15 @@
 use esp_idf_hal::i2c::I2cDriver;
 use std::thread;
 use std::time::Duration;
+use std::sync::Mutex;
 
-pub const DETECT_ADDRESSES: &[u8] = &[0x44]; // SHT45 (ou SHT4x) adresse par défaut 0x44
+pub static SHT3X_TEMP: Mutex<f32> = Mutex::new(-255.0);
+pub static SHT3X_HUM: Mutex<f32> = Mutex::new(-255.0);
+
+pub static SHT4X_TEMP: Mutex<f32> = Mutex::new(-255.0);
+pub static SHT4X_HUM: Mutex<f32> = Mutex::new(-255.0);
+
+pub const DETECT_ADDRESSES: &[u8] = &[0x44, 0x45]; // SHT3x et SHT4x adresses par défaut 0x44 et 0x45
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ShtModel {
@@ -11,22 +18,19 @@ pub enum ShtModel {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct Sht4xReadings {
+pub struct ShtReadings {
     pub temperature: f32,
     pub humidity: f32,
 }
 
-pub struct I2cScdSht {
+pub struct I2cSht {
     pub channel: u8,
     pub address: u8,
     pub is_found: bool,
     pub model: Option<ShtModel>,
 }
 
-// Pour rester compatible avec le nom attendu par i2c.rs, nous créons un alias I2cSht4x
-pub type I2cSht4x = I2cScdSht;
-
-impl I2cScdSht {
+impl I2cSht {
     pub fn new(channel: u8, address: u8) -> Self {
         Self {
             channel,
@@ -64,7 +68,6 @@ impl I2cScdSht {
     }
 
     fn probe_sht4x(&self, driver: &mut I2cDriver<'static>) -> bool {
-        // Envoi de la commande de mesure SHT4x : 0xFD
         if driver.write(self.address, &[0xFD], 50).is_err() {
             return false;
         }
@@ -73,12 +76,10 @@ impl I2cScdSht {
         if driver.read(self.address, &mut buf, 50).is_err() {
             return false;
         }
-        // Valider les CRC
         check_crc(&[buf[0], buf[1]], buf[2]) && check_crc(&[buf[3], buf[4]], buf[5])
     }
 
     fn probe_sht3x(&self, driver: &mut I2cDriver<'static>) -> bool {
-        // Envoi de la commande de mesure SHT3x : 0x2400 (High repeatability, clock stretching disabled)
         if driver.write(self.address, &[0x24, 0x00], 50).is_err() {
             return false;
         }
@@ -87,11 +88,10 @@ impl I2cScdSht {
         if driver.read(self.address, &mut buf, 50).is_err() {
             return false;
         }
-        // Valider les CRC
         check_crc(&[buf[0], buf[1]], buf[2]) && check_crc(&[buf[3], buf[4]], buf[5])
     }
 
-    pub fn read_value(&mut self, driver: &mut I2cDriver<'static>) -> Option<Sht4xReadings> {
+    pub fn read_value(&mut self, driver: &mut I2cDriver<'static>) -> Option<ShtReadings> {
         if !self.is_found {
             return None;
         }
@@ -117,7 +117,7 @@ impl I2cScdSht {
                             
                             let temp = -45.0 + 175.0 * (t_ticks as f32 / 65535.0);
                             let hum = -6.0 + 125.0 * (rh_ticks as f32 / 65535.0);
-                            return Some(Sht4xReadings {
+                            return Some(ShtReadings {
                                 temperature: temp,
                                 humidity: hum.clamp(0.0, 100.0),
                             });
@@ -136,7 +136,7 @@ impl I2cScdSht {
                             
                             let temp = -45.0 + 175.0 * (t_ticks as f32 / 65535.0);
                             let hum = 100.0 * (rh_ticks as f32 / 65535.0);
-                            return Some(Sht4xReadings {
+                            return Some(ShtReadings {
                                 temperature: temp,
                                 humidity: hum.clamp(0.0, 100.0),
                             });

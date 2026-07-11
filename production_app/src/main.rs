@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.111-0020";
+pub const FW_VERSION: &str = "1.2.118";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -262,7 +262,7 @@ fn main() -> Result<()> {
     // Enregistrer les périphériques détectés
     {
         let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&nvs_storage));
-        let _ = registry.scan_and_register((*discovered_probes).clone());
+        let _ = registry.scan_and_register((*discovered_probes).clone(), &i2c);
     }
 
     let (mesh_channel, mesh_ssid, mesh_pmk) = {
@@ -420,6 +420,16 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
 
 
 

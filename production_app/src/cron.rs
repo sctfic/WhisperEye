@@ -261,11 +261,18 @@ impl CronWorker {
             }
         }
         if let Some(ref sht) = sht4_opt {
+            if let Ok(mut g_t) = crate::i2c::i2c_sht3x_4x::SHT4X_TEMP.lock() { *g_t = sht.temperature; }
+            if let Ok(mut g_h) = crate::i2c::i2c_sht3x_4x::SHT4X_HUM.lock() { *g_h = sht.humidity; }
             readings.temperature_sht45 = sht.temperature;
             readings.humidity_sht45 = sht.humidity;
-        } else if let Some(ref sht) = _sht3_opt {
-            readings.temperature_sht45 = sht.temperature;
-            readings.humidity_sht45 = sht.humidity;
+        }
+        if let Some(ref sht) = _sht3_opt {
+            if let Ok(mut g_t) = crate::i2c::i2c_sht3x_4x::SHT3X_TEMP.lock() { *g_t = sht.temperature; }
+            if let Ok(mut g_h) = crate::i2c::i2c_sht3x_4x::SHT3X_HUM.lock() { *g_h = sht.humidity; }
+            if sht4_opt.is_none() {
+                readings.temperature_sht45 = sht.temperature;
+                readings.humidity_sht45 = sht.humidity;
+            }
         }
         if let Some(ref scd) = scd_opt {
             readings.co2_scd41 = scd.co2;
