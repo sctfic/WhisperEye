@@ -34,6 +34,9 @@ pub struct SensorReadings {
     pub humidity_sht45: f32,
     pub co2_scd41: i32,
     pub ds18b20_temperatures: HashMap<String, f32>,
+    pub vsense: Option<f32>,
+    pub isense: Option<f32>,
+    pub touch: Option<bool>,
 }
 
 impl serde::Serialize for SensorReadings {
@@ -50,6 +53,16 @@ impl serde::Serialize for SensorReadings {
         
         for (addr, temp) in &self.ds18b20_temperatures {
             map.serialize_entry(&format!("onewr:{}", addr), temp)?;
+        }
+
+        if let Some(v) = self.vsense {
+            map.serialize_entry("vsense", &v)?;
+        }
+        if let Some(i) = self.isense {
+            map.serialize_entry("isense", &i)?;
+        }
+        if let Some(t) = self.touch {
+            map.serialize_entry("touch", &t)?;
         }
         
         map.end()
@@ -126,5 +139,8 @@ pub fn read_sensors(
         humidity_sht45: -255.0,
         co2_scd41: -255,
         ds18b20_temperatures: ds_temps,
+        vsense: None,
+        isense: None,
+        touch: None,
     }
 }

@@ -31,6 +31,7 @@ pub struct CronWorker {
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
     onewire_bus: Option<Arc<Mutex<crate::one_wire::OneWire<'static>>>>,
     i2c: Arc<Mutex<crate::i2c::I2c>>,
+    board: Arc<Mutex<crate::board::Board>>,
     last_metrics_run: Option<std::time::Instant>,
     last_telemetry_run: Option<std::time::Instant>,
     last_update_check_run: Option<std::time::Instant>,
@@ -46,6 +47,7 @@ impl CronWorker {
         scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
         onewire_bus: Option<Arc<Mutex<crate::one_wire::OneWire<'static>>>>,
         i2c: Arc<Mutex<crate::i2c::I2c>>,
+        board: Arc<Mutex<crate::board::Board>>,
     ) -> Self {
         Self {
             rx,
@@ -57,6 +59,7 @@ impl CronWorker {
             scheduled_actions,
             onewire_bus,
             i2c,
+            board,
             last_metrics_run: None,
             last_telemetry_run: None,
             last_update_check_run: None,
@@ -144,13 +147,39 @@ impl CronWorker {
                                     "rla" => { acts.rla = action.state; }
                                     "rlb" => { acts.rlb = action.state; }
                                     "swpwr" => { acts.swpwr = action.state; }
-                                    "ina" => { acts.ina = action.state; }
-                                    "inb" => { acts.inb = action.state; }
+                                    "ina" => {
+                                        if acts.H0.inverseur == 2 {
+                                            acts.H0.speed_a = if action.state { 30 } else { 0 };
+                                        } else {
+                                            if action.state {
+                                                acts.H0.inverseur = -1;
+                                                acts.H0.speed_a = 30;
+                                            } else if acts.H0.inverseur == -1 {
+                                                acts.H0.inverseur = 0;
+                                            }
+                                        }
+                                    }
+                                    "inb" => {
+                                        if acts.H0.inverseur == 2 {
+                                            acts.H0.speed_b = if action.state { 30 } else { 0 };
+                                        } else {
+                                            if action.state {
+                                                acts.H0.inverseur = 1;
+                                                acts.H0.speed_b = 30;
+                                            } else if acts.H0.inverseur == 1 {
+                                                acts.H0.inverseur = 0;
+                                            }
+                                        }
+                                    }
                                     _ => {
                                         warn!("Unknown actuator id in schedule: {}", id);
                                     }
                                 }
-                                let _ = devs.write(id.as_str(), action.state);
+                                if id == "ina" || id == "inb" {
+                                    let _ = devs.write_h0(&acts.H0);
+                                } else {
+                                    let _ = devs.write(id.as_str(), action.state);
+                                }
                                 changed = true;
                             }
                         }
@@ -238,6 +267,24 @@ impl CronWorker {
         if let Some(ref scd) = scd_opt {
             readings.co2_scd41 = scd.co2;
         }
+        
+        let (ina_on, inb_on) = {
+            let state = self.actuators_state.lock().unwrap();
+            match state.H0.inverseur {
+                -1 => (true, false),
+                1 => (false, true),
+                2 => (state.H0.speed_a > 0, state.H0.speed_b > 0),
+                _ => (false, false),
+            }
+        };
+        let board_readings = {
+            let mut b = self.board.lock().unwrap();
+            b.read_value(ina_on, inb_on)
+        };
+        readings.vsense = board_readings.vsense_volts;
+        readings.isense = board_readings.isense_amps;
+        readings.touch = Some(board_readings.touch);
+
         crate::dynamic_devices::apply_sensor_corrections(&self.nvs, &mut readings);
         let entry = MetricEntry {
             timestamp: now,
@@ -697,6 +744,7 @@ pub fn spawn_cron_scheduler(
     scheduled_actions: Arc<Mutex<crate::actuators::ScheduledActions>>,
     onewire_bus: Option<Arc<Mutex<crate::one_wire::OneWire<'static>>>>,
     i2c: Arc<Mutex<crate::i2c::I2c>>,
+    board: Arc<Mutex<crate::board::Board>>,
 ) -> Result<CronHandle> {
     let (tx, rx) = channel();
 
@@ -708,6 +756,7 @@ pub fn spawn_cron_scheduler(
     let worker_sched = Arc::clone(&scheduled_actions);
     let worker_bus = onewire_bus.clone();
     let worker_i2c = Arc::clone(&i2c);
+    let worker_board = Arc::clone(&board);
     thread::Builder::new()
         .name("cron_worker".to_string())
         .stack_size(65536)
@@ -721,6 +770,7 @@ pub fn spawn_cron_scheduler(
                 worker_sched,
                 worker_bus,
                 worker_i2c,
+                worker_board,
             );
             worker.run();
         })

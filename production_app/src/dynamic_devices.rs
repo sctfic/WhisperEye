@@ -12,12 +12,17 @@ const STATIC_DEVICES: &[(&str, &str)] = &[
     ("rlb", "Relais B (RLB)"),
     ("swpwr", "Coupure Alimentation (SWPWR)"),
     ("isense", "Mesure Courant Pont H (ISENSE)"),
-    ("ina", "Sortie INA Pont H (INA)"),
-    ("inb", "Sortie INB Pont H (INB)"),
+    ("H0", "Pont H"),
 ];
 
 pub fn is_static_device(id: &str) -> bool {
     STATIC_DEVICES.iter().any(|(i, _)| *i == id)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubPwmDevice {
+    pub name: String,
+    pub pwm_val: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +48,12 @@ pub struct DeviceEntry {
     pub pwm_val: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inverseur: Option<i8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ina: Option<SubPwmDevice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inb: Option<SubPwmDevice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +78,12 @@ pub struct PersistEntry {
     pub pwm_val: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inverseur: Option<i8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ina: Option<SubPwmDevice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inb: Option<SubPwmDevice>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +114,14 @@ pub struct DeviceDisplay {
     pub address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub polarity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub buffer: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inverseur: Option<i8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ina: Option<SubPwmDevice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inb: Option<SubPwmDevice>,
 }
 
 /// Métadonnées techniques d'un capteur (issues des documentations officielles)
@@ -200,6 +225,9 @@ pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, for
             step: None,
             pwm_val: None,
             schedules: None,
+            inverseur: None,
+            ina: None,
+            inb: None,
         });
     }
     let new_str = serde_json::to_string(&persist_map)?;
@@ -226,7 +254,7 @@ impl DeviceRegistry {
     pub fn load_registry(&self) -> HashMap<String, DeviceEntry> {
         let mut map: HashMap<String, DeviceEntry> = HashMap::new();
         for &(id, name) in STATIC_DEVICES {
-            map.insert(id.to_string(), DeviceEntry {
+            let mut entry = DeviceEntry {
                 name: name.to_string(),
                 is_static: true,
                 present: true,
@@ -239,7 +267,16 @@ impl DeviceRegistry {
                 step: None,
                 pwm_val: None,
                 schedules: None,
-            });
+                inverseur: None,
+                ina: None,
+                inb: None,
+            };
+            if id == "H0" {
+                entry.inverseur = Some(0);
+                entry.ina = Some(SubPwmDevice { name: "open door".to_string(), pwm_val: 30 });
+                entry.inb = Some(SubPwmDevice { name: "close door".to_string(), pwm_val: 30 });
+            }
+            map.insert(id.to_string(), entry);
         }
         let storage = self.nvs.lock().unwrap();
         if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
@@ -257,6 +294,11 @@ impl DeviceRegistry {
                             entry.step = pe.step;
                             entry.pwm_val = pe.pwm_val;
                             entry.schedules = pe.schedules;
+                            if id == "H0" {
+                                if let Some(inv) = pe.inverseur { entry.inverseur = Some(inv); }
+                                if let Some(i) = pe.ina { entry.ina = Some(i); }
+                                if let Some(i) = pe.inb { entry.inb = Some(i); }
+                            }
                         }
                     } else {
                         map.insert(id.clone(), DeviceEntry {
@@ -272,6 +314,9 @@ impl DeviceRegistry {
                             step: pe.step,
                             pwm_val: pe.pwm_val,
                             schedules: pe.schedules,
+                            inverseur: pe.inverseur,
+                            ina: pe.ina,
+                            inb: pe.inb,
                         });
                     }
                 }
@@ -297,6 +342,9 @@ impl DeviceRegistry {
                 step: step_val,
                 pwm_val: v.pwm_val,
                 schedules: v.schedules.clone(),
+                inverseur: v.inverseur,
+                ina: v.ina.clone(),
+                inb: v.inb.clone(),
             });
         }
         let mut storage = self.nvs.lock().unwrap();
@@ -323,6 +371,9 @@ impl DeviceRegistry {
             step: None,
             pwm_val: None,
             schedules: None,
+            inverseur: None,
+            ina: None,
+            inb: None,
         };
 
         // 1. Static Devices (Always present, avec conservation des noms NVS personnalisés)
@@ -437,6 +488,7 @@ impl DeviceRegistry {
         schedules: Option<&HashMap<String, Vec<crate::actuators::ScheduledAction>>>,
         vsense_volts: Option<f32>,
         isense_amps: Option<f32>,
+        history: &[crate::cron::MetricEntry],
     ) -> Vec<DeviceDisplay> {
         let registry = self.load_registry(); // construit à partir des statiques + NVS dynamiques
         let mut list = Vec::new();
@@ -446,8 +498,8 @@ impl DeviceRegistry {
         let bme_p = *crate::i2c::i2c_bme280::BME280_PRESS.lock().unwrap() as f64;
 
         let mut raw_values: HashMap<String, f64> = HashMap::new();
-        raw_values.insert("vsense".to_string(), vsense_volts.unwrap_or(0.0) as f64);
-        raw_values.insert("isense".to_string(), isense_amps.unwrap_or(0.0) as f64);
+        raw_values.insert("vsense".to_string(), (vsense_volts.unwrap_or(0.0) as f64 * 100.0).round() / 100.0);
+        raw_values.insert("isense".to_string(), (isense_amps.unwrap_or(0.0) as f64 * 100.0).round() / 100.0);
         raw_values.insert("touch".to_string(), if touch_state { 1.0 } else { 0.0 });
         raw_values.insert("rla".to_string(), if relay_a_on { 1.0 } else { 0.0 });
         raw_values.insert("rlb".to_string(), if relay_b_on { 1.0 } else { 0.0 });
@@ -455,19 +507,19 @@ impl DeviceRegistry {
         raw_values.insert("ina".to_string(), if ina_on { 1.0 } else { 0.0 });
         raw_values.insert("inb".to_string(), if inb_on { 1.0 } else { 0.0 });
         
-        raw_values.insert("i2c:0:0x44_T".to_string(), 23.4);
-        raw_values.insert("i2c:0:0x44_H".to_string(), 45.2);
-        raw_values.insert("i2c:0:0x62".to_string(), 680.0);
+        raw_values.insert("i2c:0:0x44_T".to_string(), 23.40);
+        raw_values.insert("i2c:0:0x44_H".to_string(), 45.20);
+        raw_values.insert("i2c:0:0x62".to_string(), 680.00);
         
-        raw_values.insert("i2c:0:0x76_T".to_string(), bme_t);
-        raw_values.insert("i2c:0:0x76_H".to_string(), bme_h);
-        raw_values.insert("i2c:0:0x76_P".to_string(), bme_p);
-        raw_values.insert("i2c:0:0x77_T".to_string(), bme_t);
-        raw_values.insert("i2c:0:0x77_H".to_string(), bme_h);
-        raw_values.insert("i2c:0:0x77_P".to_string(), bme_p);
+        raw_values.insert("i2c:0:0x76_T".to_string(), (bme_t * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x76_H".to_string(), (bme_h * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x76_P".to_string(), (bme_p * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x77_T".to_string(), (bme_t * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x77_H".to_string(), (bme_h * 100.0).round() / 100.0);
+        raw_values.insert("i2c:0:0x77_P".to_string(), (bme_p * 100.0).round() / 100.0);
 
         for (addr, temp) in ds_readings {
-            raw_values.insert(format!("onewr:{}", addr), *temp as f64);
+            raw_values.insert(format!("onewr:{}", addr), (*temp as f64 * 100.0).round() / 100.0);
         }
 
         for (id, entry) in registry.iter() {
@@ -489,8 +541,10 @@ impl DeviceRegistry {
                 "rla" => raw_val = if relay_a_on { 1.0 } else { 0.0 },
                 "rlb" => raw_val = if relay_b_on { 1.0 } else { 0.0 },
                 "swpwr" => raw_val = if swpwr_on { 1.0 } else { 0.0 },
-                "ina" => raw_val = if ina_on { 1.0 } else { 0.0 },
-                "inb" => raw_val = if inb_on { 1.0 } else { 0.0 },
+                "H0" => {
+                    present = vsense_volts.map_or(false, |v| v > 5.0);
+                    raw_val = if present { 1.0 } else { 0.0 };
+                }
                 "screen" => {
                     present = crate::screen::is_present();
                     raw_val = if present { 1.0 } else { 0.0 };
@@ -531,6 +585,11 @@ impl DeviceRegistry {
                 _ => {}
             }
 
+            // 1. Arrondir raw_val à 2 décimales juste après la lecture pour les capteurs numériques
+            if present && id != "rla" && id != "rlb" && id != "swpwr" && id != "ina" && id != "inb" && id != "screen" && id != "radio" && id != "touch" {
+                raw_val = (raw_val * 100.0).round() / 100.0;
+            }
+
             let mut final_val = raw_val;
             let is_act = matches!(id.as_str(), "rla" | "rlb" | "swpwr" | "ina" | "inb");
             if !is_act && present && correction != "x" && correction != "x.raw" && !correction.is_empty() {
@@ -540,17 +599,121 @@ impl DeviceRegistry {
                 }
             }
 
-            let mut value;
+            // 2. Construire le buffer historique corrigé (10 dernières valeurs)
+            let buffer_field = if is_act || id == "screen" || id == "radio" {
+                None
+            } else {
+                let mut vals = Vec::new();
+                for entry in history {
+                    let mut h_raw = -255.0;
+                    let mut h_present = true;
+                    
+                    match id.as_str() {
+                        "vsense" => {
+                            if let Some(v) = entry.readings.vsense {
+                                h_raw = v as f64;
+                            } else {
+                                h_present = false;
+                            }
+                        }
+                        "isense" => {
+                            if let Some(i) = entry.readings.isense {
+                                h_raw = i as f64;
+                            } else {
+                                h_present = false;
+                            }
+                        }
+                        "touch" => {
+                            if let Some(t) = entry.readings.touch {
+                                h_raw = if t { 1.0 } else { 0.0 };
+                            } else {
+                                h_present = false;
+                            }
+                        }
+                        _ if id.starts_with("onewr:") => {
+                            let addr = &id[6..];
+                            if let Some(&temp) = entry.readings.ds18b20_temperatures.get(addr) {
+                                h_raw = temp as f64;
+                                h_present = temp != -255.0;
+                            } else {
+                                h_present = false;
+                            }
+                        }
+                        _ if id.starts_with("i2c:") => {
+                            if id.ends_with("_T") && id.contains("0x44") {
+                                h_raw = entry.readings.temperature_sht45 as f64;
+                                h_present = h_raw != -255.0;
+                            } else if id.ends_with("_H") && id.contains("0x44") {
+                                h_raw = entry.readings.humidity_sht45 as f64;
+                                h_present = h_raw != -255.0;
+                            } else if id.contains("0x62") {
+                                h_raw = entry.readings.co2_scd41 as f64;
+                                h_present = h_raw != -255.0;
+                            } else if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) {
+                                h_raw = bme_t;
+                                h_present = bme_t != -255.0 && bme_t != -254.0 && bme_t != -253.0;
+                            } else if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) {
+                                h_raw = bme_h;
+                                h_present = bme_h != -255.0 && bme_h != -254.0 && bme_h != -253.0;
+                            } else if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) {
+                                h_raw = bme_p;
+                                h_present = bme_p != -255.0 && bme_p != -254.0 && bme_p != -253.0;
+                            } else {
+                                h_present = false;
+                            }
+                        }
+                        _ => { h_present = false; }
+                    }
+                    
+                    if h_present {
+                        h_raw = (h_raw * 100.0).round() / 100.0;
+                        let mut h_final = h_raw;
+                        if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+                            let mut h_raw_values = HashMap::new();
+                            h_raw_values.insert("vsense".to_string(), entry.readings.vsense.unwrap_or(0.0) as f64);
+                            h_raw_values.insert("isense".to_string(), entry.readings.isense.unwrap_or(0.0) as f64);
+                            h_raw_values.insert("touch".to_string(), if entry.readings.touch.unwrap_or(false) { 1.0 } else { 0.0 });
+                            h_raw_values.insert("i2c:0:0x44_T".to_string(), entry.readings.temperature_sht45 as f64);
+                            h_raw_values.insert("i2c:0:0x44_H".to_string(), entry.readings.humidity_sht45 as f64);
+                            h_raw_values.insert("i2c:0:0x62".to_string(), entry.readings.co2_scd41 as f64);
+                            for (addr, temp) in &entry.readings.ds18b20_temperatures {
+                                h_raw_values.insert(format!("onewr:{}", addr), *temp as f64);
+                            }
+                            
+                            let tokens = tokenize(&correction, &h_raw_values, h_raw);
+                            if let Ok(evaluated) = evaluate_expression(&tokens) {
+                                h_final = evaluated;
+                            }
+                        }
+                        vals.push((h_final * 100.0).round() / 100.0);
+                    }
+                }
+                Some(vals)
+            };
+
+            let value;
             let mut unit = String::new();
             match id.as_str() {
-                "rla" | "rlb" | "swpwr" | "ina" | "inb" => {
+                "rla" | "rlb" | "swpwr" => {
                     value = serde_json::json!(if final_val > 0.5 { "ON" } else { "OFF" });
+                }
+                "H0" => {
+                    let inv = entry.inverseur.unwrap_or(0);
+                    if inv == 2 {
+                        value = serde_json::json!("Indépendant");
+                    } else if inv == -1 {
+                        value = serde_json::json!(format!("INA: {}%", entry.ina.as_ref().map(|i| i.pwm_val).unwrap_or(0)));
+                    } else if inv == 1 {
+                        value = serde_json::json!(format!("INB: {}%", entry.inb.as_ref().map(|i| i.pwm_val).unwrap_or(0)));
+                    } else {
+                        value = serde_json::json!("OFF");
+                    }
                 }
                 "touch" => {
                     value = serde_json::json!(if final_val > 0.5 { "TOUCHÉ" } else { "RELÂCHÉ" });
                 }
                 "vsense" => {
-                    let val_rounded = (final_val * 10.0).round() / 10.0;
+                    let val_rounded = (final_val * 100.0).round() / 100.0;
                     value = serde_json::json!(val_rounded);
                     unit = "V".to_string();
                 }
@@ -566,46 +729,18 @@ impl DeviceRegistry {
                     if !present {
                         value = serde_json::json!(-255.0);
                     } else {
-                        let val_rounded = (final_val * 10.0).round() / 10.0;
+                        let val_rounded = (final_val * 100.0).round() / 100.0;
                         value = serde_json::json!(val_rounded);
                     }
                     unit = "°C".to_string();
                 }
-                _ if id.starts_with("i2c:") => {
-                    if !present {
-                        if raw_val == -254.0 {
-                            value = serde_json::json!(-254.0);
-                        } else if raw_val == -253.0 {
-                            value = serde_json::json!(-253.0);
-                        } else {
-                            value = serde_json::json!(-255.0);
-                        }
-                    } else {
-                        if id.ends_with("_T") {
-                            let val_rounded = (final_val * 10.0).round() / 10.0;
-                            value = serde_json::json!(val_rounded);
-                            unit = "°C".to_string();
-                        } else if id.ends_with("_H") {
-                            let val_rounded = (final_val * 10.0).round() / 10.0;
-                            value = serde_json::json!(val_rounded);
-                            unit = "%".to_string();
-                        } else if id.ends_with("_P") {
-                            let val_rounded = (final_val * 10.0).round() / 10.0;
-                            value = serde_json::json!(val_rounded);
-                            unit = "hPa".to_string();
-                        } else {
-                            let val_rounded = final_val.round();
-                            value = serde_json::json!(val_rounded);
-                            unit = "ppm".to_string();
-                        }
-                    }
-                }
                 _ => {
-                    let val_rounded = (final_val * 10.0).round() / 10.0;
+                    let val_rounded = (final_val * 100.0).round() / 100.0;
                     value = serde_json::json!(val_rounded);
                 }
             }
 
+            let is_act = matches!(id.as_str(), "rla" | "rlb" | "swpwr" | "H0");
             let dev_schedules = if is_act {
                 schedules.and_then(|s| s.get(id).cloned())
             } else {
@@ -619,7 +754,9 @@ impl DeviceRegistry {
             };
 
             let display_step = entry.step.or(if is_act {
-                if matches!(id.as_str(), "rla" | "rlb" | "swpwr") {
+                if id == "H0" {
+                    Some(10)
+                } else if id == "rla" || id == "rlb" || id == "swpwr" {
                     Some(100)
                 } else {
                     Some(10)
@@ -628,23 +765,7 @@ impl DeviceRegistry {
                 None
             });
 
-            let display_pwm = entry.pwm_val.or(if is_act {
-                let is_on = match id.as_str() {
-                    "rla" => relay_a_on,
-                    "rlb" => relay_b_on,
-                    "swpwr" => swpwr_on,
-                    "ina" => ina_on,
-                    "inb" => inb_on,
-                    _ => false,
-                };
-                if is_on { Some(100) } else { Some(0) }
-            } else if id == "screen" {
-                let storage = self.nvs.lock().unwrap();
-                let b = storage.get_i32("scrBrightness").ok().flatten().unwrap_or(20) as u8;
-                Some(b)
-            } else {
-                None
-            });
+            let display_pwm = entry.pwm_val;
 
             let final_sensor_meta = if let (Some(u), Some(unc), Some(r)) = (&entry.unit, &entry.uncertainty, &entry.range) {
                 Some(SensorMeta {
@@ -674,11 +795,15 @@ impl DeviceRegistry {
                 pwm_val: display_pwm,
                 address: entry.address.clone(),
                 polarity: entry.polarity.clone(),
+                buffer: buffer_field,
+                inverseur: entry.inverseur,
+                ina: entry.ina.clone(),
+                inb: entry.inb.clone(),
             });
         }
 
         // Sort: dynamic first, then static, alphabetically by ID
-        list.sort_by(|a, b| {
+        list.sort_by(|a: &DeviceDisplay, b: &DeviceDisplay| {
             if a.is_static != b.is_static {
                 a.is_static.cmp(&b.is_static)
             } else {
@@ -727,6 +852,9 @@ impl DeviceRegistry {
                 step: None,
                 pwm_val: None,
                 schedules: None,
+                inverseur: None,
+                ina: None,
+                inb: None,
             });
         }
 
@@ -913,10 +1041,10 @@ pub fn apply_sensor_corrections(
 ) {
     let mut raw_values = HashMap::new();
     
-    // Valeurs statiques/actionneurs pour l'évaluation des formules
-    raw_values.insert("vsense".to_string(), 12.4);
-    raw_values.insert("isense".to_string(), 0.18);
-    raw_values.insert("touch".to_string(), 0.0);
+    // Valeurs dynamiques réelles pour l'évaluation des formules
+    raw_values.insert("vsense".to_string(), readings.vsense.unwrap_or(0.0) as f64);
+    raw_values.insert("isense".to_string(), readings.isense.unwrap_or(0.0) as f64);
+    raw_values.insert("touch".to_string(), if readings.touch.unwrap_or(false) { 1.0 } else { 0.0 });
     raw_values.insert("rla".to_string(), 0.0);
     raw_values.insert("rlb".to_string(), 0.0);
     raw_values.insert("swpwr".to_string(), 0.0);
@@ -1007,6 +1135,30 @@ pub fn apply_sensor_corrections(
                 if let Ok(evaluated) = evaluate_expression(&tokens) {
                     *temp = evaluated as f32;
                 }
+            }
+        }
+    }
+
+    // 6. Corriger vsense
+    if let Some(ref mut v) = readings.vsense {
+        let id = "vsense";
+        let correction = get_correction_formula(nvs, id);
+        if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+            let tokens = tokenize(&correction, &raw_values, *v as f64);
+            if let Ok(evaluated) = evaluate_expression(&tokens) {
+                *v = evaluated as f32;
+            }
+        }
+    }
+
+    // 7. Corriger isense
+    if let Some(ref mut i) = readings.isense {
+        let id = "isense";
+        let correction = get_correction_formula(nvs, id);
+        if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+            let tokens = tokenize(&correction, &raw_values, *i as f64);
+            if let Ok(evaluated) = evaluate_expression(&tokens) {
+                *i = evaluated as f32;
             }
         }
     }

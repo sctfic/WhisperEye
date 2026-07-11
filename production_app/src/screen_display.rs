@@ -24,7 +24,7 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let color = if connected { Rgb565::GREEN } else { Rgb565::RED };
-    let border_color = Rgb565::BLACK;
+    // let border_color = Rgb565::BLACK;
     let base_y = start_point.y + 11;
 
     // 4 barres : hauteurs 3, 5, 7, 9 px, largeurs 2px, séparées de 1px (i * 3)
@@ -33,9 +33,9 @@ where
         let height = 3 + (i * 2);
         let y = base_y - height;
 
-        let _ = Rectangle::new(Point::new(x - 1, y - 1), Size::new(3, (height + 2) as u32))
-            .into_styled(PrimitiveStyle::with_fill(border_color))
-            .draw(display);
+        // let _ = Rectangle::new(Point::new(x - 1, y - 1), Size::new(3, (height + 2) as u32))
+        //     .into_styled(PrimitiveStyle::with_fill(border_color))
+        //     .draw(display);
 
         let _ = Rectangle::new(Point::new(x, y), Size::new(2, height as u32))
             .into_styled(PrimitiveStyle::with_fill(color))
@@ -296,14 +296,9 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let color = Rgb565::new(31, 45, 0); // Orange/Jaune
-    let border_color = Rgb565::BLACK;
+    let _border_color = Rgb565::BLACK;
     let x = start_point.x;
     let y = start_point.y;
-
-    // Effacer le rectangle d'accueil (9x9) pour éviter les superpositions
-    let _ = Rectangle::new(Point::new(x, y), Size::new(9, 9))
-        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-        .draw(display);
 
     for row in 0..WARNING_ROWS {
         for col in 0..WARNING_COLS {
@@ -312,6 +307,11 @@ where
                 let _ = embedded_graphics::Pixel(
                     Point::new(x + col as i32, y + row as i32),
                     color,
+                ).draw(display);
+            } else {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    Rgb565::BLACK,
                 ).draw(display);
             }
         }
@@ -342,11 +342,6 @@ where
     let x = start_point.x;
     let y = start_point.y;
 
-    // Effacer le rectangle d'accueil (9x9) pour éviter les superpositions
-    let _ = Rectangle::new(Point::new(x, y), Size::new(9, 9))
-        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-        .draw(display);
-
     for row in 0..CHECK_ROWS {
         for col in 0..CHECK_COLS {
             let bit = (CHECK_BITMAP[row] >> (CHECK_COLS - 1 - col)) & 1;
@@ -354,6 +349,11 @@ where
                 let _ = embedded_graphics::Pixel(
                     Point::new(x + col as i32, y + row as i32),
                     color,
+                ).draw(display);
+            } else {
+                let _ = embedded_graphics::Pixel(
+                    Point::new(x + col as i32, y + row as i32),
+                    Rgb565::BLACK,
                 ).draw(display);
             }
         }
@@ -454,15 +454,14 @@ pub fn run_ihm(
         let btn3_val = screen.btn3_driver.is_high();
         let encoder_count = screen.get_encoder_count();
 
-        let mut btn2_clicked = last_btn2_val && !btn2_val;
-        let mut btn3_clicked = last_btn3_val && !btn3_val;
+        let btn2_clicked = last_btn2_val && !btn2_val;
+        let btn3_clicked = last_btn3_val && !btn3_val;
         last_btn2_val = btn2_val;
         last_btn3_val = btn3_val;
 
         // Détecter l'activité utilisateur
         let encoder_delta = encoder_count - last_encoder_val;
         let activity = btn2_clicked || btn3_clicked || (encoder_delta != 0) || current_touch;
-        let mut current_encoder_delta_val = encoder_count;
         if encoder_count != last_encoder_val {
             last_encoder_val = encoder_count;
         }
@@ -525,7 +524,7 @@ pub fn run_ihm(
 
         // Mise à jour de la machine à états de navigation
         controller.process_inputs(
-            current_encoder_delta_val,
+            encoder_count,
             btn2_clicked,
             btn3_clicked,
             &nvs_storage,
@@ -544,7 +543,12 @@ pub fn run_ihm(
                 let mut b = board.lock().unwrap();
                 let (ina_act, inb_act) = {
                     let act = actuators_state.lock().unwrap();
-                    (act.ina, act.inb)
+                    match act.H0.inverseur {
+                        -1 => (true, false),
+                        1 => (false, true),
+                        2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
+                        _ => (false, false),
+                    }
                 };
                 b.read_value(ina_act, inb_act)
             };
@@ -559,7 +563,13 @@ pub fn run_ihm(
 
         let (current_rla, current_rlb, current_ina, current_inb) = {
             let act = actuators_state.lock().unwrap();
-            (act.rla, act.rlb, act.ina, act.inb)
+            let (ina_act, inb_act) = match act.H0.inverseur {
+                -1 => (true, false),
+                1 => (false, true),
+                2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
+                _ => (false, false),
+            };
+            (act.rla, act.rlb, ina_act, inb_act)
         };
 
         let current_i2c = crate::i2c::I2C_DEVICES_COUNT.load(Ordering::Relaxed);
@@ -599,7 +609,7 @@ pub fn run_ihm(
             if !ntp_synced {
                 let _ = draw_warning_icon(&mut display, Point::new(54, 3));
             } else {
-                let _ = draw_check_icon(&mut display, Point::new(54, 2));
+                let _ = draw_check_icon(&mut display, Point::new(54, 3));
             }
         }
 
@@ -642,7 +652,7 @@ pub fn run_ihm(
 
         let _ = draw_wifi_icon(&mut display, Point::new(269, 2), current_wifi);
 
-        let is_external = vsense_volts_val >= 1.0;
+        let is_external = vsense_volts_val >= 5.0;
         let _ = draw_lightning_icon(&mut display, Point::new(283, 1), is_external);
 
         let alim_str = if is_external {
@@ -654,26 +664,50 @@ pub fn run_ihm(
         let _ = Text::new(&alim_str, Point::new(293, 11), alim_style).draw(&mut display);
 
         // ── 2. BARRE DU BAS (Y=219..240) ──
-        let has_power = vsense_volts_val > 6.0;
+        let has_power = vsense_volts_val > 5.0;
 
-        let (ina_speed, inb_speed) = {
-            let act = actuators.lock().unwrap();
-            (act.ina.get_speed(), act.inb.get_speed())
+        let h0_state = {
+            let act = actuators_state.lock().unwrap();
+            act.H0.clone()
         };
 
-        let (ina_text, ina_style) = if has_power {
-            if current_ina { (format!("INA: {}%  ", ina_speed), status_style_green) } else { ("INA: 0%   ".to_string(), status_style_red) }
+        // Effacer la zone pour éviter les superpositions de textes précédents
+        // let _ = Rectangle::new(Point::new(2, 219), Size::new(55, 20))
+        //     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        //     .draw(&mut display);
+
+        if h0_state.inverseur == 2 {
+            // Mode indépendant : afficher A:XX% et B:XX%
+            let a_text = if has_power {
+                if current_ina { format!("A:{}% ", h0_state.speed_a) } else { "A:0%  ".to_string() }
+            } else {
+                "A:ERR ".to_string()
+            };
+            let a_style = if has_power && current_ina { status_style_green } else { status_style_red };
+            let _ = Text::new(&format!("{:<9} ", a_text), Point::new(2, 227), a_style).draw(&mut display);
+
+            let b_text = if has_power {
+                if current_inb { format!("B:{}% ", h0_state.speed_b) } else { "B:0%  ".to_string() }
+            } else {
+                "B:ERR ".to_string()
+            };
+            let b_style = if has_power && current_inb { status_style_green } else { status_style_red };
+            let _ = Text::new(&format!("{:<9} ", b_text), Point::new(2, 237), b_style).draw(&mut display);
         } else {
-            ("INA: ERR  ".to_string(), status_style_red)
-        };
-        let _ = Text::new(&format!("{:<9}", ina_text), Point::new(2, 227), ina_style).draw(&mut display);
+            // Mode inverseur
 
-        let (inb_text, inb_style) = if has_power {
-            if current_inb { (format!("INB: {}%  ", inb_speed), status_style_green) } else { ("INB: 0%   ".to_string(), status_style_red) }
-        } else {
-            ("INB: ERR  ".to_string(), status_style_red)
-        };
-        let _ = Text::new(&format!("{:<9}", inb_text), Point::new(2, 237), inb_style).draw(&mut display);
+            if !has_power {
+                let _ = Text::new("H:ERR ", Point::new(2, 232), status_style_red).draw(&mut display);
+            } else if h0_state.inverseur == -1 && current_ina {
+                let _ = draw_upload_icon(&mut display, Point::new(2, 226), true);
+                let _ = Text::new(&format!(" {}% ", h0_state.speed_a), Point::new(11, 232), status_style_green).draw(&mut display);
+            } else if h0_state.inverseur == 1 && current_inb {
+                let _ = draw_download_icon(&mut display, Point::new(2, 226), true);
+                let _ = Text::new(&format!(" {}% ", h0_state.speed_b), Point::new(11, 232), status_style_green).draw(&mut display);
+            } else {
+                let _ = Text::new("H Off ", Point::new(2, 232), status_style_red).draw(&mut display);
+            }
+        }
 
         let rla_text = if current_rla { "RLA: 1" } else { "RLA: 0" };
         let rla_style = if current_rla { status_style_green } else { status_style_red };

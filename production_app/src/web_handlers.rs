@@ -203,39 +203,72 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
     } else {
         cache_busted_url.push_str(&format!("?nocache={}", rand_val));
     }
-    info!("[check_updates_internal] Querying URL: {}", cache_busted_url);
 
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         use_global_ca_store: false,
         crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+        follow_redirects_policy: esp_idf_svc::http::client::FollowRedirectsPolicy::FollowNone, // Désactiver pour libérer manuellement la RAM TLS entre chaque étape
         ..Default::default()
     };
-    let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
     
-    // Headers anti-cache pour forcer le CDN de GitHub et les proxies à nous donner le fichier frais
-    let headers = [
-        ("Cache-Control", "no-cache"),
-        ("Pragma", "no-cache"),
-        ("User-Agent", "WhisperEye-ESP32S3"),
-    ];
-    connection.initiate_request(esp_idf_svc::http::Method::Get, &cache_busted_url, &headers)?;
-    connection.initiate_response()?;
-
-    let status = connection.status();
-    if status != 200 {
-        return Err(anyhow::anyhow!("Upstream error: HTTP {}", status));
-    }
-
+    let mut current_url = cache_busted_url;
     let mut body = Vec::new();
-    let mut chunk = [0u8; 1024];
+    let mut redirect_count = 0;
+    
     loop {
-        match connection.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => body.extend_from_slice(&chunk[..n]),
-            Err(e) => return Err(anyhow::anyhow!("Failed to read response: {:?}", e)),
+        if redirect_count >= 3 {
+            return Err(anyhow::anyhow!("Trop de redirections HTTP (max 3)"));
         }
+        
+        info!("[check_updates_internal] Requête vers : {}", current_url);
+        let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
+        
+        let headers = [
+            ("Cache-Control", "no-cache"),
+            ("Pragma", "no-cache"),
+            ("User-Agent", "WhisperEye-ESP32S3"),
+        ];
+        connection.initiate_request(esp_idf_svc::http::Method::Get, &current_url, &headers)?;
+        connection.initiate_response()?;
+
+        let status = connection.status();
+        
+        // Si redirection (3xx)
+        if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
+            let mut location_url = None;
+            if let Some(loc) = connection.header("Location") {
+                location_url = Some(loc.to_string());
+            }
+            
+            // Fermer explicitement la connexion active et libérer la heap RAM mbedTLS
+            drop(connection);
+            
+            if let Some(new_url) = location_url {
+                info!("[check_updates_internal] Redirection ({}) vers {}", status, new_url);
+                current_url = new_url;
+                redirect_count += 1;
+                continue;
+            } else {
+                return Err(anyhow::anyhow!("Redirection sans en-tête Location"));
+            }
+        }
+
+        if status != 200 {
+            return Err(anyhow::anyhow!("Upstream error: HTTP {}", status));
+        }
+
+        let mut chunk = [0u8; 1024];
+        loop {
+            match connection.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => body.extend_from_slice(&chunk[..n]),
+                Err(e) => return Err(anyhow::anyhow!("Failed to read response: {:?}", e)),
+            }
+        }
+        break; // Lecture réussie
     }
+
     let val: serde_json::Value = serde_json::from_slice(&body)?;
     info!("[check_updates_internal] JSON reçu de GitHub : {}", serde_json::to_string(&val).unwrap_or_default());
 
@@ -284,14 +317,20 @@ pub fn build_capacity_info(
     cap_nvs: &Arc<Mutex<NvsStorage>>,
     cap_probes: &Arc<Vec<String>>,
     cap_act_state: &Arc<Mutex<ActuatorsState>>,
-    cap_act: &Arc<Mutex<Actuators>>,
+    _cap_act: &Arc<Mutex<Actuators>>,
     cap_sched: &Arc<Mutex<ScheduledActions>>,
     cap_board: &Arc<Mutex<Board>>,
     cap_i2c: &Arc<Mutex<I2c>>,
 ) -> Result<serde_json::Value, anyhow::Error> {
     let (rla, rlb, swpwr, ina, inb) = {
         let act = cap_act_state.lock().unwrap();
-        (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
+        let (ina_act, inb_act) = match act.H0.inverseur {
+            -1 => (true, false),
+            1 => (false, true),
+            2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
+            _ => (false, false),
+        };
+        (act.rla, act.rlb, act.swpwr, ina_act, inb_act)
     };
     
     let board_readings = {
@@ -302,7 +341,7 @@ pub fn build_capacity_info(
     let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(cap_nvs));
     
     // Simuler la lecture des capteurs I2C
-    let (bme_opt, scd_opt, sht3_opt, sht4_opt) = {
+    let (_bme_opt, scd_opt, _sht3_opt, sht4_opt) = {
         let mut i2c = cap_i2c.lock().unwrap();
         i2c.read_value()
     };
@@ -332,6 +371,7 @@ pub fn build_capacity_info(
             Some(&sched_lock.schedules),
             board_readings.vsense_volts,
             board_readings.isense_amps,
+            &[],
         )
     };
 
@@ -714,7 +754,7 @@ pub fn handle_api_ssids(
 
 pub fn handle_api_sensors(
     req: Request<&mut EspHttpConnection<'_>>,
-    sensors_nvs: Arc<Mutex<NvsStorage>>,
+    _sensors_nvs: Arc<Mutex<NvsStorage>>,
     i2c: Arc<Mutex<I2c>>,
 ) -> Result<()> {
     // Adapter sensors::read_sensors pour utiliser le nouveau module i2c
@@ -750,10 +790,17 @@ pub fn handle_api_peripherals(
     periphs_sched: Arc<Mutex<ScheduledActions>>,
     periphs_board: Arc<Mutex<Board>>,
     periphs_i2c: Arc<Mutex<I2c>>,
+    cron_handle: crate::cron::CronHandle,
 ) -> Result<()> {
     let (rla, rlb, swpwr, ina, inb) = {
         let act = periphs_act_state.lock().unwrap();
-        (act.rla, act.rlb, act.swpwr, act.ina, act.inb)
+        let (ina_act, inb_act) = match act.H0.inverseur {
+            -1 => (true, false),
+            1 => (false, true),
+            2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
+            _ => (false, false),
+        };
+        (act.rla, act.rlb, act.swpwr, ina_act, inb_act)
     };
     
     let board_readings = {
@@ -761,7 +808,7 @@ pub fn handle_api_peripherals(
         b.read_value(ina, inb)
     };
 
-    let (bme_opt, scd_opt, sht3_opt, sht4_opt) = {
+    let (_bme_opt, scd_opt, _sht3_opt, sht4_opt) = {
         let mut i2c = periphs_i2c.lock().unwrap();
         i2c.read_value()
     };
@@ -788,6 +835,7 @@ pub fn handle_api_peripherals(
     };
 
     let registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&periphs_nvs));
+    let history = cron_handle.get_sensor_history();
     let list = {
         let sched_lock = periphs_sched.lock().unwrap();
         registry.get_devices_display(
@@ -804,6 +852,7 @@ pub fn handle_api_peripherals(
             Some(&sched_lock.schedules),
             board_readings.vsense_volts,
             board_readings.isense_amps,
+            &history,
         )
     };
 
@@ -931,14 +980,7 @@ pub fn handle_post_actuators(
         let _ = acts.write("rla", payload.rla);
         let _ = acts.write("rlb", payload.rlb);
         let _ = acts.write("swpwr", payload.swpwr);
-        let _ = acts.write("ina", payload.ina);
-        let _ = acts.write("inb", payload.inb);
-
-        let speed_a = if payload.ina { payload.ina_speed.unwrap_or(100) } else { 0 };
-        let _ = acts.ina.set_speed(speed_a as i32);
-
-        let speed_b = if payload.inb { payload.inb_speed.unwrap_or(100) } else { 0 };
-        let _ = acts.inb.set_speed(speed_b as i32);
+        let _ = acts.write_h0(&payload.H0);
 
         if let Some(brightness) = payload.screen_brightness {
             let mut storage = nvs.lock().unwrap();
@@ -958,11 +1000,14 @@ pub fn handle_post_actuators(
         if let Some(entry) = map.get_mut("swpwr") {
             entry.pwm_val = Some(if payload.swpwr { 100 } else { 0 });
         }
-        if let Some(entry) = map.get_mut("ina") {
-            entry.pwm_val = Some(speed_a);
-        }
-        if let Some(entry) = map.get_mut("inb") {
-            entry.pwm_val = Some(speed_b);
+        if let Some(entry) = map.get_mut("H0") {
+            entry.inverseur = Some(payload.H0.inverseur);
+            if let Some(ref mut ina) = entry.ina {
+                ina.pwm_val = payload.H0.speed_a;
+            }
+            if let Some(ref mut inb) = entry.inb {
+                inb.pwm_val = payload.H0.speed_b;
+            }
         }
 
         registry.save_registry(&map);
@@ -1030,8 +1075,30 @@ pub fn handle_actuators_control(
                 "rla" => acts.rla = payload.state,
                 "rlb" => acts.rlb = payload.state,
                 "swpwr" => acts.swpwr = payload.state,
-                "ina" => acts.ina = payload.state,
-                "inb" => acts.inb = payload.state,
+                "ina" => {
+                    if acts.H0.inverseur == 2 {
+                        acts.H0.speed_a = if payload.state { 100 } else { 0 };
+                    } else {
+                        if payload.state {
+                            acts.H0.inverseur = -1;
+                            acts.H0.speed_a = 100;
+                        } else if acts.H0.inverseur == -1 {
+                            acts.H0.inverseur = 0;
+                        }
+                    }
+                }
+                "inb" => {
+                    if acts.H0.inverseur == 2 {
+                        acts.H0.speed_b = if payload.state { 100 } else { 0 };
+                    } else {
+                        if payload.state {
+                            acts.H0.inverseur = 1;
+                            acts.H0.speed_b = 100;
+                        } else if acts.H0.inverseur == 1 {
+                            acts.H0.inverseur = 0;
+                        }
+                    }
+                }
                 _ => {
                     let mut response = req.into_status_response(400)?;
                     response.write(b"Identifiant d'actionneur inconnu")?;
@@ -1041,7 +1108,12 @@ pub fn handle_actuators_control(
         }
         {
             let mut acts = ctrl_act.lock().unwrap();
-            let _ = acts.write(&payload.id, payload.state);
+            if payload.id == "ina" || payload.id == "inb" {
+                let state_guard = ctrl_act_state.lock().unwrap();
+                let _ = acts.write_h0(&state_guard.H0);
+            } else {
+                let _ = acts.write(&payload.id, payload.state);
+            }
         }
         let mut response = req.into_ok_response()?;
         response.write(b"Action executee avec succes.")?;
@@ -1159,7 +1231,7 @@ pub fn handle_config(
     let mut wifi_success = true;
     let mut totp_success = true;
     let mut totp_err_msg = "";
-    let mut should_reboot_production = false;
+    let should_reboot_production = false;
 
     {
         let mut storage = nvs_clone.lock().unwrap();
@@ -1523,8 +1595,6 @@ pub fn handle_api_network_knowledge(
     wifi: Arc<Mutex<NetManager>>,
 ) -> Result<(), anyhow::Error> {
     use log::warn;
-    use embedded_svc::http::server::Request;
-    use esp_idf_svc::http::server::EspHttpConnection;
     
     let is_pairing = {
         let net = wifi.lock().unwrap();

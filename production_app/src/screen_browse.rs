@@ -57,8 +57,9 @@ pub enum AppState {
     AjusterSlider {
         main_index: usize,
         sub_index: usize,
-        value: u8,
+        value: i16,
         step_idx: usize,
+        sub_step: u8,
     },
     /// Mode ConfirmerAction :
     /// - `action_type` : type d'action à confirmer
@@ -95,7 +96,7 @@ pub struct BrowseController {
     pub ap_active_until: Option<std::time::Instant>,
     pub ota_confirm_active: bool,
     pub selected_ota_ver: String,
-    pub ota_cancel_choice: bool, // false = OK (installer), true = Annuler
+    pub ota_cancel_choice: bool,
     pub slider_step_idx: usize,
     pub needs_redraw: bool,
     pub refresh_ticks: u32,
@@ -107,6 +108,12 @@ pub struct BrowseController {
     pub selected_wifi_idx: usize,
     pub value_changed: bool,
     pub last_ap_active: Option<bool>,
+    pub last_h0_val_a: i16,
+    pub last_h0_val_b: i16,
+    pub last_rla_val: i16,
+    pub last_rlb_val: i16,
+    pub last_screen_val: i16,
+    pub clear_zone_req: u8,
 }
 
 fn has_layout_changed(s1: Option<AppState>, s2: AppState) -> bool {
@@ -144,6 +151,12 @@ impl BrowseController {
             selected_ver_idx: 1, // index 1 (version actuelle v1.2.13-0008)
             selected_wifi_idx: 0,
             last_ap_active: None,
+            last_h0_val_a: -999,
+            last_h0_val_b: -999,
+            last_rla_val: -999,
+            last_rlb_val: -999,
+            last_screen_val: -999,
+            clear_zone_req: 3, // effacer tout au démarrage
         }
     }
 
@@ -157,7 +170,12 @@ impl BrowseController {
 
         let (ina_act, inb_act) = {
             let act = actuators_state.lock().unwrap();
-            (act.ina, act.inb)
+            match act.H0.inverseur {
+                -1 => (true, false),
+                1 => (false, true),
+                2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
+                _ => (false, false),
+            }
         };
 
         let readings = {
@@ -336,7 +354,7 @@ impl BrowseController {
                             let sensors = Self::get_sensors_list(nvs, board, actuators_state);
                             sensors.len() + 1
                         }
-                        1 => 5, // INA, INB, RLA, RLB, SWPWR
+                        1 => 4, // Pont H, RLA, RLB, SWPWR
                         2 => 1, // Schema
                         3 => 6, // Wifi Client, Wifi AP, TOTP, Ecran, Update, Reset
                         _ => 1,
@@ -354,7 +372,7 @@ impl BrowseController {
                         let sensors = Self::get_sensors_list(nvs, board, actuators_state);
                         sensors.len() + 1
                     }
-                    1 => 5, // INA, INB, RLA, RLB, SWPWR
+                    1 => 4, // Pont H (H0), RLA, RLB, SWPWR
                     2 => 1, // Schema
                     3 => 6, // Wifi Client, Wifi AP, TOTP, Ecran, Update, Reset
                     _ => 1,
@@ -386,23 +404,31 @@ impl BrowseController {
                             };
                         }
                         1 => {
-                            if new_sub == 4 {
+                            if new_sub == 3 {
                                 self.state = AppState::ConfirmerAction { action_type: ConfirmActionType::MiseEnVeille, choice: false };
                             } else {
-                                let (current_val, default_step) = {
-                                    let acts = actuators.lock().unwrap();
-                                    let val = match new_sub {
-                                        0 => if acts.ina.is_active() { acts.ina.get_speed() as u8 } else { 0 },
-                                        1 => if acts.inb.is_active() { acts.inb.get_speed() as u8 } else { 0 },
-                                        2 => if acts.relay_a.is_active() { 100 } else { 0 },
-                                        3 => if acts.relay_b.is_active() { 100 } else { 0 },
-                                        _ => 0,
+                                let (current_val, default_step, sub_step) = {
+                                    let st = actuators_state.lock().unwrap();
+                                    let (val, sub_s) = match new_sub {
+                                        0 => {
+                                            if st.H0.inverseur == 2 {
+                                                (st.H0.speed_a as i16, 0)
+                                            } else if st.H0.inverseur == -1 {
+                                                (st.H0.speed_a as i16, 0)
+                                            } else if st.H0.inverseur == 1 {
+                                                (-(st.H0.speed_b as i16), 0)
+                                            } else {
+                                                (0, 0)
+                                            }
+                                        }
+                                        1 => (if st.rla { 100 } else { 0 }, 0),
+                                        2 => (if st.rlb { 100 } else { 0 }, 0),
+                                        _ => (0, 0),
                                     };
                                     let actuator_id = match new_sub {
-                                        0 => "ina",
-                                        1 => "inb",
-                                        2 => "rla",
-                                        3 => "rlb",
+                                        0 => "H0",
+                                        1 => "rla",
+                                        2 => "rlb",
                                         _ => "",
                                     };
                                     let step_val = {
@@ -413,15 +439,22 @@ impl BrowseController {
                                     let step_idx = if let Some(sv) = step_val {
                                         get_step_idx_from_val(sv)
                                     } else {
-                                        if new_sub == 2 || new_sub == 3 { 8 } else { self.slider_step_idx }
+                                        if new_sub == 0 {
+                                            4 // Step 10% par défaut
+                                        } else if new_sub == 1 || new_sub == 2 {
+                                            8 // Step 100% par défaut
+                                        } else {
+                                            self.slider_step_idx
+                                        }
                                     };
-                                    (val, step_idx)
+                                    (val, step_idx, sub_s)
                                 };
                                 self.state = AppState::AjusterSlider {
                                     main_index,
                                     sub_index: new_sub as usize,
                                     value: current_val,
                                     step_idx: default_step,
+                                    sub_step,
                                 };
                             }
                         }
@@ -442,11 +475,12 @@ impl BrowseController {
                             } else if new_sub == 3 {
                                 let current_brightness = nvs.lock().unwrap().get_i32("scrBrightness").ok().flatten().unwrap_or(20) as u8;
                                 self.state = AppState::AjusterSlider {
-                                    main_index,
-                                    sub_index: 3,
-                                    value: current_brightness,
-                                    step_idx: 3, // step 5%
-                                };
+                                     main_index,
+                                     sub_index: 3,
+                                     value: current_brightness as i16,
+                                     step_idx: 3, // step 5%
+                                     sub_step: 0,
+                                 };
                             } else if new_sub == 5 {
                                 self.state = AppState::ConfirmerAction { action_type: ConfirmActionType::ResetConfiguration, choice: false };
                             } else {
@@ -514,7 +548,7 @@ impl BrowseController {
                 }
             }
 
-            AppState::AjusterSlider { main_index, sub_index, value, step_idx } => {
+            AppState::AjusterSlider { main_index, sub_index, value, step_idx, sub_step } => {
                 let mut current_step_idx = step_idx;
                 if btn3_clicked {
                     if main_index == 3 && sub_index == 3 {
@@ -526,17 +560,67 @@ impl BrowseController {
                             _ => 1,
                         };
                         let _ = nvs.lock().unwrap().set_i32("scrTimeout", next_timeout);
+                    } else if main_index == 1 && sub_index == 0 {
+                        let mut acts = actuators.lock().unwrap();
+                        let mut st = actuators_state.lock().unwrap();
+                        
+                        if st.H0.inverseur == 2 {
+                            st.H0.inverseur = 0;
+                            st.H0.speed_a = 0;
+                            st.H0.speed_b = 0;
+                            let _ = acts.write_h0(&st.H0);
+                            
+                            let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                            let mut map = registry.load_registry();
+                            if let Some(entry) = map.get_mut("H0") {
+                                entry.inverseur = Some(0);
+                                if let Some(ref mut ina) = entry.ina { ina.pwm_val = 0; }
+                                if let Some(ref mut inb) = entry.inb { inb.pwm_val = 0; }
+                            }
+                            registry.save_registry(&map);
+                            
+                            self.state = AppState::AjusterSlider {
+                                main_index,
+                                sub_index,
+                                value: 0,
+                                step_idx,
+                                sub_step: 0,
+                            };
+                        } else {
+                            st.H0.inverseur = 2;
+                            st.H0.speed_a = 30;
+                            st.H0.speed_b = 30;
+                            let _ = acts.write_h0(&st.H0);
+                            
+                            let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                            let mut map = registry.load_registry();
+                            if let Some(entry) = map.get_mut("H0") {
+                                entry.inverseur = Some(2);
+                                if let Some(ref mut ina) = entry.ina { ina.pwm_val = 30; }
+                                if let Some(ref mut inb) = entry.inb { inb.pwm_val = 30; }
+                            }
+                            registry.save_registry(&map);
+                            
+                            self.state = AppState::AjusterSlider {
+                                main_index,
+                                sub_index,
+                                value: 30,
+                                step_idx,
+                                sub_step: 0,
+                            };
+                        }
+                        self.needs_redraw = true;
+                        self.value_changed = true;
+                        return;
                     } else {
                         current_step_idx = (current_step_idx + 1) % SLIDER_STEPS.len();
                         self.slider_step_idx = current_step_idx;
 
-                        // Enregistrer le pas mis à jour dans la NVS
                         if main_index == 1 {
                             let actuator_id = match sub_index {
-                                0 => "ina",
-                                1 => "inb",
-                                2 => "rla",
-                                3 => "rlb",
+                                0 => "H0",
+                                1 => "rla",
+                                2 => "rlb",
                                 _ => "",
                             };
                             if !actuator_id.is_empty() {
@@ -554,13 +638,29 @@ impl BrowseController {
                 }
 
                 let step_val = SLIDER_STEPS[current_step_idx] as i32;
-
                 let mut val = value as i32;
                 if ticks_delta != 0 {
                     val += ticks_delta * step_val;
-                    let min_val = if main_index == 3 && sub_index == 3 { 5 } else { 0 };
+                    let min_val;
+                    let max_val;
+                    if main_index == 3 && sub_index == 3 {
+                        min_val = 5;
+                        max_val = 100;
+                    } else if main_index == 1 && sub_index == 0 {
+                        let acts_state = actuators_state.lock().unwrap();
+                        if acts_state.H0.inverseur == 2 {
+                            min_val = 0;
+                            max_val = 100;
+                        } else {
+                            min_val = -100;
+                            max_val = 100;
+                        }
+                    } else {
+                        min_val = 0;
+                        max_val = 100;
+                    }
                     if val < min_val { val = min_val; }
-                    if val > 100 { val = 100; }
+                    if val > max_val { val = max_val; }
                     self.needs_redraw = false;
                     self.value_changed = true;
 
@@ -585,33 +685,56 @@ impl BrowseController {
                                 step: None,
                                 pwm_val: Some(val as u8),
                                 schedules: None,
+                                inverseur: None,
+                                ina: None,
+                                inb: None,
                             });
                         }
                         registry.save_registry(&map);
                     } else {
-                        let is_active = val > 0;
                         let mut acts = actuators.lock().unwrap();
                         let mut st = actuators_state.lock().unwrap();
                         let actuator_id = match sub_index {
                             0 => {
-                                let _ = acts.write("ina", is_active);
-                                let _ = acts.ina.set_speed(val);
-                                st.ina = is_active;
-                                "ina"
+                                if st.H0.inverseur == 2 {
+                                    if sub_step == 0 {
+                                        st.H0.speed_a = val as u8;
+                                    } else {
+                                        st.H0.speed_b = val as u8;
+                                    }
+                                } else {
+                                    if val > 0 {
+                                        st.H0.inverseur = -1;
+                                        st.H0.speed_a = val as u8;
+                                        st.H0.speed_b = 0;
+                                    } else if val < 0 {
+                                        st.H0.inverseur = 1;
+                                        st.H0.speed_b = (-val) as u8;
+                                        st.H0.speed_a = 0;
+                                    } else {
+                                        st.H0.inverseur = 0;
+                                        st.H0.speed_a = 0;
+                                        st.H0.speed_b = 0;
+                                    }
+                                }
+                                let _ = acts.write_h0(&st.H0);
+                                "H0"
                             }
                             1 => {
-                                let _ = acts.write("inb", is_active);
-                                let _ = acts.inb.set_speed(val);
-                                st.inb = is_active;
-                                "inb"
-                            }
-                            2 => {
+                                let is_active = val > 0;
                                 let _ = acts.write("rla", is_active);
+                                if is_active {
+                                    let _ = acts.relay_a.set_speed(val);
+                                }
                                 st.rla = is_active;
                                 "rla"
                             }
-                            3 => {
+                            2 => {
+                                let is_active = val > 0;
                                 let _ = acts.write("rlb", is_active);
+                                if is_active {
+                                    let _ = acts.relay_b.set_speed(val);
+                                }
                                 st.rlb = is_active;
                                 "rlb"
                             }
@@ -621,7 +744,13 @@ impl BrowseController {
                             let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
                             let mut map = registry.load_registry();
                             if let Some(entry) = map.get_mut(actuator_id) {
-                                entry.pwm_val = Some(val as u8);
+                                if actuator_id == "H0" {
+                                    entry.inverseur = Some(st.H0.inverseur);
+                                    if let Some(ref mut ina) = entry.ina { ina.pwm_val = st.H0.speed_a; }
+                                    if let Some(ref mut inb) = entry.inb { inb.pwm_val = st.H0.speed_b; }
+                                } else {
+                                    entry.pwm_val = Some(val as u8);
+                                }
                                 entry.step = Some(SLIDER_STEPS[current_step_idx]);
                             }
                             registry.save_registry(&map);
@@ -631,56 +760,39 @@ impl BrowseController {
 
                 if btn2_clicked {
                     if main_index == 3 && sub_index == 3 {
-                        // Just exit
-                    } else {
-                        let is_active = val > 0;
-                        let mut acts = actuators.lock().unwrap();
-                        let mut st = actuators_state.lock().unwrap();
-
-                        let actuator_id = match sub_index {
-                            0 => {
-                                let _ = acts.write("ina", is_active);
-                                let _ = acts.ina.set_speed(val);
-                                st.ina = is_active;
-                                "ina"
+                        self.state = AppState::NaviguerSousMenu { main_index, sub_index };
+                    } else if main_index == 1 && sub_index == 0 {
+                        let st = actuators_state.lock().unwrap();
+                        if st.H0.inverseur == 2 {
+                            if sub_step == 0 {
+                                self.state = AppState::AjusterSlider {
+                                    main_index,
+                                    sub_index,
+                                    value: st.H0.speed_b as i16,
+                                    step_idx: current_step_idx,
+                                    sub_step: 1,
+                                };
+                                self.needs_redraw = true;
+                                self.value_changed = true;
+                            } else {
+                                self.state = AppState::NaviguerSousMenu { main_index, sub_index };
                             }
-                            1 => {
-                                let _ = acts.write("inb", is_active);
-                                let _ = acts.inb.set_speed(val);
-                                st.inb = is_active;
-                                "inb"
-                            }
-                            2 => {
-                                let _ = acts.write("rla", is_active);
-                                st.rla = is_active;
-                                "rla"
-                            }
-                            3 => {
-                                let _ = acts.write("rlb", is_active);
-                                st.rlb = is_active;
-                                "rlb"
-                            }
-                            _ => "",
-                        };
-                        if !actuator_id.is_empty() {
-                            let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
-                            let mut map = registry.load_registry();
-                            if let Some(entry) = map.get_mut(actuator_id) {
-                                entry.pwm_val = Some(val as u8);
-                                entry.step = Some(SLIDER_STEPS[current_step_idx]);
-                            }
-                            registry.save_registry(&map);
+                        } else {
+                            self.state = AppState::NaviguerSousMenu { main_index, sub_index };
                         }
+                    } else {
+                        self.state = AppState::NaviguerSousMenu { main_index, sub_index };
                     }
-
-                    self.state = AppState::NaviguerSousMenu { main_index, sub_index };
-                } else {
-                    self.state = AppState::AjusterSlider {
-                        main_index,
-                        sub_index,
-                        value: val as u8,
-                        step_idx: current_step_idx,
-                    };
+                } else if ticks_delta != 0 || btn3_clicked {
+                    if !(main_index == 1 && sub_index == 0 && btn3_clicked) {
+                        self.state = AppState::AjusterSlider {
+                            main_index,
+                            sub_index,
+                            value: val as i16,
+                            step_idx: current_step_idx,
+                            sub_step,
+                        };
+                    }
                 }
             }
             AppState::ConfirmerAction { action_type, mut choice } => {
@@ -699,7 +811,7 @@ impl BrowseController {
                                 let mut st = actuators_state.lock().unwrap();
                                 st.swpwr = false;
                             }
-                            self.state = AppState::NaviguerSousMenu { main_index: 1, sub_index: 4 };
+                            self.state = AppState::NaviguerSousMenu { main_index: 1, sub_index: 3 };
                         }
                         ConfirmActionType::MiseAJour => {
                             if choice {
@@ -800,7 +912,7 @@ impl BrowseController {
         display: &mut D,
         nvs: &Arc<Mutex<NvsStorage>>,
         board: &Arc<Mutex<Board>>,
-        actuators: &Arc<Mutex<Actuators>>,
+        _actuators: &Arc<Mutex<Actuators>>,
         actuators_state: &Arc<Mutex<ActuatorsState>>,
         wifi_manager: &Arc<Mutex<NetManager>>,
         periodic_update: bool,
@@ -825,7 +937,7 @@ impl BrowseController {
             AppState::AfficherProprietes { main_index, sub_index } => (main_index, sub_index),
             AppState::AjusterSlider { main_index, sub_index, .. } => (main_index, sub_index),
             AppState::ConfirmerAction { action_type, .. } => match action_type {
-                ConfirmActionType::MiseEnVeille => (1, 4),
+                ConfirmActionType::MiseEnVeille => (1, 3),
                 ConfirmActionType::MiseAJour => (3, 4),
                 ConfirmActionType::ConnexionWifi => (3, 0),
                 ConfirmActionType::ResetConfiguration => (3, 5),
@@ -839,43 +951,51 @@ impl BrowseController {
 
         let in_modal = matches!(self.state, AppState::ConfirmerAction { .. });
 
-        // Zone 1: Main menu (Y=17..32) -> Jamais effacée, juste réécrite.
-
         let exited_modal = matches!(self.last_rendered_state, Some(AppState::ConfirmerAction { .. })) && !matches!(self.state, AppState::ConfirmerAction { .. });
         let main_changed = self.last_main_index != Some(current_main) || exited_modal || _needs_redraw_full;
         let sub_changed = self.last_sub_index != Some(current_sub) || main_changed || layout_changed || _needs_redraw_full;
 
+        // Mettre à jour les besoins d'effacement
+        let mut self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
+        if main_changed {
+            self_mut.clear_zone_req |= 3;
+            self_mut.last_main_index = Some(current_main);
+            self_mut.last_sub_index = Some(current_sub);
+            self_mut.last_h0_val_a = -999;
+            self_mut.last_h0_val_b = -999;
+            self_mut.last_rla_val = -999;
+            self_mut.last_rlb_val = -999;
+            self_mut.last_screen_val = -999;
+        } else if sub_changed {
+            self_mut.clear_zone_req |= 2;
+            self_mut.last_sub_index = Some(current_sub);
+            self_mut.last_h0_val_a = -999;
+            self_mut.last_h0_val_b = -999;
+            self_mut.last_rla_val = -999;
+            self_mut.last_rlb_val = -999;
+            self_mut.last_screen_val = -999;
+        }
+
         if !in_modal && !periodic_update && !val_changed {
             if current_main == 2 {
-                if main_changed {
-                    // Efface toute la zone centrale (sous-menu + détail) lors du passage au mode Schéma
-                    let _ = Rectangle::new(Point::new(0, 33), Size::new(320, 186))
+                if (self.clear_zone_req & 3) != 0 {
+                    let _ = Rectangle::new(Point::new(1, 34), Size::new(318, 184))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
-                    self.last_main_index = Some(current_main);
-                    self.last_sub_index = Some(current_sub);
+                    self_mut.clear_zone_req = 0;
                 }
             } else {
-                // Zone 2: Sous-menus de gauche (X=0..101, Y=33..218) -> Effacée seulement au changement de main menu ou à la sortie de la modale
-                if main_changed {
-                    // Si on change de menu principal, on invalide la liste OTA pour forcer un rafraîchissement au prochain affichage
-                    if let Ok(mut guard) = OTA_VERSIONS.lock() {
-                        *guard = None;
-                    }
-                    // Efface le volet sous-menu de gauche lors d'un changement de menu principal
-                    let _ = Rectangle::new(Point::new(0, 33), Size::new(101, 186))
+                if (self.clear_zone_req & 1) != 0 {
+                    let _ = Rectangle::new(Point::new(1, 34), Size::new(99, 184))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
-                    self.last_main_index = Some(current_main);
+                    self_mut.clear_zone_req &= !1;
                 }
-
-                // Zone 3: Zone de détail à droite (X=101..320, Y=33..218) -> Effacée au changement de menu ou d'état/mode
-                if sub_changed {
-                    // Efface le panneau de détail de droite lors d'un changement de sous-menu
-                    let _ = Rectangle::new(Point::new(101, 33), Size::new(219, 186))
+                if (self.clear_zone_req & 2) != 0 {
+                    let _ = Rectangle::new(Point::new(102, 34), Size::new(217, 184))
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
                         .draw(display);
-                    self.last_sub_index = Some(current_sub);
+                    self_mut.clear_zone_req &= !2;
                 }
             }
         }
@@ -910,7 +1030,7 @@ impl BrowseController {
             AppState::AfficherProprietes { main_index, sub_index } => (main_index, sub_index),
             AppState::AjusterSlider { main_index, sub_index, .. } => (main_index, sub_index),
             AppState::ConfirmerAction { action_type, .. } => match action_type {
-                ConfirmActionType::MiseEnVeille => (1, 4),
+                ConfirmActionType::MiseEnVeille => (1, 3),
                 ConfirmActionType::MiseAJour => (3, 4),
                 ConfirmActionType::ConnexionWifi => (3, 0),
                 ConfirmActionType::ResetConfiguration => (3, 5),
@@ -949,10 +1069,9 @@ impl BrowseController {
                 let reg = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
                 let map = reg.load_registry();
                 let mut list = Vec::new();
-                for id in &["ina", "inb", "rla", "rlb", "swpwr"] {
+                for id in &["H0", "rla", "rlb", "swpwr"] {
                     let default = match *id {
-                        "ina" => "Sortie INA",
-                        "inb" => "Sortie INB",
+                        "H0" => "Pont H",
                         "rla" => "Relais A",
                         "rlb" => "Relais B",
                         _ => "Coupure SWPWR",
@@ -1032,7 +1151,7 @@ impl BrowseController {
                 }
             }
             1 => {
-                if current_sub == 4 {
+                if current_sub == 3 {
                     if !periodic_update && !val_changed {
                         if sub_changed {
                             let _ = Text::new("SWPWR - COUPE-CIRCUIT (GPIO21)", Point::new(right_x, 50), font_small_green).draw(display);
@@ -1041,129 +1160,205 @@ impl BrowseController {
                         }
                     }
                 } else {
-                    if !periodic_update || val_changed || sub_changed {
-                        let act_names = ["Sortie INA", "Sortie INB", "Relais A", "Relais B"];
-                        let act_gpios = ["GPIO36", "GPIO35", "GPIO48", "GPIO47"];
-                        let act_descs = [
-                            "Commande moteur INA (PWM)",
-                            "Commande moteur INB (PWM)",
-                            "Relais puissance A",
-                            "Relais puissance B",
-                        ];
-                        let name = act_names[current_sub];
-                        let gpio = act_gpios[current_sub];
-                        let desc = act_descs[current_sub];
+                    let act_names = ["Pont H", "Relais A", "Relais B"];
+                    let act_gpios = ["GPIO36/35", "GPIO48", "GPIO47"];
+                    let act_descs = [
+                        "Pont H unifie",
+                        "Relais puissance A",
+                        "Relais puissance B",
+                    ];
+                    let name = act_names[current_sub];
+                    let gpio = act_gpios[current_sub];
+                    let desc = act_descs[current_sub];
 
-                        let (cur_val, is_editing, step_idx) = match self.state {
-                            AppState::AjusterSlider { sub_index, value, step_idx, .. } if sub_index == current_sub => (value, true, step_idx),
-                            _ => {
-                                let acts = actuators.lock().unwrap();
-                                let v = match current_sub {
-                                    0 => if acts.ina.is_active() { acts.ina.get_speed() as u8 } else { 0 },
-                                    1 => if acts.inb.is_active() { acts.inb.get_speed() as u8 } else { 0 },
-                                    2 => if acts.relay_a.is_active() { 100 } else { 0 },
-                                    3 => if acts.relay_b.is_active() { 100 } else { 0 },
-                                    _ => 0,
-                                };
-                                let actuator_id = match current_sub {
-                                    0 => "ina",
-                                    1 => "inb",
-                                    2 => "rla",
-                                    3 => "rlb",
-                                    _ => "",
-                                };
-                                let step_val = {
-                                    let reg = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
-                                    let map = reg.load_registry();
-                                    map.get(actuator_id).and_then(|e| e.step)
-                                };
-                                let step_idx = if let Some(sv) = step_val {
-                                    get_step_idx_from_val(sv)
-                                } else {
-                                    if current_sub == 2 || current_sub == 3 { 8 } else { self.slider_step_idx }
-                                };
-                                (v, false, step_idx)
-                            }
-                        };
-
-                        if !val_changed && sub_changed {
-                            let _ = Text::new(&format!("{} ({})", name, gpio), Point::new(right_x, 48), font_small_green).draw(display);
-                            let _ = Text::new(desc, Point::new(right_x, 62), font_small_white).draw(display);
+                    let (cur_val, is_editing, step_idx, cur_sub_step) = match self.state {
+                        AppState::AjusterSlider { sub_index, value, step_idx, sub_step, .. } if sub_index == current_sub => {
+                            (value, true, step_idx, sub_step)
                         }
-
-                        let (ina_act, inb_act) = {
-                            let state = actuators_state.lock().unwrap();
-                            (state.ina, state.inb)
-                        };
-
-                        let vsense_v = board.lock().unwrap().read_value(ina_act, inb_act).vsense_volts;
-                        let has_power = vsense_v.map_or(false, |v| v > 6.0);
-                        let is_ina_inb = current_sub == 0 || current_sub == 1;
-                        let is_warning = !has_power && is_ina_inb;
-
-                        let bar_x = right_x + 1;
-                        let bar_y = 94;
-                        let bar_w = 210;
-                        let bar_h = 8;
-                        let fill_w = ((bar_w - 2) as u32 * cur_val as u32) / 100;
-
-                        let stroke_color = if is_warning { Rgb565::RED } else { Rgb565::WHITE };
-                        let _ = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_w as u32, bar_h as u32))
-                            .into_styled(PrimitiveStyle::with_stroke(stroke_color, 1))
-                            .draw(display);
-
-                        if fill_w > 0 {
-                            let fill_color = if is_warning {
-                                Rgb565::RED
-                            } else if is_editing {
-                                Rgb565::GREEN
-                            } else {
-                                Rgb565::new(0, 45, 0)
+                        _ => {
+                            let st = actuators_state.lock().unwrap();
+                            let v = match current_sub {
+                                0 => {
+                                    if st.H0.inverseur == 2 {
+                                        st.H0.speed_a as i16
+                                    } else if st.H0.inverseur == -1 {
+                                        st.H0.speed_a as i16
+                                    } else if st.H0.inverseur == 1 {
+                                        -(st.H0.speed_b as i16)
+                                    } else {
+                                        0
+                                    }
+                                }
+                                1 => if st.rla { 100 } else { 0 },
+                                2 => if st.rlb { 100 } else { 0 },
+                                _ => 0,
                             };
-                            let _ = Rectangle::new(Point::new(bar_x + 1, bar_y + 1), Size::new(fill_w, (bar_h - 2) as u32))
-                                .into_styled(PrimitiveStyle::with_fill(fill_color))
-                                .draw(display);
+                            let actuator_id = match current_sub {
+                                0 => "H0",
+                                1 => "rla",
+                                2 => "rlb",
+                                _ => "",
+                            };
+                            let step_val = {
+                                let reg = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                                let map = reg.load_registry();
+                                map.get(actuator_id).and_then(|e| e.step)
+                            };
+                            let step_idx = if let Some(sv) = step_val {
+                                get_step_idx_from_val(sv)
+                            } else {
+                                if current_sub == 0 { 4 } else { 8 }
+                            };
+                            (v, false, step_idx, 0)
                         }
+                    };
 
-                        let remaining_w = (bar_w - 2) as u32 - fill_w;
-                        if remaining_w > 0 {
-                            // Efface la partie droite non remplie du curseur/jauge (slider)
-                            let _ = Rectangle::new(Point::new(bar_x + 1 + fill_w as i32, bar_y + 1), Size::new(remaining_w, (bar_h - 2) as u32))
-                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                                .draw(display);
-                        }
-
-                        let val_label = format!("  {}%   ", cur_val);
-                        let val_w = val_label.len() as i32 * 6;
-                        let label_x = bar_x + (bar_w as i32 - val_w) / 2;
-                        let val_style = if is_warning {
-                            font_small_red
-                        } else {
-                            font_small_green
-                        };
-                        let _ = Text::new(&val_label, Point::new(label_x, bar_y - 4), val_style).draw(display);
-
-                        if is_warning {
-                            let _ = Text::new("Power Supply Missing !", Point::new(right_x, 115), font_small_red).draw(display);
-                        } else {
-                            let _ = Text::new("                      ", Point::new(right_x, 115), font_small_white).draw(display);
-                        }
-
-                        let step_val = SLIDER_STEPS[step_idx];
-                        let mode_str = if step_val == 100 { "Mode: Switch" } else { "Mode: PWM      " };
-                        let _ = Text::new(mode_str, Point::new(right_x, 145), font_small_gray).draw(display);
-                        let _ = Text::new(&format!("Step (BTN3): {}%   ", step_val), Point::new(right_x, 160), font_small_gray).draw(display);
+                    if !val_changed && sub_changed {
+                        let _ = Text::new(&format!("{} ({})", name, gpio), Point::new(right_x, 48), font_small_green).draw(display);
+                        let _ = Text::new(desc, Point::new(right_x, 62), font_small_white).draw(display);
                     }
 
-                    // Affichage dynamique et rafraîchissement ciblé du courant ISENSE pour INA (sub=0) et INB (sub=1)
-                    if current_sub == 0 || current_sub == 1 {
-                        let (ina_act, inb_act) = {
-                            let state = actuators_state.lock().unwrap();
-                            (state.ina, state.inb)
-                        };
+                    let (ina_act, inb_act) = {
+                        let state = actuators_state.lock().unwrap();
+                        match state.H0.inverseur {
+                            -1 => (true, false),
+                            1 => (false, true),
+                            2 => (state.H0.speed_a > 0, state.H0.speed_b > 0),
+                            _ => (false, false),
+                        }
+                    };
+
+                    let vsense_v = board.lock().unwrap().read_value(ina_act, inb_act).vsense_volts;
+                    let has_power = vsense_v.map_or(false, |v| v > 5.0);
+                    let is_warning = !has_power && current_sub == 0;
+
+                    let bar_x = right_x + 1;
+                    let bar_w = 210;
+                    let bar_h = 8;
+
+                    let stroke_color = if is_warning { Rgb565::RED } else { Rgb565::WHITE };
+
+                    // Déterminer le nom personnalisé des sous-moteurs Pont H depuis le registre
+                    let (h0_ina_name, h0_inb_name, h0_mode) = {
+                        let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                        let map = registry.load_registry();
+                        if let Some(entry) = map.get("H0") {
+                            (
+                                entry.ina.as_ref().map(|i| i.name.clone()).unwrap_or_else(|| "INA".to_string()),
+                                entry.inb.as_ref().map(|i| i.name.clone()).unwrap_or_else(|| "INB".to_string()),
+                                entry.inverseur.unwrap_or(0),
+                            )
+                        } else {
+                            ("open door".to_string(), "close door".to_string(), 0)
+                        }
+                    };
+
+                    if current_sub == 0 && h0_mode == 2 {
+                        // ── MODE INDÉPENDANT : 2 BARRES (INA & INB) ──
+                        let st = actuators_state.lock().unwrap();
+                        let (val_a, val_b) = (st.H0.speed_a, st.H0.speed_b);
+                        
+                        // Barre A
+                        let is_editing_a = is_editing && cur_sub_step == 0;
+                        let fill_color_a = if is_editing_a { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
+                        let label_a = format!("A ({}): {}%", h0_ina_name, val_a);
+                        let _ = self.draw_progress_bar(
+                            display,
+                            bar_x, 88, bar_w, bar_h,
+                            val_a as i16,
+                            &mut self_mut.last_h0_val_a,
+                            false,
+                            stroke_color,
+                            fill_color_a,
+                            sub_changed,
+                            &label_a,
+                        );
+
+                        // Barre B
+                        let is_editing_b = is_editing && cur_sub_step == 1;
+                        let fill_color_b = if is_editing_b { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
+                        let label_b = format!("B ({}): {}%", h0_inb_name, val_b);
+                        let _ = self.draw_progress_bar(
+                            display,
+                            bar_x, 120, bar_w, bar_h,
+                            val_b as i16,
+                            &mut self_mut.last_h0_val_b,
+                            false,
+                            stroke_color,
+                            fill_color_b,
+                            sub_changed,
+                            &label_b,
+                        );
+
+                        let _ = Text::new("Mode: Independant (BTN3)", Point::new(right_x, 145), font_small_gray).draw(display);
+                        let _ = Text::new("BTN2: Passer au suivant  ", Point::new(right_x, 160), font_small_gray).draw(display);
+                    } else {
+                        // ── MODE INVERSEUR OU RELAIS (1 SEULE BARRE) ──
+                        let bar_y = 88;
+
+                        if current_sub == 0 {
+                            // Mode inverseur bidirectionnel (-100 à 100)
+                            let val_label = if cur_val > 0 {
+                                format!("INA: {}%", cur_val)
+                            } else if cur_val < 0 {
+                                format!("INB: {}%", -cur_val)
+                            } else {
+                                "OFF".to_string()
+                            };
+                            let fill_color = if is_editing { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
+                            let _ = self.draw_progress_bar(
+                                display,
+                                bar_x, bar_y, bar_w, bar_h,
+                                cur_val,
+                                &mut self_mut.last_h0_val_a,
+                                true,
+                                stroke_color,
+                                fill_color,
+                                sub_changed,
+                                &val_label,
+                            );
+
+                            let step_val = SLIDER_STEPS[step_idx];
+                            let _ = Text::new("Mode: Inverseur (BTN3)   ", Point::new(right_x, 145), font_small_gray).draw(display);
+                            let _ = Text::new(&format!("Step (Rot): {}%        ", step_val), Point::new(right_x, 160), font_small_gray).draw(display);
+                        } else {
+                            // Mode classique relais (0 ou 100)
+                            let val_label = format!("{}%", cur_val);
+                            let fill_color = if is_editing { Rgb565::GREEN } else { Rgb565::new(0, 45, 0) };
+                            let cache_ref = if current_sub == 1 {
+                                &mut self_mut.last_rla_val
+                            } else {
+                                &mut self_mut.last_rlb_val
+                            };
+                            let _ = self.draw_progress_bar(
+                                display,
+                                bar_x, bar_y, bar_w, bar_h,
+                                cur_val,
+                                cache_ref,
+                                false,
+                                stroke_color,
+                                fill_color,
+                                sub_changed,
+                                &val_label,
+                            );
+
+                            let step_val = SLIDER_STEPS[step_idx];
+                            let mode_str = if step_val == 100 { "Mode: Switch" } else { "Mode: PWM      " };
+                            let _ = Text::new(mode_str, Point::new(right_x, 145), font_small_gray).draw(display);
+                            let _ = Text::new(&format!("Step (BTN3): {}%   ", step_val), Point::new(right_x, 160), font_small_gray).draw(display);
+                        }
+                    }
+
+                    if is_warning {
+                        let _ = Text::new("Power Supply Missing !", Point::new(right_x+40, 200), font_small_red).draw(display);
+                    } else {
+                        let _ = Text::new("                      ", Point::new(right_x+40, 200), font_small_white).draw(display);
+                    }
+
+                    if current_sub == 0 {
                         let isense_a = board.lock().unwrap().read_value(ina_act, inb_act).isense_amps;
-                        let isense_str = isense_a.map_or("--".to_string(), |a| format!("{:.1}", a));
-                        let _ = Text::new(&format!("I={}A ", isense_str), Point::new(right_x + 130, 210), font_small_white).draw(display);
+                        let isense_str = isense_a.map_or("---".to_string(), |a| format!("{:.1}", a));
+                        let _ = Text::new(&format!("{:.1}A ", isense_str), Point::new(right_x + 160, 210), font_small_white).draw(display);
                     }
                 }
             }
@@ -1610,6 +1805,182 @@ impl BrowseController {
         }
 
         self.last_rendered_state = Some(self.state);
+        Ok(())
+    }
+
+    fn draw_progress_bar<D>(
+        &self,
+        display: &mut D,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        cur_val: i16,
+        last_val: &mut i16,
+        is_signed: bool,
+        stroke_color: Rgb565,
+        fill_color: Rgb565,
+        draw_border: bool,
+        label: &str,
+    ) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let font_small_green = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::GREEN).background_color(Rgb565::BLACK).build();
+
+        // 1. Dessiner le pourcentage centré au-dessus de la barre avec des espaces pour effacer
+        let val_label = format!("  {}  ", label);
+        let val_w = val_label.len() as i32 * 6;
+        let label_x = x + (w - val_w) / 2;
+        let _ = Text::new(&val_label, Point::new(label_x, y - 4), font_small_green).draw(display);
+
+        // 2. Dessiner le contour de la barre seulement si demandé
+        if draw_border {
+            let _ = Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32))
+                .into_styled(PrimitiveStyle::with_stroke(stroke_color, 1))
+                .draw(display);
+        }
+
+        // 3. Dessin différentiel du contenu de la jauge
+        if *last_val == -999 {
+            // Premier affichage complet
+            let _ = Rectangle::new(Point::new(x + 1, y + 1), Size::new((w - 2) as u32, (h - 2) as u32))
+                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                .draw(display);
+
+            if is_signed {
+                let center_x = x + w / 2;
+                if cur_val > 0 {
+                    let fill_w = ((w / 2 - 1) as u32 * cur_val as u32) / 100;
+                    if fill_w > 0 {
+                        let _ = Rectangle::new(Point::new(center_x, y + 1), Size::new(fill_w, (h - 2) as u32))
+                            .into_styled(PrimitiveStyle::with_fill(fill_color))
+                            .draw(display);
+                    }
+                } else if cur_val < 0 {
+                    let fill_w = ((w / 2 - 1) as u32 * (-cur_val) as u32) / 100;
+                    if fill_w > 0 {
+                        let start_x = center_x - fill_w as i32;
+                        let _ = Rectangle::new(Point::new(start_x, y + 1), Size::new(fill_w, (h - 2) as u32))
+                            .into_styled(PrimitiveStyle::with_fill(fill_color))
+                            .draw(display);
+                    }
+                }
+                // Ligne blanche centrale
+                let _ = Rectangle::new(Point::new(center_x, y + 1), Size::new(1, (h - 2) as u32))
+                    .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+                    .draw(display);
+            } else {
+                let fill_w = ((w - 2) as u32 * cur_val as u32) / 100;
+                if fill_w > 0 {
+                    let _ = Rectangle::new(Point::new(x + 1, y + 1), Size::new(fill_w, (h - 2) as u32))
+                        .into_styled(PrimitiveStyle::with_fill(fill_color))
+                        .draw(display);
+                }
+            }
+        } else if cur_val != *last_val {
+            if is_signed {
+                let center_x = x + w / 2;
+                let cur_px = (cur_val as i32 * (w / 2 - 1)) / 100;
+                let last_px = (*last_val as i32 * (w / 2 - 1)) / 100;
+
+                let cx = center_x + cur_px;
+                let lx = center_x + last_px;
+
+                if cur_val > *last_val {
+                    // La valeur augmente : on ajoute du vert à droite ou on efface du noir à gauche
+                    if cur_val <= 0 {
+                        // Toujours dans la partie négative : on efface en noir la partie qui s'est retirée (de lx à cx)
+                        let w_diff = (cx - lx) as u32;
+                        if w_diff > 0 {
+                            let _ = Rectangle::new(Point::new(lx, y + 1), Size::new(w_diff, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                .draw(display);
+                        }
+                    } else if *last_val >= 0 {
+                        // Toujours dans la partie positive : on ajoute du vert (de lx à cx)
+                        let w_diff = (cx - lx) as u32;
+                        if w_diff > 0 {
+                            let _ = Rectangle::new(Point::new(lx, y + 1), Size::new(w_diff, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(fill_color))
+                                .draw(display);
+                        }
+                    } else {
+                        // Traverse le centre (de négatif à positif)
+                        // 1. Effacer en noir de lx à center_x
+                        let w_neg = (center_x - lx) as u32;
+                        if w_neg > 0 {
+                            let _ = Rectangle::new(Point::new(lx, y + 1), Size::new(w_neg, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                .draw(display);
+                        }
+                        // 2. Dessiner en vert de center_x à cx
+                        let w_pos = (cx - center_x) as u32;
+                        if w_pos > 0 {
+                            let _ = Rectangle::new(Point::new(center_x, y + 1), Size::new(w_pos, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(fill_color))
+                                .draw(display);
+                        }
+                    }
+                } else {
+                    // La valeur diminue
+                    if cur_val >= 0 {
+                        // Toujours dans la partie positive : on efface en noir la portion qui s'est retirée (de cx à lx)
+                        let w_diff = (lx - cx) as u32;
+                        if w_diff > 0 {
+                            let _ = Rectangle::new(Point::new(cx, y + 1), Size::new(w_diff, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                .draw(display);
+                        }
+                    } else if *last_val <= 0 {
+                        // Toujours dans la partie négative : on ajoute du vert (de cx à lx)
+                        let w_diff = (lx - cx) as u32;
+                        if w_diff > 0 {
+                            let _ = Rectangle::new(Point::new(cx, y + 1), Size::new(w_diff, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(fill_color))
+                                .draw(display);
+                        }
+                    } else {
+                        // Traverse le centre (de positif à négatif)
+                        // 1. Effacer en noir de center_x à lx
+                        let w_pos = (lx - center_x) as u32;
+                        if w_pos > 0 {
+                            let _ = Rectangle::new(Point::new(center_x, y + 1), Size::new(w_pos, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                                .draw(display);
+                        }
+                        // 2. Dessiner en vert de cx à center_x
+                        let w_neg = (center_x - cx) as u32;
+                        if w_neg > 0 {
+                            let _ = Rectangle::new(Point::new(cx, y + 1), Size::new(w_neg, (h - 2) as u32))
+                                .into_styled(PrimitiveStyle::with_fill(fill_color))
+                                .draw(display);
+                        }
+                    }
+                }
+                // Toujours redessiner la ligne blanche centrale
+                let _ = Rectangle::new(Point::new(center_x, y + 1), Size::new(1, (h - 2) as u32))
+                    .into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE))
+                    .draw(display);
+            } else {
+                let cur_px = ((w - 2) as i32 * cur_val as i32) / 100;
+                let last_px = ((w - 2) as i32 * (*last_val) as i32) / 100;
+
+                if cur_px > last_px {
+                    let w_diff = (cur_px - last_px) as u32;
+                    let _ = Rectangle::new(Point::new(x + 1 + last_px, y + 1), Size::new(w_diff, (h - 2) as u32))
+                        .into_styled(PrimitiveStyle::with_fill(fill_color))
+                        .draw(display);
+                } else if cur_px < last_px {
+                    let w_diff = (last_px - cur_px) as u32;
+                    let _ = Rectangle::new(Point::new(x + 1 + cur_px, y + 1), Size::new(w_diff, (h - 2) as u32))
+                        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                        .draw(display);
+                }
+            }
+        }
+
+        *last_val = cur_val;
         Ok(())
     }
 }

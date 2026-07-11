@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.104";
+pub const FW_VERSION: &str = "1.2.111-0009";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -159,34 +159,27 @@ fn main() -> Result<()> {
         let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(&nvs_storage));
         let map = registry.load_registry();
 
-        // Restaurer INA
-        if let Some(entry) = map.get("ina") {
-            if let Some(pwm) = entry.pwm_val {
-                let is_active = pwm > 0;
-                let _ = acts.write("ina", is_active);
-                let _ = acts.ina.set_speed(pwm as i32);
-                state.ina = is_active;
-                log::info!("[BOOT] Restored INA to: {}%", pwm);
-            }
-        }
-        // Restaurer INB
-        if let Some(entry) = map.get("inb") {
-            if let Some(pwm) = entry.pwm_val {
-                let is_active = pwm > 0;
-                let _ = acts.write("inb", is_active);
-                let _ = acts.inb.set_speed(pwm as i32);
-                state.inb = is_active;
-                log::info!("[BOOT] Restored INB to: {}%", pwm);
-            }
+        // Restaurer le Pont H (H0)
+        if let Some(entry) = map.get("H0") {
+            let inv = entry.inverseur.unwrap_or(0);
+            let speed_a = entry.ina.as_ref().map(|i| i.pwm_val).unwrap_or(30);
+            let speed_b = entry.inb.as_ref().map(|i| i.pwm_val).unwrap_or(30);
+            state.H0.inverseur = inv;
+            state.H0.speed_a = speed_a;
+            state.H0.speed_b = speed_b;
+            let _ = acts.write_h0(&state.H0);
+            log::info!("[BOOT] Restored H0: inverseur={}, speed_a={}%, speed_b={}%", inv, speed_a, speed_b);
         }
         // Restaurer RLA
         if let Some(entry) = map.get("rla") {
             if let Some(pwm) = entry.pwm_val {
                 let is_active = pwm > 0;
                 let _ = acts.write("rla", is_active);
-                let _ = acts.relay_a.set_speed(pwm as i32);
+                if is_active {
+                    let _ = acts.relay_a.set_speed(pwm as i32);
+                }
                 state.rla = is_active;
-                log::info!("[BOOT] Restored RLA to: {}%", pwm);
+                log::info!("[BOOT] Restored RLA state: {}, speed: {}%", is_active, acts.relay_a.get_speed());
             }
         }
         // Restaurer RLB
@@ -194,9 +187,11 @@ fn main() -> Result<()> {
             if let Some(pwm) = entry.pwm_val {
                 let is_active = pwm > 0;
                 let _ = acts.write("rlb", is_active);
-                let _ = acts.relay_b.set_speed(pwm as i32);
+                if is_active {
+                    let _ = acts.relay_b.set_speed(pwm as i32);
+                }
                 state.rlb = is_active;
-                log::info!("[BOOT] Restored RLB to: {}%", pwm);
+                log::info!("[BOOT] Restored RLB state: {}, speed: {}%", is_active, acts.relay_b.get_speed());
             }
         }
         // Restaurer SCREEN
@@ -391,7 +386,7 @@ fn main() -> Result<()> {
 
     let scheduled_actions = Arc::new(Mutex::new(actuators::ScheduledActions::default()));
 
-    // Lancer le cron scheduler (on passe le nouvel actuators et one_wire)
+    // Lancer le cron scheduler (on passe le nouvel actuators, one_wire et le board)
     let cron_handle = cron::spawn_cron_scheduler(
         Arc::clone(&nvs_storage),
         Arc::clone(&wifi_manager),
@@ -400,6 +395,7 @@ fn main() -> Result<()> {
         Arc::clone(&scheduled_actions),
         onewire_bus.clone(),
         Arc::clone(&i2c),
+        Arc::clone(&board),
     )?;
 
     // Serveur Web
@@ -424,6 +420,19 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -461,7 +461,7 @@ impl NetManager {
                         // (déjà positionné par WifiOk/ProvisioningOk) et on ajoute le orange AP
                         led::set_ap_status(LedApStatus::ApPairing);
                         if AP_CLIENT_CONNECTED.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                            let until = AP_CLIENT_CONNECTED.load(std::sync::atomic::Ordering::Relaxed); // Placeholder, unused in calculation
+                            let _until = AP_CLIENT_CONNECTED.load(std::sync::atomic::Ordering::Relaxed); // Placeholder, unused in calculation
                             let new_until = Instant::now() + PAIRING_DURATION;
                             {
                                 let mut net = this.lock().unwrap();

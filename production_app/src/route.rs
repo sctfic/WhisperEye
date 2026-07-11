@@ -155,6 +155,7 @@ pub fn register_routes(
     let periphs_board = Arc::clone(&board);
     let periphs_i2c = Arc::clone(&i2c);
     let periphs_wifi = Arc::clone(&wifi_manager);
+    let periphs_cron = cron_handle.clone();
     server.api_handler("/api/peripherals", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
         extend_pairing(&periphs_wifi);
         web_handlers::handle_api_peripherals(
@@ -165,6 +166,7 @@ pub fn register_routes(
             Arc::clone(&periphs_sched),
             Arc::clone(&periphs_board),
             Arc::clone(&periphs_i2c),
+            periphs_cron.clone(),
         )
     })?;
 

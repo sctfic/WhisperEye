@@ -5,16 +5,29 @@ use esp_idf_hal::ledc::*;
 use esp_idf_hal::units::*;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct H0State {
+    pub inverseur: i8, // -1 : ina actif, 1 : inb actif, 0 : aucun, 2 : independant
+    pub speed_a: u8,
+    pub speed_b: u8,
+}
+
+impl Default for H0State {
+    fn default() -> Self {
+        Self {
+            inverseur: 0,
+            speed_a: 30,
+            speed_b: 30,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[allow(non_snake_case)]
 pub struct ActuatorsState {
     pub rla: bool,
     pub rlb: bool,
     pub swpwr: bool,
-    pub ina: bool,
-    pub inb: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ina_speed: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inb_speed: Option<u8>,
+    pub H0: H0State,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screen_brightness: Option<u8>,
 }
@@ -25,10 +38,7 @@ impl Default for ActuatorsState {
             rla: false,
             rlb: false,
             swpwr: true, // Keep system 5V/3V powered by default
-            ina: false,
-            inb: false,
-            ina_speed: None,
-            inb_speed: None,
+            H0: H0State::default(),
             screen_brightness: None,
         }
     }
@@ -127,12 +137,12 @@ pub struct Actuators {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(non_snake_case)]
 pub struct ActuatorsPresence {
     pub rla: bool,
     pub rlb: bool,
     pub swpwr: bool,
-    pub ina: bool,
-    pub inb: bool,
+    pub H0: bool,
 }
 
 impl Actuators {
@@ -187,15 +197,12 @@ impl Actuators {
     }
 
     pub fn detect(&self, vsense_volts: Option<f32>) -> ActuatorsPresence {
-        // RLA, RLB et SWPWR sont toujours considérés comme présents.
-        // INA et INB ne sont détectés/présents que si vsense > 6.0V.
-        let is_high_voltage = vsense_volts.map_or(false, |v| v > 6.0);
+        let is_high_voltage = vsense_volts.map_or(false, |v| v > 5.0);
         ActuatorsPresence {
             rla: true,
             rlb: true,
             swpwr: true,
-            ina: is_high_voltage,
-            inb: is_high_voltage,
+            H0: is_high_voltage,
         }
     }
 
@@ -207,12 +214,50 @@ impl Actuators {
             }
             "rlb" => self.relay_b.set_level(state.into()),
             "swpwr" => self.sw_pwr.set_level(state.into()),
-            "ina" => self.ina.set_level(state.into()),
-            "inb" => self.inb.set_level(state.into()),
             _ => {
                 log::warn!("\x1b[35mUnknown actuator id: {}\x1b[0m", id);
                 Ok(())
             }
         }
+    }
+
+    pub fn write_h0(&mut self, h0: &H0State) -> Result<(), esp_idf_hal::sys::EspError> {
+        match h0.inverseur {
+            -1 => {
+                // INA actif (sens A), INB forcé à 0
+                self.ina.set_level(Level::High)?;
+                self.ina.set_speed(h0.speed_a as i32)?;
+                self.inb.set_level(Level::Low)?;
+                self.inb.set_speed(0)?;
+            }
+            1 => {
+                // INB actif (sens B), INA forcé à 0
+                self.inb.set_level(Level::High)?;
+                self.inb.set_speed(h0.speed_b as i32)?;
+                self.ina.set_level(Level::Low)?;
+                self.ina.set_speed(0)?;
+            }
+            2 => {
+                // Indépendant : INA et INB pilotés séparément
+                let active_a = h0.speed_a > 0;
+                self.ina.set_level(active_a.into())?;
+                if active_a {
+                    self.ina.set_speed(h0.speed_a as i32)?;
+                }
+                let active_b = h0.speed_b > 0;
+                self.inb.set_level(active_b.into())?;
+                if active_b {
+                    self.inb.set_speed(h0.speed_b as i32)?;
+                }
+            }
+            _ => {
+                // Aucun actif (OFF ou autre)
+                self.ina.set_level(Level::Low)?;
+                self.ina.set_speed(0)?;
+                self.inb.set_level(Level::Low)?;
+                self.inb.set_speed(0)?;
+            }
+        }
+        Ok(())
     }
 }

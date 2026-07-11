@@ -19,6 +19,7 @@ macro_rules! warn {
         log::warn!(concat!("\x1b[36m", $fmt, "\x1b[0m"), $($arg)*);
     };
 }
+#[allow(unused_macros)]
 macro_rules! debug {
     ($fmt:literal) => {
         log::debug!(concat!("\x1b[36m", $fmt, "\x1b[0m"));
