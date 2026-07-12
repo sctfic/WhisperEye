@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.134";
+pub const FW_VERSION: &str = "1.2.137-0002";
 
 pub const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 pub const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -45,6 +45,8 @@ use board::Board;
 use i2c::I2c;
 use one_wire::OneWire;
 
+/// `ConfigPayload` (structure) : Contient les données de configuration réseau/système
+/// envoyées par le client lors d'un POST de configuration (/api/config).
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ConfigPayload {
     wifi_ssid: Option<String>,
@@ -60,9 +62,6 @@ pub struct ConfigPayload {
     ntp_server: Option<String>,
     metrics_url: Option<String>,
     rename_enabled: Option<bool>,
-    mesh_channel: Option<i32>,
-    mesh_id: Option<String>,
-    mesh_pmk: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -263,15 +262,13 @@ fn main() -> Result<()> {
         let _ = registry.scan_and_register((*discovered_probes).clone(), &i2c);
     }
 
-    let (mesh_channel, mesh_ssid, mesh_pmk) = {
+    // `ap_channel` (type: u8) : Canal radio du point d'accès (SoftAP), configuré en NVS (par défaut 11).
+    let ap_channel = {
         let storage = nvs_storage.lock().unwrap();
-        let channel = storage.get_i32("wifiChannel")?.unwrap_or(11) as u8;
-        let ssid = "Esp32MeshNetwork".to_string();
-        let pmk = "Mesh-IoT@Espressif!".to_string();
-        (channel, ssid, pmk)
+        storage.get_i32("wifiChannel")?.unwrap_or(11) as u8
     };
 
-    let wifi_manager = NetManager::new(modem, sys_loop.clone(), nvs_default, mesh_ssid, mesh_pmk, mesh_channel)?;
+    let wifi_manager = NetManager::new(modem, sys_loop.clone(), nvs_default, ap_channel)?;
     let wifi_manager = Arc::new(Mutex::new(wifi_manager));
 
     // 4. Initialisation et démarrage de l'IHM / Écran ST7789
@@ -408,6 +405,9 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
 
 
 

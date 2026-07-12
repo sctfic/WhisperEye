@@ -1325,24 +1325,6 @@ pub fn handle_config(
                 let new_val = if rename_en { 1 } else { 0 };
                 storage.set_i32("deviceRenamable", new_val)?;
             }
-            // if let Some(ref mesh_id) = payload.mesh_id {
-            //     let current_id = storage.get_str("meshId")?.unwrap_or_default();
-            //     if mesh_id != &current_id {
-            //         storage.set_str("meshId", mesh_id)?;
-            //         if !apply_only {
-            //             should_reboot_production = true;
-            //         }
-            //     }
-            // }
-            // if let Some(ref mesh_pmk) = payload.mesh_pmk {
-            //     let current_pmk = storage.get_str("meshPmk")?.unwrap_or_default();
-            //     if mesh_pmk != &current_pmk {
-            //         storage.set_str("meshPmk", mesh_pmk)?;
-            //         if !apply_only {
-            //             should_reboot_production = true;
-            //         }
-            //     }
-            // }
         }
     }
 
@@ -1368,7 +1350,7 @@ pub fn handle_config(
                 }
             }
 
-            if wifi.try_sta_connect(ssid, &final_psk, false, 0).unwrap_or(false) {
+            if wifi.try_sta_connect(ssid, &final_psk, false, 0, None).unwrap_or(false) {
                 wifi_success = true;
             }
             

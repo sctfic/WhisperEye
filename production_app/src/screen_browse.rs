@@ -545,10 +545,21 @@ impl BrowseController {
                         3 => {
                             if new_sub == 1 {
                                 let mut net = wifi_manager.lock().unwrap();
-                                net.state = crate::wifi::NetState::ApPairing;
-                                crate::wifi::update_global_net_state(crate::wifi::NetState::ApPairing);
-                                net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
-                                self.ap_active_until = net.pairing_until;
+                                // `is_sta_connected` (type: bool) : Indique si la carte a une connexion active avec un réseau client STA.
+                                let is_sta_connected = net.wifi.is_connected().unwrap_or(false);
+                                if !is_sta_connected {
+                                    // Pas de Wi-Fi : on active le portail captif de configuration ouvert en mode permanent
+                                    net.state = crate::wifi::NetState::ProvisioningAp;
+                                    crate::wifi::update_global_net_state(crate::wifi::NetState::ProvisioningAp);
+                                    net.pairing_until = None;
+                                    self.ap_active_until = None;
+                                } else {
+                                    // Wi-Fi connecté : on active le mode Teaching sécurisé (partage de clés) pour 120s
+                                    net.state = crate::wifi::NetState::ApPairing;
+                                    crate::wifi::update_global_net_state(crate::wifi::NetState::ApPairing);
+                                    net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
+                                    self.ap_active_until = net.pairing_until;
+                                }
                                 let _ = net.setup_provisioning_ap();
                                 self.state = AppState::AfficherProprietes { main_index, sub_index: 1 };
                             } else if new_sub == 3 {
@@ -953,7 +964,7 @@ impl BrowseController {
                                         .stack_size(8192)
                                         .spawn(move || {
                                             let mut net = wifi_manager_clone.lock().unwrap();
-                                            if net.try_sta_connect(&ssid, &psk, false, 0).unwrap_or(false) {
+                                            if net.try_sta_connect(&ssid, &psk, false, 0, None).unwrap_or(false) {
                                                 net.state = crate::wifi::NetState::WifiOk;
                                                 crate::wifi::update_global_net_state(crate::wifi::NetState::WifiOk);
                                                 net.retry_count = 0;
@@ -1574,8 +1585,28 @@ impl BrowseController {
                         }
                     }
                     1 => {
-                        let ap_until = wifi_manager.lock().unwrap().pairing_until;
-                        let is_ap_active = ap_until.is_some();
+                        // `ap_ssid` (type: String) : SSID du point d'accès actif.
+                        // `ap_psk` (type: &str) : Mot de passe de l'AP.
+                        // `ap_cidr` (type: String) : Adresse CIDR du SoftAP.
+                        // `num_clients` (type: usize) : Nombre de clients connectés.
+                        // `is_ap_active` (type: bool) : Indique si le point d'accès est démarré.
+                        let (ap_ssid, ap_psk, ap_cidr, num_clients, is_ap_active) = {
+                            let net = wifi_manager.lock().unwrap();
+                            let is_active = net.wifi.wifi().is_started().unwrap_or(false) && net.current_ap_ssid.is_some();
+                            let ssid = net.current_ap_ssid.clone().unwrap_or_else(|| crate::wifi::CONFIG_SSID.to_string());
+                            let psk = if net.state == crate::wifi::NetState::ApPairing {
+                                crate::wifi::TEACHING_PSK
+                            } else if net.state == crate::wifi::NetState::ProvisioningAp {
+                                "None"
+                            } else {
+                                "--"
+                            };
+                            let subnet = crate::wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
+                            let cidr = format!("192.168.{}.1/24", subnet);
+                            let num = crate::wifi::get_ap_num_clients();
+                            (ssid, psk, cidr, num, is_active)
+                        };
+
                         if self.last_ap_active != Some(is_ap_active) {
                             self.last_ap_active = Some(is_ap_active);
                             self.needs_redraw = true;
@@ -1589,27 +1620,26 @@ impl BrowseController {
                                 let _ = Text::new("Psk     :", Point::new(right_x, 80), font_small_white).draw(display);
                                 let _ = Text::new("clients :", Point::new(right_x, 92), font_small_white).draw(display);
 
-                                let ap_ssid = "ESP32-Configuration";
-                                let subnet = crate::wifi::AP_IP_B.load(std::sync::atomic::Ordering::Relaxed);
-                                let ap_cidr = format!("192.168.{}.1/24", subnet);
-                                let num_clients = crate::wifi::get_ap_num_clients();
-
-                                let _ = Text::new(&format!("{}       ", ap_ssid), Point::new(right_x + 57, 56), font_small_white).draw(display);
-                                let _ = Text::new(&format!("{}       ", ap_cidr), Point::new(right_x + 57, 68), font_small_white).draw(display);
-                                let _ = Text::new(&format!("{}       ", num_clients), Point::new(right_x + 57, 92), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{:<20}", ap_ssid), Point::new(right_x + 57, 56), font_small_white).draw(display);
+                                let _ = Text::new(&format!("{:<15}", ap_cidr), Point::new(right_x + 57, 68), font_small_white).draw(display);
                             }
                         }
 
-                        // Dessin dynamique de la PSK et du QR Code (qui change selon l'état actif/inactif)
+                        // Dessin dynamique de la PSK, des clients et du QR Code (qui change selon l'état actif/inactif)
                         if !periodic_update || val_changed || sub_changed {
-                            let ap_psk = if is_ap_active { "None" } else { "--" };
-                            let _ = Text::new(&format!("{}      ", ap_psk), Point::new(right_x + 57, 80), font_small_white).draw(display);
+                            let _ = Text::new(&format!("{:<3}", num_clients), Point::new(right_x + 57, 92), font_small_white).draw(display);
+                            let _ = Text::new(&format!("{:<10}", ap_psk), Point::new(right_x + 57, 80), font_small_white).draw(display);
 
                             let start_x = 215;
                             let start_y = 100;
                             if is_ap_active {
-                                let qr_str = "WIFI:T:nopass;S:ESP32-Configuration;;";
-                                if let Ok(qr) = QrCode::encode_text(qr_str, QrCodeEcc::Medium) {
+                                // `qr_str` (type: String) : Chaîne formatée WiFi pour générer le QR Code de connexion directe.
+                                let qr_str = if ap_psk == "None" {
+                                    format!("WIFI:T:nopass;S:{};;", ap_ssid)
+                                } else {
+                                    format!("WIFI:T:WPA;S:{};P:{};;", ap_ssid, ap_psk)
+                                };
+                                if let Ok(qr) = QrCode::encode_text(&qr_str, QrCodeEcc::Medium) {
                                     let qr_size = qr.size(); // 29 pour Version 3
                                     let module_size = 3;
                                     

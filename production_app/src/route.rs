@@ -281,6 +281,13 @@ pub fn register_routes(
     server.api_handler("/api/network/ApPairing", esp_idf_svc::http::Method::Post, move |req| -> Result<(), anyhow::Error> {
         {
             let mut net = pair_wifi.lock().unwrap();
+            // Si la carte est déjà en mode Portail Captif permanent de configuration (SSID ESP32-Config),
+            // on bloque l'accès au mode Teaching de partage de clés.
+            if net.state == NetState::ProvisioningAp {
+                let mut response = req.into_status_response(403)?;
+                response.write(b"Action non autorisee en mode Portail Captif")?;
+                return Ok(());
+            }
             net.state = NetState::ApPairing;
             net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
             let _ = net.setup_provisioning_ap();

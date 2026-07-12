@@ -17,7 +17,14 @@ use std::time::{Duration, Instant};
 use common::nvs_storage::NvsStorage;
 use common::led::{self, LedStaStatus, LedApStatus};
 
-pub const PROVISIONING_SSID: &str = "ESP32-Configuration";
+/// `CONFIG_SSID` (type: &str) : SSID du portail captif permanent ouvert pour configuration initiale.
+pub const CONFIG_SSID: &str = "ESP32-Config";
+/// `TEACHING_SSID` (type: &str) : SSID du portail captif de partage/apprentissage sécurisé.
+pub const TEACHING_SSID: &str = "ESP32-Teaching";
+/// `TEACHING_PSK` (type: &str) : Mot de passe du portail captif de partage/apprentissage.
+pub const TEACHING_PSK: &str = "Pairing!";
+/// `PROVISIONING_SSID` (type: &str) : Rétrocompatibilité avec l'ancien nom de provisioning.
+pub const PROVISIONING_SSID: &str = "ESP32-Config";
 const PROVISIONING_SUBNET: u8 = 70;
 const WIFI_RETRY_DELAY: Duration = Duration::from_secs(10);
 const PAIRING_DURATION: Duration = Duration::from_secs(120);
@@ -125,13 +132,16 @@ pub struct NetManager {
 }
 
 impl NetManager {
+    /// `new` (fonction) : Initialise et configure une nouvelle instance du gestionnaire de réseau WiFi.
+    /// - `modem` (type: Modem) : Périphérique matériel WiFi ESP32.
+    /// - `sys_loop` (type: EspSystemEventLoop) : Boucle d'événements système.
+    /// - `nvs` (type: EspDefaultNvsPartition) : Partition de stockage NVS par défaut.
+    /// - `default_ap_channel` (type: u8) : Canal radio par défaut pour le SoftAP (ex: 11).
     pub fn new(
         modem: esp_idf_hal::modem::Modem<'static>,
         sys_loop: EspSystemEventLoop,
         nvs: EspDefaultNvsPartition,
-        _mesh_ssid: String,
-        _mesh_pmk: String,
-        mesh_channel: u8,
+        default_ap_channel: u8,
     ) -> Result<Self> {
         let esp_wifi =
             EspWifi::new(modem, sys_loop.clone(), Some(nvs)).context("Failed to create EspWifi")?;
@@ -145,7 +155,7 @@ impl NetManager {
             retry_count: 0,
             scan_cache: Vec::new(),
             scan_results: HashMap::new(),
-            provisioning_channel: mesh_channel,
+            provisioning_channel: default_ap_channel,
             current_sta_ssid: None,
             current_ap_ssid: None,
             current_ap_channel: None,
@@ -158,32 +168,40 @@ impl NetManager {
         })
     }
 
+    /// `setup_provisioning_ap` (fonction) : Configure et démarre le point d'accès SoftAP en mode Mixed (APSTA)
+    /// avec le SSID et les paramètres de sécurité appropriés (ouvert pour Config, WPA2 pour Teaching).
     pub fn setup_provisioning_ap(&mut self) -> Result<()> {
         AP_IP_B.store(PROVISIONING_SUBNET, std::sync::atomic::Ordering::SeqCst);
-        info!(
-            "Configuring provisioning captive portal: SSID='{}', subnet=192.168.{}.1",
-            PROVISIONING_SSID, PROVISIONING_SUBNET
-        );
 
-        let current_client_cfg = match self.wifi.get_configuration() {
-            Ok(Configuration::Mixed(client_cfg, _)) => client_cfg,
-            Ok(Configuration::Client(client_cfg)) => client_cfg,
-            _ => ClientConfiguration::default(),
+        // Sélection du SSID, de la méthode d'authentification et du mot de passe selon l'état du réseau
+        // `ap_ssid` (type: &str) : SSID cible pour le SoftAP.
+        // `auth_method` (type: AuthMethod) : Type d'authentification WiFi.
+        // `password` (type: &str) : Mot de passe du SoftAP.
+        let (ap_ssid, auth_method, password) = if self.state == NetState::ApPairing {
+            (TEACHING_SSID, AuthMethod::WPA2Personal, TEACHING_PSK)
+        } else {
+            (CONFIG_SSID, AuthMethod::None, "")
         };
 
-        // esp-idf-svc 0.52 does not expose WIFI_AUTH_OWE in AuthMethod.
-        // Keep this AP open for compatibility; switch authmode here when the binding exposes OWE.
+        info!(
+            "Configuring provisioning captive portal: SSID='{}', subnet=192.168.{}.1",
+            ap_ssid, PROVISIONING_SUBNET
+        );
+
         let ap_config = AccessPointConfiguration {
-            ssid: PROVISIONING_SSID.try_into().unwrap(),
+            ssid: ap_ssid.try_into().unwrap(),
             ssid_hidden: false,
             channel: self.provisioning_channel,
-            auth_method: AuthMethod::None,
-            password: "".try_into().unwrap(),
+            auth_method,
+            password: password.try_into().unwrap(),
             ..Default::default()
         };
 
+        let mut clean_client_cfg = ClientConfiguration::default();
+        clean_client_cfg.pmf_cfg = PmfConfiguration::Capable { required: false };
+
         self.wifi
-            .set_configuration(&Configuration::Mixed(current_client_cfg, ap_config))?;
+            .set_configuration(&Configuration::Mixed(clean_client_cfg, ap_config))?;
         self.wifi.start()?;
 
         let ap_netif = self.wifi.wifi().ap_netif();
@@ -213,9 +231,9 @@ impl NetManager {
             });
         }
 
-        self.current_ap_ssid = Some(PROVISIONING_SSID.to_string());
+        self.current_ap_ssid = Some(ap_ssid.to_string());
         self.current_ap_channel = Some(self.provisioning_channel);
-        self.current_ap_open = Some(true);
+        self.current_ap_open = Some(auth_method == AuthMethod::None);
         Ok(())
     }
 
@@ -242,12 +260,19 @@ impl NetManager {
         Ok(())
     }
 
+    /// `try_sta_connect` (fonction) : Tente de connecter l'ESP32 à un réseau Wi-Fi spécifique.
+    /// - `ssid` (type: &str) : Le SSID du réseau.
+    /// - `psk` (type: &str) : Le mot de passe du réseau.
+    /// - `_open_ap` (type: bool) : Inutilisé.
+    /// - `_distance` (type: i32) : Inutilisé.
+    /// - `bssid` (type: Option<[u8; 6]>) : Adresse MAC physique du point d'accès cible (évite de se connecter à soi-même).
     pub fn try_sta_connect(
         &mut self,
         ssid: &str,
         psk: &str,
         _open_ap: bool,
         _distance: i32,
+        bssid: Option<[u8; 6]>,
     ) -> Result<bool> {
         let masked_psk = if psk.len() > 4 {
             format!("{}...{}", &psk[..2], &psk[psk.len() - 2..])
@@ -257,8 +282,8 @@ impl NetManager {
             "***".to_string()
         };
         info!(
-            "STA connect attempt: SSID='{}', PSK={}, channel_hint={}",
-            ssid, masked_psk, self.provisioning_channel
+            "STA connect attempt: SSID='{}', PSK={}, channel_hint={}, BSSID={:?}",
+            ssid, masked_psk, self.provisioning_channel, bssid
         );
 
         let _ = self.wifi.disconnect();
@@ -283,6 +308,7 @@ impl NetManager {
             } else {
                 None
             },
+            bssid,
             // [Junior Dev Note] : PMF (Protected Management Frames) doit être en mode Capable
             // pour assurer la compatibilité avec les routeurs WPA2/WPA3 modernes.
             pmf_cfg: PmfConfiguration::Capable { required: false },
@@ -723,7 +749,7 @@ fn try_default_wifi(
             info!("\x1b[33m[WIFI] Tentative {}/{} : connexion à '{}'...\x1b[0m", attempt, max_retries, default_ssid);
 
             let mut net = this.lock().unwrap();
-            match net.try_sta_connect(default_ssid, default_psk, false, 0) {
+            match net.try_sta_connect(default_ssid, default_psk, false, 0, None) {
                 Ok(true) => {
                     net.state = NetState::WifiOk;
                     net.retry_count = 0;
@@ -789,7 +815,7 @@ fn try_known_wifi_from_visible(
 
         let mut net = this.lock().unwrap();
         info!("Trying visible known Wi-Fi: '{}'", ssid);
-        if net.try_sta_connect(ssid, &entry.psk, false, 0)? {
+        if net.try_sta_connect(ssid, &entry.psk, false, 0, None)? {
             net.state = NetState::WifiOk;
             net.retry_count = 0;
             let _ = net.stop_provisioning_ap_if_not_pairing();
@@ -809,14 +835,54 @@ fn try_known_wifi_from_visible(
     Ok(false)
 }
 
+/// `try_provisioning_peer` (fonction) : Cherche un autre WhisperEye diffusant le SSID "ESP32-Teaching",
+/// et tente de s'y connecter de manière sécurisée pour copier sa base de réseaux connus.
 fn try_provisioning_peer(
     this: &Arc<Mutex<NetManager>>,
     nvs: &Arc<Mutex<NvsStorage>>,
 ) -> Result<bool> {
+    // 1. Obtenir notre propre adresse MAC SoftAP pour pouvoir l'ignorer
+    // `my_ap_mac` (type: [u8; 6]) : Adresse MAC de l'interface SoftAP de notre carte.
+    let mut my_ap_mac = [0u8; 6];
+    unsafe {
+        let _ = esp_idf_sys::esp_wifi_get_mac(esp_idf_sys::wifi_interface_t_WIFI_IF_AP, my_ap_mac.as_mut_ptr());
+    }
+
+    // 2. Faire un scan synchrone rapide des réseaux à proximité
+    // `ap_list` (type: Vec<AccessPointInfo>) : Liste des points d'accès détectés lors du scan.
+    let ap_list = {
+        let mut net = this.lock().unwrap();
+        net.wifi.scan().unwrap_or_default()
+    };
+
+    // 3. Chercher s'il existe un AUTRE WhisperEye diffusant le SSID de Teaching
+    // `target_bssid` (type: Option<[u8; 6]>) : BSSID de l'autre WhisperEye cible si trouvé.
+    let mut target_bssid = None;
+    // `target_channel` (type: u8) : Canal de diffusion de la cible.
+    let mut target_channel = 11;
+    
+    for ap in ap_list {
+        if ap.ssid.as_str() == TEACHING_SSID && ap.bssid != my_ap_mac {
+            target_bssid = Some(ap.bssid);
+            target_channel = ap.channel;
+            break;
+        }
+    }
+
+    // 4. Si aucun autre peer n'est détecté, on évite la tentative de connexion client
+    let bssid = match target_bssid {
+        Some(b) => b,
+        None => {
+            info!("[WIFI] Aucun autre WhisperEye '{}' trouve a proximite. Pas de tentative de connexion client.", TEACHING_SSID);
+            return Ok(false);
+        }
+    };
+
     {
         let mut net = this.lock().unwrap();
-        info!("Trying provisioning peer '{}' (direct connection on channel {})", PROVISIONING_SSID, net.provisioning_channel);
-        if !net.try_sta_connect(PROVISIONING_SSID, "", true, -1)? {
+        net.provisioning_channel = target_channel;
+        info!("[WIFI] WhisperEye de partage 'Teaching' trouve (BSSID: {:?}, canal {}). Connexion STA...", bssid, target_channel);
+        if !net.try_sta_connect(TEACHING_SSID, TEACHING_PSK, false, -1, Some(bssid))? {
             return Ok(false);
         }
         net.state = NetState::ProvisioningOk;

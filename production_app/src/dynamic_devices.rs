@@ -1315,9 +1315,12 @@ pub fn evaluate_logic_condition(condition: &str, sensor_values: &HashMap<String,
             
             // Trouver l'opérateur de comparaison et évaluer
             if let Some((op, left_str, right_str)) = parse_comparison(and_part_trimmed) {
+                // `left_val` (type: f64) : Valeur évaluée du membre gauche.
                 let left_val: f64 = evaluate_arithmetic_expr(left_str, sensor_values).unwrap_or(0.0);
+                // `right_val` (type: f64) : Valeur évaluée du membre droit.
                 let right_val: f64 = evaluate_arithmetic_expr(right_str, sensor_values).unwrap_or(0.0);
                 
+                // `comp_result` (type: bool) : Résultat booléen de la comparaison logique.
                 let comp_result = match op {
                     "<" => left_val < right_val,
                     ">" => left_val > right_val,
@@ -1326,14 +1329,20 @@ pub fn evaluate_logic_condition(condition: &str, sensor_values: &HashMap<String,
                     ">=" => left_val >= right_val,
                     _ => false,
                 };
+                log::info!("[EVALUATE IF] Sub-condition '{}' -> Gauche: '{}' ({:.2}), Droite: '{}' ({:.2}) -> {}", 
+                    and_part_trimmed, left_str, left_val, right_str, right_val, comp_result);
                 if !comp_result {
                     and_ok = false;
                     break;
                 }
             } else {
                 // Pas de comparateur : si l'expression arithmétique simple est non-nulle, on considère que c'est vrai
+                // `val` (type: f64) : Valeur évaluée de l'expression simple.
                 let val: f64 = evaluate_arithmetic_expr(and_part_trimmed, sensor_values).unwrap_or(0.0);
-                if val == 0.0 {
+                // `comp_result` (type: bool) : Vrai si la valeur évaluée est non-nulle.
+                let comp_result = val != 0.0;
+                log::info!("[EVALUATE IF] Expression simple '{}' (Valeur: {:.2}) -> {}", and_part_trimmed, val, comp_result);
+                if !comp_result {
                     and_ok = false;
                     break;
                 }
