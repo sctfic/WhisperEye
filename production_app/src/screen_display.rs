@@ -14,33 +14,104 @@ use common::nvs_storage::NvsStorage;
 use crate::screen::{Screen, ST7789Display};
 use crate::board::Board;
 use crate::actuators::{Actuators, ActuatorsState};
-use crate::wifi::NetManager;
+use crate::wifi::{NetManager, NetState};
 
 // ── 1. FONCTIONS DE DESSIN POUR LES ICÔNES DE STATUT ──
 
-/// Icône WiFi
-fn draw_wifi_icon<D>(display: &mut D, start_point: Point, connected: bool) -> Result<(), D::Error>
+/// `draw_wifi_icon` (fonction) : Dessine l'icône WiFi sur l'écran LCD.
+/// Gère trois états : connecté (barres vertes proportionnelles au RSSI, le reste en gris),
+/// en cours de connexion (animation de défilement vert/gris toutes les 500ms),
+/// et déconnecté (toutes les barres en rouge).
+fn draw_wifi_icon<D>(
+    display: &mut D,
+    start_point: Point,
+    connected: bool,
+    state: NetState,
+) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let color = if connected { Rgb565::GREEN } else { Rgb565::RED };
-    // let border_color = Rgb565::BLACK;
-    let base_y = start_point.y + 11;
+    // Effacer l'ancien dessin de l'icône WiFi (taille 11x11, Y=2..13, X=269..280)
+    let _ = Rectangle::new(start_point, Size::new(11, 11))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(display);
 
-    // 4 barres : hauteurs 3, 5, 7, 9 px, largeurs 2px, séparées de 1px (i * 3)
-    for i in 0..4 {
-        let x = start_point.x + (i * 3);
-        let height = 3 + (i * 2);
-        let y = base_y - height;
-
-        // let _ = Rectangle::new(Point::new(x - 1, y - 1), Size::new(3, (height + 2) as u32))
-        //     .into_styled(PrimitiveStyle::with_fill(border_color))
-        //     .draw(display);
-
-        let _ = Rectangle::new(Point::new(x, y), Size::new(2, height as u32))
-            .into_styled(PrimitiveStyle::with_fill(color))
-            .draw(display);
+    // `base_y` (type: i32) : Ligne de base pour l'alignement vertical du bas des barres de l'icône.
+    let base_y: i32 = start_point.y + 11;
+    
+    // `connecting` (type: bool) : True si l'appareil est actuellement en phase de recherche ou tentative de connexion.
+    let connecting: bool = state == NetState::WifiPreferred || state == NetState::ProvisioningScan || state == NetState::ProvisioningOk;
+    
+    if connected {
+        // Lire le RSSI réel du WiFi connecté
+        // `ap_info` (type: wifi_ap_record_t) : Structure de données d'information de l'Access Point connecté.
+        let mut ap_info = esp_idf_sys::wifi_ap_record_t::default();
+        // `rssi` (type: i32) : Puissance du signal reçu en dBm.
+        let rssi: i32 = unsafe {
+            if esp_idf_sys::esp_wifi_sta_get_ap_info(&mut ap_info) == 0 {
+                ap_info.rssi as i32
+            } else {
+                -100
+            }
+        };
+        
+        // Déterminer le nombre de barres vertes (1 à 4)
+        // `num_green` (type: i32) : Nombre de barres de signal à colorer en vert selon le RSSI.
+        let num_green: i32 = if rssi >= -55 {
+            4
+        } else if rssi >= -70 {
+            3
+        } else if rssi >= -85 {
+            2
+        } else {
+            1
+        };
+        
+        for i in 0..4 {
+            let x = start_point.x + (i * 3);
+            let height = 3 + (i * 2);
+            let y = base_y - height;
+            let bar_color = if i < num_green {
+                Rgb565::GREEN
+            } else {
+                Rgb565::new(10, 20, 10) // Gris foncé / éteint
+            };
+            let _ = Rectangle::new(Point::new(x, y), Size::new(2, height as u32))
+                .into_styled(PrimitiveStyle::with_fill(bar_color))
+                .draw(display);
+        }
+    } else if connecting {
+        // Animation : barres grises avec l'une d'elles verte (défilement toutes les 500ms)
+        // `millis` (type: u64) : Temps système en millisecondes écoulé depuis le démarrage.
+        let millis: u64 = unsafe { esp_idf_sys::esp_timer_get_time() / 1000 } as u64;
+        // `active_bar` (type: usize) : Index de la barre active (verte) pour l'animation (0 à 3).
+        let active_bar: usize = ((millis / 500) % 4) as usize;
+        
+        for i in 0..4 {
+            let x = start_point.x + (i * 3);
+            let height = 3 + (i * 2);
+            let y = base_y - height;
+            let bar_color = if i == active_bar as i32 {
+                Rgb565::GREEN
+            } else {
+                Rgb565::new(10, 20, 10) // Gris foncé
+            };
+            let _ = Rectangle::new(Point::new(x, y), Size::new(2, height as u32))
+                .into_styled(PrimitiveStyle::with_fill(bar_color))
+                .draw(display);
+        }
+    } else {
+        // Déconnecté (ex: Portail Captif) : tout rouge
+        for i in 0..4 {
+            let x = start_point.x + (i * 3);
+            let height = 3 + (i * 2);
+            let y = base_y - height;
+            let _ = Rectangle::new(Point::new(x, y), Size::new(2, height as u32))
+                .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+                .draw(display);
+        }
     }
+    
     Ok(())
 }
 
@@ -574,7 +645,22 @@ pub fn run_ihm(
 
         let current_i2c = crate::i2c::I2C_DEVICES_COUNT.load(Ordering::Relaxed);
         let current_onewire = crate::one_wire::ONEWIRE_DEVICES_COUNT.load(Ordering::Relaxed);
-        let current_wifi = crate::wifi::WIFI_CONNECTED.load(Ordering::Relaxed);
+        
+        // Récupérer à la fois le statut connecté et l'état réseau courant (NetState) de façon atomique (sans verrous)
+        // `current_wifi` (type: bool) : Indique si la carte est actuellement connectée au point d'accès.
+        let current_wifi: bool = crate::wifi::WIFI_CONNECTED.load(Ordering::Relaxed);
+        // `wifi_state_u8` (type: u8) : Octet représentant l'état du réseau global.
+        let wifi_state_u8: u8 = crate::wifi::CURRENT_NET_STATE.load(Ordering::Relaxed);
+        // `wifi_state` (type: NetState) : L'état courant décodé pour l'IHM.
+        let wifi_state: NetState = match wifi_state_u8 {
+            0 => NetState::WifiPreferred,
+            1 => NetState::WifiOk,
+            2 => NetState::ProvisioningScan,
+            3 => NetState::ProvisioningOk,
+            4 => NetState::ProvisioningAp,
+            5 => NetState::ApPairing,
+            _ => NetState::WifiPreferred,
+        };
 
         let (current_ssid, current_ip) = {
             let ssid = crate::wifi::CURRENT_SSID.lock().unwrap().clone();
@@ -650,7 +736,7 @@ pub fn run_ihm(
         let _ = draw_upload_icon(&mut display, Point::new(255, 2), is_uploading);
         let _ = draw_download_icon(&mut display, Point::new(257, 7), is_downloading);
 
-        let _ = draw_wifi_icon(&mut display, Point::new(269, 2), current_wifi);
+        let _ = draw_wifi_icon(&mut display, Point::new(269, 2), current_wifi, wifi_state);
 
         let is_external = vsense_volts_val >= 5.0;
         let _ = draw_lightning_icon(&mut display, Point::new(283, 1), is_external);

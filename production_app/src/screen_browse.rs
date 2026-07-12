@@ -307,6 +307,82 @@ impl BrowseController {
             });
         }
 
+        // --- 5. Capteurs I2C dynamiques (SHT30, SHT45, SCD41, etc.) ---
+        // `i2c_devices` (type: Vec<(String, crate::dynamic_devices::DeviceEntry)>) : Liste triée de tous les périphériques dynamiques I2C du registre.
+        let mut i2c_devices: Vec<(String, crate::dynamic_devices::DeviceEntry)> = registry_map
+            .iter()
+            .filter(|(k, _)| k.starts_with("i2c:"))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        i2c_devices.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (key, entry) in i2c_devices {
+            // Si le capteur n'est pas actif/présent, on l'ignore.
+            if !entry.present {
+                continue;
+            }
+            // `raw_temp` (type: f32) : Température ou valeur brute lue depuis la table de correspondance I2C globale.
+            let raw_temp: f32 = crate::i2c::I2C_READINGS.lock().ok()
+                .and_then(|guard| guard.get(&key).copied())
+                .unwrap_or(-255.0);
+
+            // `corrected_val` (type: String) : Valeur finale après formule de correction.
+            // `raw_val` (type: String) : Valeur brute convertie en String pour l'affichage.
+            let (corrected_val, raw_val) = if raw_temp == -255.0 || raw_temp == -254.0 || raw_temp == -253.0 {
+                ("--.--".to_string(), "--.--".to_string())
+            } else {
+                let mut final_val: f64 = raw_temp as f64;
+                let correction: String = entry.correction_formula.clone().unwrap_or_else(|| {
+                    crate::dynamic_devices::get_correction_formula(nvs, &key)
+                });
+                if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+                    let mut raw_values: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+                    raw_values.insert(key.clone(), raw_temp as f64);
+                    let tokens: Vec<String> = crate::dynamic_devices::tokenize(&correction, &raw_values, raw_temp as f64);
+                    if let Ok(evaluated) = crate::dynamic_devices::evaluate_expression(&tokens) {
+                        final_val = evaluated;
+                    }
+                }
+                if key.ends_with("_T") || key.ends_with("_H") {
+                    (format!("{:.1}", final_val), format!("{:.2}", raw_temp))
+                } else {
+                    (format!("{:.0}", final_val), format!("{:.2}", raw_temp))
+                }
+            };
+
+            // `unit` (type: String) : Symbole de l'unité de mesure selon le suffixe de la clé.
+            let unit: String = if key.ends_with("_T") {
+                "°C".to_string()
+            } else if key.ends_with("_H") {
+                "%RH".to_string()
+            } else if key.ends_with("_P") {
+                "hPa".to_string()
+            } else if key.contains("0x62") {
+                "ppm".to_string()
+            } else {
+                "".to_string()
+            };
+
+            // `desc` (type: String) : Description descriptive de la mesure pour la fiche de propriétés de l'IHM.
+            let desc: String = if key.ends_with("_T") {
+                format!("Température I2C ({})", key)
+            } else if key.ends_with("_H") {
+                format!("Humidité relative I2C ({})", key)
+            } else {
+                format!("Mesure I2C ({})", key)
+            };
+
+            result.push(SensorItemInfo {
+                id: key.clone(),
+                name: entry.name.clone(),
+                desc,
+                corrected_val,
+                raw_val,
+                unit,
+                model_bus: format!("I2C Bus: {}", key),
+            });
+        }
+
         result
     }
 
@@ -470,17 +546,31 @@ impl BrowseController {
                             if new_sub == 1 {
                                 let mut net = wifi_manager.lock().unwrap();
                                 net.state = crate::wifi::NetState::ApPairing;
+                                crate::wifi::update_global_net_state(crate::wifi::NetState::ApPairing);
                                 net.pairing_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(120));
                                 self.ap_active_until = net.pairing_until;
                                 let _ = net.setup_provisioning_ap();
                                 self.state = AppState::AfficherProprietes { main_index, sub_index: 1 };
                             } else if new_sub == 3 {
+                                // `current_brightness` (type: u8) : Luminosité actuelle de l'écran récupérée de la NVS.
                                 let current_brightness = nvs.lock().unwrap().get_i32("scrBrightness").ok().flatten().unwrap_or(20) as u8;
+                                // `step_val` (type: Option<u8>) : Pas de réglage (step) configuré en NVS pour l'écran.
+                                let step_val = {
+                                    let reg = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
+                                    let map = reg.load_registry();
+                                    map.get("screen").and_then(|e| e.step)
+                                };
+                                // `step_idx` (type: usize) : Index du pas dans le tableau SLIDER_STEPS.
+                                let step_idx = if let Some(sv) = step_val {
+                                    get_step_idx_from_val(sv)
+                                } else {
+                                    3 // index 3 (5%) par défaut
+                                };
                                 self.state = AppState::AjusterSlider {
                                      main_index,
                                      sub_index: 3,
                                      value: current_brightness as i16,
-                                     step_idx: 3, // step 5%
+                                     step_idx,
                                      sub_step: 0,
                                  };
                             } else if new_sub == 5 {
@@ -672,7 +762,7 @@ impl BrowseController {
                         let mut map = registry.load_registry();
                         if let Some(entry) = map.get_mut("screen") {
                             entry.pwm_val = Some(val as u8);
-                            entry.step = None;
+                            // On préserve le pas (step) défini en NVS sans l'écraser.
                         } else {
                             map.insert("screen".to_string(), crate::dynamic_devices::DeviceEntry {
                                 name: "Ecran ST7789".to_string(),
@@ -777,7 +867,8 @@ impl BrowseController {
                                 self.needs_redraw = false; // Ne pas effacer la zone de détail
                                 self.value_changed = true;
                                 // Invalider le cache des deux jauges pour rafraîchir leur couleur de focus
-                                let mut self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
+                                // `self_mut` (type: &mut Self) : Référence mutable forcée (unsafe) pour invalider le cache graphique.
+                                let self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
                                 self_mut.last_h0_val_a = -999;
                                 self_mut.last_h0_val_b = -999;
                             } else {
@@ -863,6 +954,7 @@ impl BrowseController {
                                             let mut net = wifi_manager_clone.lock().unwrap();
                                             if net.try_sta_connect(&ssid, &psk, false, 0).unwrap_or(false) {
                                                 net.state = crate::wifi::NetState::WifiOk;
+                                                crate::wifi::update_global_net_state(crate::wifi::NetState::WifiOk);
                                                 net.retry_count = 0;
                                                 let _ = net.stop_provisioning_ap_if_not_pairing();
                                                 common::led::set_sta_status(common::led::LedStaStatus::WifiOk);
@@ -969,7 +1061,7 @@ impl BrowseController {
         let sub_changed = self.last_sub_index != Some(current_sub) || main_changed || layout_changed || _needs_redraw_full;
 
         // Mettre à jour les besoins d'effacement
-        let mut self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
+        let self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
         if h0_mode_changed {
             self_mut.last_h0_mode = h0_mode;
             self_mut.last_h0_val_a = -999;

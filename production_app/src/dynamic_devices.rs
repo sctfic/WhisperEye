@@ -426,7 +426,7 @@ impl DeviceRegistry {
         }
 
         // 4. Dynamic Devices: I2C (SHT45, SCD41, BME280) channel probes
-        let i2c_scans = crate::i2c::scan_i2c_devices();
+        let i2c_scans = i2c.lock().unwrap().found_devices.clone();
         for (channel, addr) in i2c_scans {
             let addr_str = format!("0x{:02x}", addr);
             if addr == 0x44 || addr == 0x45 {
@@ -535,10 +535,6 @@ impl DeviceRegistry {
         let registry = self.load_registry(); // construit à partir des statiques + NVS dynamiques
         let mut list = Vec::new();
 
-        let bme_t = *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap() as f64;
-        let bme_h = *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap() as f64;
-        let bme_p = *crate::i2c::i2c_bme280::BME280_PRESS.lock().unwrap() as f64;
-
         let mut raw_values: HashMap<String, f64> = HashMap::new();
         raw_values.insert("vsense".to_string(), (vsense_volts.unwrap_or(0.0) as f64 * 100.0).round() / 100.0);
         raw_values.insert("isense".to_string(), (isense_amps.unwrap_or(0.0) as f64 * 100.0).round() / 100.0);
@@ -549,23 +545,15 @@ impl DeviceRegistry {
         raw_values.insert("ina".to_string(), if ina_on { 1.0 } else { 0.0 });
         raw_values.insert("inb".to_string(), if inb_on { 1.0 } else { 0.0 });
         
-        let sht4_t = *crate::i2c::i2c_sht3x_4x::SHT4X_TEMP.lock().unwrap() as f64;
-        let sht4_h = *crate::i2c::i2c_sht3x_4x::SHT4X_HUM.lock().unwrap() as f64;
-        let sht3_t = *crate::i2c::i2c_sht3x_4x::SHT3X_TEMP.lock().unwrap() as f64;
-        let sht3_h = *crate::i2c::i2c_sht3x_4x::SHT3X_HUM.lock().unwrap() as f64;
-
-        raw_values.insert("i2c:0:0x44_T".to_string(), (sht4_t * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x44_H".to_string(), (sht4_h * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x45_T".to_string(), (sht3_t * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x45_H".to_string(), (sht3_h * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x62".to_string(), 680.00);
-        
-        raw_values.insert("i2c:0:0x76_T".to_string(), (bme_t * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x76_H".to_string(), (bme_h * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x76_P".to_string(), (bme_p * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x77_T".to_string(), (bme_t * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x77_H".to_string(), (bme_h * 100.0).round() / 100.0);
-        raw_values.insert("i2c:0:0x77_P".to_string(), (bme_p * 100.0).round() / 100.0);
+        // [Junior Dev Note] : `raw_values` (type HashMap<String, f64>) sert à stocker les mesures physiques brutes actuelles.
+        // On y injecte dynamiquement toutes les lectures I2C lues par le Cron et stockées dans la map globale `I2C_READINGS`.
+        // Cela évite d'avoir à déclarer en dur chaque identifiant de canal et adresse.
+        {
+            let map = crate::i2c::I2C_READINGS.lock().unwrap();
+            for (k, &v) in map.iter() {
+                raw_values.insert(k.clone(), (v as f64 * 100.0).round() / 100.0);
+            }
+        }
 
         for (addr, temp) in ds_readings {
             raw_values.insert(format!("onewr:{}", addr), (*temp as f64 * 100.0).round() / 100.0);
@@ -613,30 +601,12 @@ impl DeviceRegistry {
                     }
                 }
                 _ if id.starts_with("i2c:") => {
-                    present = entry.present;
-                    if id.ends_with("_T") && id.contains("0x44") {
-                        raw_val = sht4_t;
-                        present = sht4_t != -255.0 && sht4_t != -254.0 && sht4_t != -253.0;
-                    } else if id.ends_with("_H") && id.contains("0x44") {
-                        raw_val = sht4_h;
-                        present = sht4_h != -255.0 && sht4_h != -254.0 && sht4_h != -253.0;
-                    } else if id.ends_with("_T") && id.contains("0x45") {
-                        raw_val = sht3_t;
-                        present = sht3_t != -255.0 && sht3_t != -254.0 && sht3_t != -253.0;
-                    } else if id.ends_with("_H") && id.contains("0x45") {
-                        raw_val = sht3_h;
-                        present = sht3_h != -255.0 && sht3_h != -254.0 && sht3_h != -253.0;
-                    } else if id.contains("0x62") && !id.ends_with("_T") && !id.ends_with("_H") && !id.ends_with("_P") {
-                        raw_val = 680.0;
-                    } else if id.ends_with("_T") && (id.contains("0x76") || id.contains("0x77")) {
-                        raw_val = bme_t;
-                        present = bme_t != -255.0 && bme_t != -254.0 && bme_t != -253.0;
-                    } else if id.ends_with("_H") && (id.contains("0x76") || id.contains("0x77")) {
-                        raw_val = bme_h;
-                        present = bme_h != -255.0 && bme_h != -254.0 && bme_h != -253.0;
-                    } else if id.ends_with("_P") && (id.contains("0x76") || id.contains("0x77")) {
-                        raw_val = bme_p;
-                        present = bme_p != -255.0 && bme_p != -254.0 && bme_p != -253.0;
+                    if let Some(&val) = raw_values.get(id) {
+                        raw_val = val;
+                        present = val != -255.0 && val != -254.0 && val != -253.0;
+                    } else {
+                        raw_val = -255.0;
+                        present = false;
                     }
                 }
                 _ => {}
@@ -660,6 +630,9 @@ impl DeviceRegistry {
             let buffer_field = if is_act || id == "screen" || id == "radio" {
                 None
             } else {
+                let bme_t = *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap() as f64;
+                let bme_h = *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap() as f64;
+                let bme_p = *crate::i2c::i2c_bme280::BME280_PRESS.lock().unwrap() as f64;
                 let mut vals = Vec::new();
                 for entry in history {
                     let mut h_raw = -255.0;

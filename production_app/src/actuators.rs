@@ -21,15 +21,27 @@ impl Default for H0State {
     }
 }
 
+/// `ActuatorsState` (structure) : État global de tous les actionneurs (Relais, Pont H, Écran) désérialisé depuis les requêtes HTTP JSON.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[allow(non_snake_case)]
 pub struct ActuatorsState {
+    /// `rla` (type: bool) : État logique actif (true) ou inactif (false) du relais A.
     pub rla: bool,
+    /// `rlb` (type: bool) : État logique actif (true) ou inactif (false) du relais B.
     pub rlb: bool,
+    /// `swpwr` (type: bool) : Commutateur d'alimentation générale.
     pub swpwr: bool,
+    /// `H0` (type: H0State) : État détaillé du Pont H (mode de fonctionnement et vitesse INA/INB).
     pub H0: H0State,
+    /// `screen_brightness` (type: Option<u8>) : Luminosité de l'écran LCD en pourcentage (0 à 100%).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screen_brightness: Option<u8>,
+    /// `rla_speed` (type: Option<u8>) : Vitesse PWM facultative (0 à 100%) pour le relais A (si progressif).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rla_speed: Option<u8>,
+    /// `rlb_speed` (type: Option<u8>) : Vitesse PWM facultative (0 à 100%) pour le relais B (si progressif).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rlb_speed: Option<u8>,
 }
 
 impl Default for ActuatorsState {
@@ -40,6 +52,8 @@ impl Default for ActuatorsState {
             swpwr: true, // Keep system 5V/3V powered by default
             H0: H0State::default(),
             screen_brightness: None,
+            rla_speed: None,
+            rlb_speed: None,
         }
     }
 }

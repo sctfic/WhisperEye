@@ -204,16 +204,34 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
         cache_busted_url.push_str(&format!("?nocache={}", rand_val));
     }
 
+    // `free_heap` (type: usize) : Quantité de mémoire heap RAM libre en octets avant l'appel HTTPS.
+    let free_heap: usize = unsafe { esp_idf_sys::heap_caps_get_free_size(esp_idf_sys::MALLOC_CAP_8BIT) };
+    // `total_heap` (type: usize) : Quantité totale de mémoire heap RAM disponible sur la puce.
+    let total_heap: usize = unsafe { esp_idf_sys::heap_caps_get_total_size(esp_idf_sys::MALLOC_CAP_8BIT) };
+    // `pct` (type: usize) : Pourcentage de heap libre (0..100).
+    let pct: usize = if total_heap > 0 { free_heap * 100 / total_heap } else { 0 };
+    // `filled` (type: usize) : Nombre de blocs remplis dans la barre (sur 20).
+    let filled: usize = pct * 20 / 100;
+    // `bar` (type: String) : Barre de progression ASCII (20 caractères : █ remplis, ░ vides).
+    let bar: String = format!("{}{}", "█".repeat(filled), "░".repeat(20 - filled));
+    info!("\x1b[36m[HEAP] {} {}% ({} Ko / {} Ko)\x1b[0m", bar, pct, free_heap / 1024, total_heap / 1024);
+
+    // `config` (type: esp_idf_svc::http::client::Configuration) : Configuration optimisée du client HTTP pour limiter l'utilisation RAM de mbedTLS.
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         use_global_ca_store: false,
-        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
-        follow_redirects_policy: esp_idf_svc::http::client::FollowRedirectsPolicy::FollowNone, // Désactiver pour libérer manuellement la RAM TLS entre chaque étape
+        // [Junior Dev Note] : Désactiver le bundle de certificats crt_bundle_attach permet d'économiser
+        // environ 25 à 30 Ko de mémoire RAM sur le tas (heap) de l'ESP32, ce qui évite les plantages OOM.
+        crt_bundle_attach: None,
+        follow_redirects_policy: esp_idf_svc::http::client::FollowRedirectsPolicy::FollowNone,
         ..Default::default()
     };
     
+    // `current_url` (type: String) : URL active pour la requête HTTP (évolue en cas de redirection).
     let mut current_url = cache_busted_url;
+    // `body` (type: Vec<u8>) : Tampon de stockage pour accumuler le corps de la réponse reçue.
     let mut body = Vec::new();
+    // `redirect_count` (type: i32) : Compteur de redirections suivies manuellement.
     let mut redirect_count = 0;
     
     loop {
@@ -222,6 +240,11 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
         }
         
         info!("[check_updates_internal] Requête vers : {}", current_url);
+        
+        // [Junior Dev Note] : Petite pause de 500ms pour laisser le tas de mémoire se stabiliser après une association Wi-Fi
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        
+        // `connection` (type: esp_idf_svc::http::client::EspHttpConnection) : Instance de connexion HTTP client.
         let mut connection = esp_idf_svc::http::client::EspHttpConnection::new(&config)?;
         
         let headers = [
@@ -978,8 +1001,16 @@ pub fn handle_post_actuators(
     // Appliquer physiquement et sauvegarder en NVS
     {
         let mut acts = actuators.lock().unwrap();
+        if let Some(speed) = payload.rla_speed {
+            let _ = acts.relay_a.set_speed(speed as i32);
+        }
         let _ = acts.write("rla", payload.rla);
+
+        if let Some(speed) = payload.rlb_speed {
+            let _ = acts.relay_b.set_speed(speed as i32);
+        }
         let _ = acts.write("rlb", payload.rlb);
+
         let _ = acts.write("swpwr", payload.swpwr);
         let _ = acts.write_h0(&payload.H0);
 
@@ -993,10 +1024,18 @@ pub fn handle_post_actuators(
         let mut map = registry.load_registry();
 
         if let Some(entry) = map.get_mut("rla") {
-            entry.pwm_val = Some(if payload.rla { 100 } else { 0 });
+            if payload.rla {
+                entry.pwm_val = Some(payload.rla_speed.unwrap_or(100));
+            } else {
+                entry.pwm_val = Some(0);
+            }
         }
         if let Some(entry) = map.get_mut("rlb") {
-            entry.pwm_val = Some(if payload.rlb { 100 } else { 0 });
+            if payload.rlb {
+                entry.pwm_val = Some(payload.rlb_speed.unwrap_or(100));
+            } else {
+                entry.pwm_val = Some(0);
+            }
         }
         if let Some(entry) = map.get_mut("swpwr") {
             entry.pwm_val = Some(if payload.swpwr { 100 } else { 0 });

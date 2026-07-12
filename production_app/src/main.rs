@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.118";
+pub const FW_VERSION: &str = "1.2.124";
 
 #[allow(dead_code)]
 pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
@@ -146,7 +146,9 @@ fn main() -> Result<()> {
     let actuators_state = Arc::new(Mutex::new(ActuatorsState::default()));
 
     // 2b. Initialiser la LED RMT (GPIO48 est partagé avec RLA)
+    #[allow(deprecated)]
     let rmt_channel = unsafe { esp_idf_hal::rmt::CHANNEL0::steal() };
+    #[allow(deprecated)]
     let led_pin = unsafe { esp_idf_hal::gpio::Gpio48::steal() };
     if let Err(e) = common::led::init_led(rmt_channel, led_pin) {
         println!("WARNING: Failed to init LED: {:?}", e);
@@ -365,19 +367,9 @@ fn main() -> Result<()> {
         net.last_state_change = std::time::Instant::now();
     }
 
-    // SNTP Client
-    let _sntp = {
-        let ntp_server = nvs_storage.lock().unwrap().get_str("ntpServer").ok().flatten().unwrap_or_default();
-        let use_custom = web_handlers::is_valid_fqdn(&ntp_server);
-        let sntp = if use_custom {
-            let mut conf = esp_idf_svc::sntp::SntpConf::default();
-            conf.servers[0] = &ntp_server;
-            EspSntp::new(&conf)
-        } else {
-            EspSntp::new_default()
-        };
-        sntp.ok()
-    };
+    // [Junior Dev Note] : L'initialisation SNTP est désormais déclenchée UNIQUEMENT après
+    // connexion WiFi réussie, dans le thread net_controller (wifi.rs).
+    // Cela évite de tenter une synchronisation NTP sans réseau disponible.
 
     NetManager::start_controller_thread(
         Arc::clone(&wifi_manager),
@@ -420,6 +412,18 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

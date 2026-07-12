@@ -8,10 +8,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
+/// `MetricEntry` (structure) : Représente une entrée de mesure archivée dans l'historique du Cron.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricEntry {
+    /// `timestamp` (type: u64) : Horodatage epoch de la mesure.
     pub timestamp: u64,
+    /// `readings` (type: SensorReadings) : Mesures des capteurs fixes (SHT45 principal, SCD41, sondes 1-Wire).
     pub readings: SensorReadings,
+    /// `i2c_readings` (type: std::collections::HashMap<String, f32>) : Snapshot de toutes les mesures I2C dynamiques à cet instant précis.
+    pub i2c_readings: std::collections::HashMap<String, f32>,
 }
 
 #[allow(dead_code)]
@@ -299,6 +304,10 @@ impl CronWorker {
         let entry = MetricEntry {
             timestamp: now,
             readings: readings.clone(),
+            i2c_readings: {
+                let map = crate::i2c::I2C_READINGS.lock().unwrap();
+                map.clone()
+            },
         };
 
         if self.history.len() >= 10 {
@@ -311,9 +320,19 @@ impl CronWorker {
 
         let mut lines: Vec<String> = vec!["\x1b[36m[CRON] Task 30s: Collected sensor metrics:".to_string()];
 
-        let sht_present = devices.values().any(|e| e.name.contains("SHT45") && e.present);
+        // [Junior Dev Note] : e.name contient soit "SHT45", soit "SHT30" selon le modèle I2C détecté.
+        // On vérifie la présence de l'un ou l'autre dans les périphériques actifs.
+        let sht_present: bool = devices.values().any(|e| (e.name.contains("SHT45") || e.name.contains("SHT30")) && e.present);
         if sht_present {
-            lines.push(format!("  SHT45 : Temp={:.1}C  Humi={:.1}%", readings.temperature_sht45, readings.humidity_sht45));
+            // [Junior Dev Note] : On boucle sur toutes les lectures enregistrées pour les adresses de capteurs SHT (0x44 ou 0x45)
+            // afin d'afficher la valeur de chaque capteur détecté sur tous les canaux du multiplexeur.
+            let map = crate::i2c::I2C_READINGS.lock().unwrap();
+            for (k, &v) in map.iter() {
+                if k.contains("0x44") || k.contains("0x45") {
+                    let unit: &str = if k.ends_with("_T") { "°C" } else { "%RH" };
+                    lines.push(format!("  SHT ({}) : {:.1}{}", k, v, unit));
+                }
+            }
         }
 
         let scd_present = devices.values().any(|e| e.name.contains("SCD41") && e.present);
@@ -345,58 +364,143 @@ impl CronWorker {
 
         // Calcul et affichage de l'historique (bleu clair) et de la moyenne (bleu foncé)
         if !self.history.is_empty() {
-            let count = self.history.len();
+            // [Junior Dev Note] : Les moyennes sont calculées à partir de self.history.
 
             // 1. Historique (Bleu clair \x1b[96m)
-            let mut hist_lines = vec!["\x1b[96m[CRON] Historique des mesures (10 dernières) :".to_string()];
+            // `hist_lines` (type: Vec<String>) : Liste des lignes de log formatées pour l'affichage de l'historique.
+            let mut hist_lines: Vec<String> = vec!["\x1b[96m[CRON] Historique des mesures (10 dernières) :".to_string()];
             for (idx, entry) in self.history.iter().enumerate() {
-                let mut sensors_states = Vec::new();
-                if sht_present {
-                    sensors_states.push(format!("SHT45: {:.1}C/{:.1}%", entry.readings.temperature_sht45, entry.readings.humidity_sht45));
+                // `sensors_states` (type: Vec<String>) : Liste des mesures formatées pour cette entrée d'historique.
+                let mut sensors_states: Vec<String> = Vec::new();
+
+                // Regrouper toutes les mesures I2C par identifiant de périphérique (canal et adresse)
+                // `i2c_by_device` (type: HashMap<String, (Option<f32>, Option<f32>)>) : Regroupe les valeurs (Température, Humidité) par périphérique I2C.
+                let mut i2c_by_device: std::collections::HashMap<String, (Option<f32>, Option<f32>)> = std::collections::HashMap::new();
+                for (k, &v) in &entry.i2c_readings {
+                    if k.starts_with("i2c:") {
+                        let dev_key: String = if k.ends_with("_T") || k.ends_with("_H") {
+                            k[..k.len()-2].to_string()
+                        } else {
+                            k.clone()
+                        };
+                        let record = i2c_by_device.entry(dev_key).or_insert((None, None));
+                        if k.ends_with("_T") {
+                            record.0 = Some(v);
+                        } else if k.ends_with("_H") {
+                            record.1 = Some(v);
+                        }
+                    }
                 }
-                if scd_present {
-                    sensors_states.push(format!("SCD41: {}ppm", entry.readings.co2_scd41));
+
+                // `sorted_i2c_keys` (type: Vec<&String>) : Liste ordonnée des périphériques I2C pour un affichage stable.
+                let mut sorted_i2c_keys: Vec<&String> = i2c_by_device.keys().collect();
+                sorted_i2c_keys.sort();
+
+                for k in sorted_i2c_keys {
+                    let vals: &(Option<f32>, Option<f32>) = &i2c_by_device[k];
+                    // `dev_name` (type: &str) : Nom générique du capteur déduit de son adresse.
+                    let dev_name: &str = if k.contains("0x44") || k.contains("0x45") {
+                        if k.contains("i2c:7:") { "SHT4x" } else { "SHT3x" }
+                    } else if k.contains("0x62") {
+                        "SCD41"
+                    } else {
+                        "I2C"
+                    };
+                    match (vals.0, vals.1) {
+                        (Some(t), Some(h)) => {
+                            sensors_states.push(format!("{}:{}: {:.1}C/{:.1}%", dev_name, &k[4..], t, h));
+                        }
+                        (Some(t), None) => {
+                            sensors_states.push(format!("{}:{}: {:.1}C", dev_name, &k[4..], t));
+                        }
+                        (None, Some(h)) => {
+                            sensors_states.push(format!("{}:{}: {:.1}%", dev_name, &k[4..], h));
+                        }
+                        _ => {}
+                    }
                 }
-                if bme_present {
-                    let bt = *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap();
-                    let bh = *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap();
-                    sensors_states.push(format!("BME280: {:.1}C/{:.1}%", bt, bh));
-                }
-                let ds_states: Vec<_> = entry.readings.ds18b20_temperatures.iter()
+
+                // Formater les sondes 1-Wire
+                // `ds_states` (type: Vec<String>) : Liste des températures mesurées par les sondes DS18B20 actives.
+                let ds_states: Vec<String> = entry.readings.ds18b20_temperatures.iter()
                     .filter(|(_, &t)| t != -255.0)
                     .map(|(addr, t)| format!("DS[{:.6}]: {:.1}C", addr, t))
                     .collect();
                 if !ds_states.is_empty() {
-                    sensors_states.push(ds_states.join(" "));
+                    sensors_states.push(format!("1Wire: {}", ds_states.join(", ")));
                 }
-                hist_lines.push(format!("  [{}] {}", idx + 1, sensors_states.join(" | ")));
+
+                hist_lines.push(format!("  [{}] {}", idx + 1, sensors_states.join(" , ")));
             }
             hist_lines.push("\x1b[0m".to_string());
             info!("{}", hist_lines.join("\n"));
 
             // 2. Moyennes (Bleu foncé \x1b[34m)
-            let mut avg_lines = vec!["\x1b[34m[CRON] Moyenne des mesures historiques :".to_string()];
+            // `avg_lines` (type: Vec<String>) : Liste des lignes de log formatées pour la moyenne des mesures.
+            let mut avg_lines: Vec<String> = vec!["\x1b[34m[CRON] Moyenne des mesures historiques :".to_string()];
             
-            if sht_present {
-                let sum_t: f32 = self.history.iter().map(|e| e.readings.temperature_sht45).sum();
-                let sum_h: f32 = self.history.iter().map(|e| e.readings.humidity_sht45).sum();
-                avg_lines.push(format!("  SHT45 : Temp={:.2}C  Humi={:.2}%", sum_t / count as f32, sum_h / count as f32));
+            // Regrouper par périphérique I2C et calculer la somme des mesures
+            // `i2c_sums` (type: HashMap<String, (f32, u32, f32, u32)>) : Accumule (SommeTemp, NbrTemp, SommeHum, NbrHum) pour la moyenne.
+            let mut i2c_sums: std::collections::HashMap<String, (f32, u32, f32, u32)> = std::collections::HashMap::new();
+            for ent in &self.history {
+                for (k, &v) in &ent.i2c_readings {
+                    if k.starts_with("i2c:") {
+                        let dev_key: String = if k.ends_with("_T") || k.ends_with("_H") {
+                            k[..k.len()-2].to_string()
+                        } else {
+                            k.clone()
+                        };
+                        let record = i2c_sums.entry(dev_key).or_insert((0.0, 0, 0.0, 0));
+                        if k.ends_with("_T") {
+                            record.0 += v;
+                            record.1 += 1;
+                        } else if k.ends_with("_H") {
+                            record.2 += v;
+                            record.3 += 1;
+                        }
+                    }
+                }
             }
-            if scd_present {
-                let sum_co2: i32 = self.history.iter().map(|e| e.readings.co2_scd41).sum();
-                avg_lines.push(format!("  SCD41 : CO2={:.1} ppm", sum_co2 as f32 / count as f32));
-            }
-            if bme_present {
-                let sum_t: f32 = self.history.iter().map(|_| *crate::i2c::i2c_bme280::BME280_TEMP.lock().unwrap()).sum();
-                let sum_h: f32 = self.history.iter().map(|_| *crate::i2c::i2c_bme280::BME280_HUM.lock().unwrap()).sum();
-                avg_lines.push(format!("  BME280: Temp={:.2}C  Hum={:.2}%", sum_t / count as f32, sum_h / count as f32));
+
+            // `sorted_avg_keys` (type: Vec<&String>) : Liste ordonnée des clés de capteurs I2C pour calcul de moyenne.
+            let mut sorted_avg_keys: Vec<&String> = i2c_sums.keys().collect();
+            sorted_avg_keys.sort();
+
+            for k in sorted_avg_keys {
+                let sums = &i2c_sums[k];
+                // `dev_name` (type: &str) : Nom générique du capteur I2C.
+                let dev_name: &str = if k.contains("0x44") || k.contains("0x45") {
+                    if k.contains("i2c:7:") { "SHT4x" } else { "SHT3x" }
+                } else if k.contains("0x62") {
+                    "SCD41"
+                } else {
+                    "I2C"
+                };
+
+                let t_avg: Option<f32> = if sums.1 > 0 { Some(sums.0 / sums.1 as f32) } else { None };
+                let h_avg: Option<f32> = if sums.3 > 0 { Some(sums.2 / sums.3 as f32) } else { None };
+
+                match (t_avg, h_avg) {
+                    (Some(t), Some(h)) => {
+                        avg_lines.push(format!("  {}:{} : Temp={:.2}C  Humi={:.2}%", dev_name, &k[4..], t, h));
+                    }
+                    (Some(t), None) => {
+                        avg_lines.push(format!("  {}:{} : Temp={:.2}C", dev_name, &k[4..], t));
+                    }
+                    (None, Some(h)) => {
+                        avg_lines.push(format!("  {}:{} : Humi={:.2}%", dev_name, &k[4..], h));
+                    }
+                    _ => {}
+                }
             }
 
             // Pour DS18B20, on regroupe par adresse de sonde
-            let mut ds_sums = std::collections::HashMap::new();
-            let mut ds_counts = std::collections::HashMap::new();
-            for entry in &self.history {
-                for (addr, &t) in &entry.readings.ds18b20_temperatures {
+            // `ds_sums` (type: HashMap<String, f32>) : Somme des températures par sonde DS18B20.
+            let mut ds_sums: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+            // `ds_counts` (type: HashMap<String, u32>) : Nombre de mesures par sonde DS18B20.
+            let mut ds_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            for ent in &self.history {
+                for (addr, &t) in &ent.readings.ds18b20_temperatures {
                     if t != -255.0 {
                         *ds_sums.entry(addr.clone()).or_insert(0.0) += t;
                         *ds_counts.entry(addr.clone()).or_insert(0) += 1;
@@ -405,11 +509,12 @@ impl CronWorker {
             }
             if !ds_sums.is_empty() {
                 avg_lines.push("  DS18B20 :".to_string());
-                let mut sorted_keys: Vec<_> = ds_sums.keys().collect();
+                // `sorted_keys` (type: Vec<&String>) : Liste des adresses ordonnées pour les moyennes DS18B20.
+                let mut sorted_keys: Vec<&String> = ds_sums.keys().collect();
                 sorted_keys.sort();
                 for addr in sorted_keys {
-                    let sum = ds_sums[addr];
-                    let c = ds_counts[addr];
+                    let sum: f32 = ds_sums[addr];
+                    let c: u32 = ds_counts[addr];
                     avg_lines.push(format!("    [0x{}]: {:.2}C (sur {} entrées)", addr.to_uppercase(), sum / c as f32, c));
                 }
             }

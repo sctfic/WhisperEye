@@ -5,9 +5,15 @@ pub mod i2c_sht3x_4x;
 use esp_idf_hal::i2c::{I2cDriver, I2cConfig, I2C0};
 use esp_idf_hal::gpio::{Gpio37, Gpio38};
 use std::sync::Mutex;
+use std::collections::HashMap;
 
 pub static CHANNEL_POLARITIES: Mutex<[bool; 8]> = Mutex::new([false; 8]);
 pub static I2C_DEVICES_COUNT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// [Junior Dev Note] : `I2C_READINGS` est une map globale statique (`LazyLock<Mutex<HashMap<String, f32>>>`).
+/// Elle stocke les lectures en temps réel (température, humidité, pression) de TOUS les capteurs I2C.
+/// Clé de la map : chaine sous la forme "i2c:<canal>:<adresse>_T" ou "_H" ou "_P".
+/// Utilité : Permet aux autres modules (comme `dynamic_devices.rs` pour l'IHM) de lire directement les valeurs de n'importe quel capteur sans dépendre de variables figées.
+pub static I2C_READINGS: std::sync::LazyLock<Mutex<HashMap<String, f32>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn scan_i2c_devices() -> Vec<(u8, u8)> {
     if let Ok(i2c) = I2c::init() {
@@ -179,8 +185,8 @@ impl I2c {
         let mut sht3_res = None;
         let mut sht4_res = None;
 
-        // Lire le premier BME280 s'il y en a un
-        if let Some(bme) = self.bme280s.first_mut() {
+        // Lire tous les BME280
+        for bme in self.bme280s.iter_mut() {
             let reversed = CHANNEL_POLARITIES.lock().map(|p| p[bme.channel as usize]).unwrap_or(false);
             
             let mut channel_selected = false;
@@ -193,7 +199,16 @@ impl I2c {
             
             if channel_selected {
                 if let Ok(mut driver) = get_driver(reversed) {
-                    bme_res = bme.read_value(&mut driver);
+                    if let Some(r) = bme.read_value(&mut driver) {
+                        let mut map = I2C_READINGS.lock().unwrap();
+                        map.insert(format!("i2c:{}:0x{:02x}_T", bme.channel, bme.address), r.temperature);
+                        map.insert(format!("i2c:{}:0x{:02x}_H", bme.channel, bme.address), r.humidity);
+                        map.insert(format!("i2c:{}:0x{:02x}_P", bme.channel, bme.address), r.pressure);
+                        
+                        if bme_res.is_none() {
+                            bme_res = Some(r);
+                        }
+                    }
                     drop(driver);
                 }
                 
@@ -204,8 +219,8 @@ impl I2c {
             }
         }
 
-        // Lire le SCD41 s'il y en a un
-        if let Some(scd) = self.scd41s.first_mut() {
+        // Lire tous les SCD41
+        for scd in self.scd41s.iter_mut() {
             let reversed = CHANNEL_POLARITIES.lock().map(|p| p[scd.channel as usize]).unwrap_or(false);
             
             let mut channel_selected = false;
@@ -218,7 +233,14 @@ impl I2c {
             
             if channel_selected {
                 if let Ok(mut driver) = get_driver(reversed) {
-                    scd_res = scd.read_value(&mut driver);
+                    if let Some(r) = scd.read_value(&mut driver) {
+                        let mut map = I2C_READINGS.lock().unwrap();
+                        map.insert(format!("i2c:{}:0x{:02x}", scd.channel, scd.address), r.co2 as f32);
+                        
+                        if scd_res.is_none() {
+                            scd_res = Some(r);
+                        }
+                    }
                     drop(driver);
                 }
                 
@@ -229,8 +251,8 @@ impl I2c {
             }
         }
 
-        // Lire le SHT3x s'il y en a un
-        if let Some(sht3) = self.sht3xs.first_mut() {
+        // Lire tous les SHT3x
+        for sht3 in self.sht3xs.iter_mut() {
             let reversed = CHANNEL_POLARITIES.lock().map(|p| p[sht3.channel as usize]).unwrap_or(false);
             
             let mut channel_selected = false;
@@ -243,7 +265,15 @@ impl I2c {
             
             if channel_selected {
                 if let Ok(mut driver) = get_driver(reversed) {
-                    sht3_res = sht3.read_value(&mut driver);
+                    if let Some(r) = sht3.read_value(&mut driver) {
+                        let mut map = I2C_READINGS.lock().unwrap();
+                        map.insert(format!("i2c:{}:0x{:02x}_T", sht3.channel, sht3.address), r.temperature);
+                        map.insert(format!("i2c:{}:0x{:02x}_H", sht3.channel, sht3.address), r.humidity);
+                        
+                        if sht3_res.is_none() {
+                            sht3_res = Some(r.clone());
+                        }
+                    }
                     drop(driver);
                 }
                 
@@ -254,8 +284,8 @@ impl I2c {
             }
         }
 
-        // Lire le SHT4x s'il y en a un
-        if let Some(sht4) = self.sht4xs.first_mut() {
+        // Lire tous les SHT4x
+        for sht4 in self.sht4xs.iter_mut() {
             let reversed = CHANNEL_POLARITIES.lock().map(|p| p[sht4.channel as usize]).unwrap_or(false);
             
             let mut channel_selected = false;
@@ -268,7 +298,15 @@ impl I2c {
             
             if channel_selected {
                 if let Ok(mut driver) = get_driver(reversed) {
-                    sht4_res = sht4.read_value(&mut driver);
+                    if let Some(r) = sht4.read_value(&mut driver) {
+                        let mut map = I2C_READINGS.lock().unwrap();
+                        map.insert(format!("i2c:{}:0x{:02x}_T", sht4.channel, sht4.address), r.temperature);
+                        map.insert(format!("i2c:{}:0x{:02x}_H", sht4.channel, sht4.address), r.humidity);
+                        
+                        if sht4_res.is_none() {
+                            sht4_res = Some(r.clone());
+                        }
+                    }
                     drop(driver);
                 }
                 

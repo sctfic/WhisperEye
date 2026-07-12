@@ -28,6 +28,54 @@ pub static API_DOWNLOAD_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomi
 pub static API_UPLOAD_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub static TLS_OR_SCAN_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// `NTP_INITIALIZED` (type: AtomicBool) : Indique si le client SNTP a déjà été initialisé après connexion WiFi.
+/// Évite de recréer l'instance SNTP à chaque cycle de reconnexion.
+static NTP_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `init_sntp_after_wifi` (fonction) : Initialise le client SNTP une fois le WiFi connecté.
+/// Lit le serveur NTP personnalisé depuis la NVS, sinon utilise le serveur par défaut (pool.ntp.org).
+/// Ne fait rien si déjà initialisé (flag NTP_INITIALIZED).
+pub fn init_sntp_after_wifi(nvs: &Arc<Mutex<NvsStorage>>) {
+    use std::sync::atomic::Ordering;
+    if NTP_INITIALIZED.load(Ordering::Relaxed) {
+        return;
+    }
+    NTP_INITIALIZED.store(true, Ordering::Relaxed);
+
+    // `ntp_server` (type: String) : Serveur NTP personnalisé stocké en NVS, ou chaîne vide.
+    let ntp_server: String = nvs.lock().unwrap()
+        .get_str("ntpServer").ok().flatten().unwrap_or_default();
+    // `use_custom` (type: bool) : True si un serveur NTP valide est configuré.
+    let use_custom: bool = crate::web_handlers::is_valid_fqdn(&ntp_server);
+
+    if use_custom {
+        info!("\x1b[33m[WIFI] Initialisation SNTP avec serveur personnalisé : '{}'\x1b[0m", ntp_server);
+        let mut conf = esp_idf_svc::sntp::SntpConf::default();
+        conf.servers[0] = &ntp_server;
+        match esp_idf_svc::sntp::EspSntp::new(&conf) {
+            Ok(sntp) => {
+                // [Junior Dev Note] : On stocke l'instance dans un Box::leak pour qu'elle vive
+                // pendant toute la durée du programme (static lifetime). Le ESP-IDF SNTP client
+                // fonctionne en arrière-plan et synchronise automatiquement l'horloge système.
+                Box::leak(Box::new(sntp));
+                info!("\x1b[33m[WIFI] ✓ SNTP initialisé avec '{}'\x1b[0m", ntp_server);
+            }
+            Err(e) => {
+                warn!("\x1b[33m[WIFI] ✗ Échec init SNTP avec '{}': {:?}. Utilisation du serveur par défaut.\x1b[0m", ntp_server, e);
+                if let Ok(sntp) = esp_idf_svc::sntp::EspSntp::new_default() {
+                    Box::leak(Box::new(sntp));
+                }
+            }
+        }
+    } else {
+        info!("\x1b[33m[WIFI] Initialisation SNTP avec serveur par défaut (pool.ntp.org)\x1b[0m");
+        if let Ok(sntp) = esp_idf_svc::sntp::EspSntp::new_default() {
+            Box::leak(Box::new(sntp));
+            info!("\x1b[33m[WIFI] ✓ SNTP initialisé (pool.ntp.org)\x1b[0m");
+        }
+    }
+}
+
 struct TlsOrScanGuard;
 impl Drop for TlsOrScanGuard {
     fn drop(&mut self) {
@@ -235,7 +283,9 @@ impl NetManager {
             } else {
                 None
             },
-            pmf_cfg: PmfConfiguration::NotCapable,
+            // [Junior Dev Note] : PMF (Protected Management Frames) doit être en mode Capable
+            // pour assurer la compatibilité avec les routeurs WPA2/WPA3 modernes.
+            pmf_cfg: PmfConfiguration::Capable { required: false },
             ..Default::default()
         };
 
@@ -422,16 +472,29 @@ impl NetManager {
             .stack_size(16384)
             .spawn(move || {
                 info!("Network Controller Thread started (direct Wi-Fi + provisioning mode).");
+                
+                // [Junior Dev Note] : On attend 5 secondes au tout premier démarrage de la carte
+                // pour laisser le temps aux autres initialisations CPU (NVS, IHM LCD, OneWire) de se stabiliser.
+                thread::sleep(Duration::from_secs(5));
+                
+                // `last_wifi_cycle` (type: Instant) : Date du dernier cycle de tentative Wi-Fi.
                 let mut last_wifi_cycle = Instant::now() - WIFI_RETRY_DELAY;
 
                 loop {
                     thread::sleep(Duration::from_millis(200));
+                    // `now` (type: Instant) : Date courante à cette itération de boucle.
                     let now = Instant::now();
 
                     let (connected, current_ssid_val, current_ip_val) = {
                         if let Ok(net) = this.lock() {
                             let conn = net.wifi.is_connected().unwrap_or(false);
+                            
+                            // Synchronisation de l'état réseau avec la variable globale atomique
+                            update_global_net_state(net.state);
+
+                            // `ssid_str` (type: String) : Nom du réseau WiFi actuellement connecté.
                             let mut ssid_str = String::new();
+                            // `ip_str` (type: String) : Adresse IP avec masque de sous-réseau.
                             let mut ip_str = String::new();
                             if conn {
                                 if let Some(ref s) = net.current_sta_ssid {
@@ -602,34 +665,97 @@ impl NetManager {
     }
 }
 
+/// `try_default_wifi` (fonction) : Tente de se connecter au réseau WiFi par défaut avec 3 tentatives.
+/// Vérifie la visibilité du SSID et la qualité du signal (RSSI > -85 dBm) avant chaque essai.
+/// Logs en orange (\x1b[33m) pour le suivi visuel en console.
 fn try_default_wifi(
     this: &Arc<Mutex<NetManager>>,
     nvs: &Arc<Mutex<NvsStorage>>,
 ) -> Result<bool> {
+    // `known` (type: HashMap<String, KnownNetwork>) : Liste des réseaux WiFi connus stockés en NVS.
     let known = {
         let storage = nvs.lock().unwrap();
         storage.get_known_networks().unwrap_or_default()
     };
 
+    // `default_network` (type: Option<(String, String)>) : Tuple (SSID, PSK) du réseau par défaut.
     let default_network = known
         .iter()
         .find(|(_, e)| e.default.unwrap_or(false))
         .map(|(s, e)| (s.clone(), e.psk.clone()));
 
     if let Some((default_ssid, default_psk)) = default_network.as_ref() {
-        let mut net = this.lock().unwrap();
-        info!("Trying default Wi-Fi once: '{}'", default_ssid);
-        if net.try_sta_connect(default_ssid, default_psk, false, 0)? {
-            net.state = NetState::WifiOk;
-            net.retry_count = 0;
-            let _ = net.stop_provisioning_ap_if_not_pairing();
-            drop(net);
-            led::set_sta_status(LedStaStatus::WifiOk);
-            led::set_ap_status(LedApStatus::Off);
-            if let Ok(mut storage) = nvs.lock() {
-                let _ = storage.update_wifi_last_seen(&default_ssid);
+        // `max_retries` (type: u8) : Nombre maximum de tentatives de connexion.
+        let max_retries: u8 = 3;
+
+        // Effectuer un scan rapide pour vérifier la visibilité et le RSSI du SSID par défaut.
+        // `scan_rssi` (type: Option<i32>) : RSSI du réseau par défaut si visible, None sinon.
+        let scan_rssi: Option<i32> = {
+            let mut net = this.lock().unwrap();
+            match net.scan_available_networks() {
+                Ok(networks) => {
+                    networks.iter()
+                        .find(|(ssid, _)| ssid == default_ssid)
+                        .map(|(_, rssi)| *rssi)
+                }
+                Err(e) => {
+                    info!("\x1b[33m[WIFI] Scan rapide échoué : {:?}. On tente la connexion quand même.\x1b[0m", e);
+                    Some(-70) // On tente quand même si le scan échoue
+                }
             }
-            return Ok(true);
+        };
+
+        match scan_rssi {
+            None => {
+                info!("\x1b[33m[WIFI] Réseau '{}' non visible dans le scan. Passage au réseau suivant.\x1b[0m", default_ssid);
+                return Ok(false);
+            }
+            Some(rssi) if rssi < -85 => {
+                info!("\x1b[33m[WIFI] Réseau '{}' visible mais signal trop faible (RSSI: {} dBm < -85 dBm). Passage au réseau suivant.\x1b[0m", default_ssid, rssi);
+                return Ok(false);
+            }
+            Some(rssi) => {
+                info!("\x1b[33m[WIFI] Réseau '{}' visible (RSSI: {} dBm). Lancement des tentatives de connexion.\x1b[0m", default_ssid, rssi);
+            }
+        }
+
+        for attempt in 1..=max_retries {
+            info!("\x1b[33m[WIFI] Tentative {}/{} : connexion à '{}'...\x1b[0m", attempt, max_retries, default_ssid);
+
+            let mut net = this.lock().unwrap();
+            match net.try_sta_connect(default_ssid, default_psk, false, 0) {
+                Ok(true) => {
+                    net.state = NetState::WifiOk;
+                    net.retry_count = 0;
+                    let _ = net.stop_provisioning_ap_if_not_pairing();
+                    drop(net);
+                    led::set_sta_status(LedStaStatus::WifiOk);
+                    led::set_ap_status(LedApStatus::Off);
+                    if let Ok(mut storage) = nvs.lock() {
+                        let _ = storage.update_wifi_last_seen(default_ssid);
+                    }
+                    // Initialiser le SNTP immédiatement après la connexion réussie
+                    init_sntp_after_wifi(nvs);
+                    info!("\x1b[33m[WIFI] ✓ Connexion réussie à '{}' (tentative {}/{})\x1b[0m", default_ssid, attempt, max_retries);
+                    return Ok(true);
+                }
+                Ok(false) => {
+                    drop(net);
+                    if attempt < max_retries {
+                        info!("\x1b[33m[WIFI] Tentative {}/{} échouée. Nouvel essai dans 2s...\x1b[0m", attempt, max_retries);
+                        thread::sleep(Duration::from_secs(2));
+                    } else {
+                        warn!("\x1b[33m[WIFI] ✗ Échec après {} tentatives pour '{}'. Possible problème de PSK ou AP instable.\x1b[0m", max_retries, default_ssid);
+                    }
+                }
+                Err(e) => {
+                    drop(net);
+                    warn!("\x1b[33m[WIFI] Erreur lors de la tentative {}/{} pour '{}': {:?}\x1b[0m", attempt, max_retries, default_ssid, e);
+                    if attempt < max_retries {
+                        thread::sleep(Duration::from_secs(2));
+                    }
+                }
+            }
         }
     }
     Ok(false)
@@ -674,6 +800,8 @@ fn try_known_wifi_from_visible(
                 let _ = storage.set_default_network_by_ssid(ssid);
                 let _ = storage.update_wifi_last_seen(ssid);
             }
+            // Initialiser le SNTP immédiatement après la connexion réussie
+            init_sntp_after_wifi(nvs);
             return Ok(true);
         }
     }
@@ -801,8 +929,27 @@ pub static AP_CLIENT_CONNECTED: std::sync::atomic::AtomicBool =
 pub static WIFI_CONNECTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// `CURRENT_NET_STATE` (type: AtomicU8) : État réseau global exposé sous forme atomique pour éviter
+/// aux threads d'IHM de devoir acquérir le verrou mutex lourd du NetManager.
+/// Valeurs : 0 = WifiPreferred, 1 = WifiOk, 2 = ProvisioningScan, 3 = ProvisioningOk, 4 = ProvisioningAp, 5 = ApPairing.
+pub static CURRENT_NET_STATE: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(0);
+
 pub static CURRENT_SSID: Mutex<String> = Mutex::new(String::new());
 pub static CURRENT_IP: Mutex<String> = Mutex::new(String::new());
+
+/// `update_global_net_state` (fonction) : Met à jour la variable globale atomique CURRENT_NET_STATE.
+pub fn update_global_net_state(state: NetState) {
+    let state_u8 = match state {
+        NetState::WifiPreferred => 0,
+        NetState::WifiOk => 1,
+        NetState::ProvisioningScan => 2,
+        NetState::ProvisioningOk => 3,
+        NetState::ProvisioningAp => 4,
+        NetState::ApPairing => 5,
+    };
+    CURRENT_NET_STATE.store(state_u8, std::sync::atomic::Ordering::Relaxed);
+}
 
 pub fn get_ap_num_clients() -> usize {
     unsafe {
