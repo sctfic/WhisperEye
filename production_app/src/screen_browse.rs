@@ -780,6 +780,7 @@ impl BrowseController {
                                 inverseur: None,
                                 ina: None,
                                 inb: None,
+                                rules: None,
                             });
                         }
                         registry.save_registry(&map);
@@ -1677,8 +1678,12 @@ impl BrowseController {
                         if sub_changed {
                             let _ = Text::new("SECURITE TOTP & NTP", Point::new(right_x, 45), font_small_green).draw(display);
                             let _ = Text::new("NTP Serv: ", Point::new(right_x, 62), font_small_white).draw(display);
-                            let _ = Text::new("Cle TOTP en clair:", Point::new(right_x, 110), font_small_gray).draw(display);
-                            let _ = Text::new(crate::TOTP_SECRET, Point::new(right_x, 125), font_small_green).draw(display);
+                            let _ = Text::new("Cle TOTP: ", Point::new(right_x, 110), font_small_gray).draw(display);
+                            
+                            // [Junior Dev Note] : Récupérer la clé secrète de cryptage TOTP stockée dans la mémoire non-volatile (NVS).
+                            // `totp_sec` (type: String) : La clé secrète TOTP brute, ou "--" si aucune clé n'est encore configurée.
+                            let totp_sec: String = nvs.lock().unwrap().get_str("totpSecret").ok().flatten().unwrap_or_else(|| "--".to_string());
+                            let _ = Text::new(&totp_sec, Point::new(right_x, 125), font_small_green).draw(display);
                         }
 
                         let ntp_serv = nvs.lock().unwrap().get_str("ntpServer").ok().flatten().unwrap_or_else(|| "pool.ntp.org".to_string());

@@ -76,9 +76,9 @@ impl NvsStorage {
         // if self.get_str("meshPmk")?.unwrap_or_default().is_empty() {
         //     self.set_str("meshPmk", "Mesh-IoT@Espressif!")?;
         // }
-        if self.get_str("meshSsid")?.unwrap_or_default().is_empty() {
-            self.set_str("meshSsid", "Esp32MeshNetwork")?;
-        }
+        // if self.get_str("meshSsid")?.unwrap_or_default().is_empty() {
+        //     self.set_str("meshSsid", "Esp32MeshNetwork")?;
+        // }
         Ok(())
     }
 

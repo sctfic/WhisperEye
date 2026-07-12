@@ -25,6 +25,26 @@ pub struct SubPwmDevice {
     pub pwm_val: u8,
 }
 
+/// `RuleCondition` (structure) : Représente une règle planifiée événementielle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleCondition {
+    /// `name` (type: Option<String>) : Nom descriptif optionnel de la règle (ex: "moteurs D/G").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `utc` (type: Option<Vec<String>>) : Plage de dates UTC optionnelle sous forme d'un tableau contenant [start, end] (dates ISO 8601).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub utc: Option<Vec<String>>,
+    /// `if_expr` (type: String) : Expression de condition logique sur les capteurs (ex: "i2c:7:0x44_H < 50").
+    #[serde(rename = "if")]
+    pub if_expr: String,
+    /// `then_expr` (type: String) : Expression(s) d'affectation ou de calcul si la condition est vraie.
+    #[serde(rename = "then")]
+    pub then_expr: String,
+    /// `else_expr` (type: Option<String>) : Expression(s) d'affectation ou de calcul alternative(s) si la condition est fausse.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "else")]
+    pub else_expr: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceEntry {
     pub name: String,
@@ -54,6 +74,9 @@ pub struct DeviceEntry {
     pub ina: Option<SubPwmDevice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inb: Option<SubPwmDevice>,
+    /// `rules` (type: Option<Vec<RuleCondition>>) : Liste des règles de planification événementielle associées.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "Rule")]
+    pub rules: Option<Vec<RuleCondition>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +107,9 @@ pub struct PersistEntry {
     pub ina: Option<SubPwmDevice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inb: Option<SubPwmDevice>,
+    /// `rules` (type: Option<Vec<RuleCondition>>) : Liste des règles de planification événementielle.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "Rule")]
+    pub rules: Option<Vec<RuleCondition>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,6 +148,9 @@ pub struct DeviceDisplay {
     pub ina: Option<SubPwmDevice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inb: Option<SubPwmDevice>,
+    /// `rules` (type: Option<Vec<RuleCondition>>) : Liste des règles de planification événementielle.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "Rule")]
+    pub rules: Option<Vec<RuleCondition>>,
 }
 
 /// Métadonnées techniques d'un capteur (issues des documentations officielles)
@@ -239,6 +268,7 @@ pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, for
             inverseur: None,
             ina: None,
             inb: None,
+            rules: None,
         });
     }
     let new_str = serde_json::to_string(&persist_map)?;
@@ -281,6 +311,7 @@ impl DeviceRegistry {
                 inverseur: None,
                 ina: None,
                 inb: None,
+                rules: None,
             };
             if id == "H0" {
                 entry.inverseur = Some(0);
@@ -305,6 +336,7 @@ impl DeviceRegistry {
                             entry.step = pe.step;
                             entry.pwm_val = pe.pwm_val;
                             entry.schedules = pe.schedules;
+                            entry.rules = pe.rules;
                             if id == "H0" {
                                 if let Some(inv) = pe.inverseur { entry.inverseur = Some(inv); }
                                 if let Some(i) = pe.ina { entry.ina = Some(i); }
@@ -328,6 +360,7 @@ impl DeviceRegistry {
                             inverseur: pe.inverseur,
                             ina: pe.ina,
                             inb: pe.inb,
+                            rules: pe.rules,
                         });
                     }
                 }
@@ -356,6 +389,7 @@ impl DeviceRegistry {
                 inverseur: v.inverseur,
                 ina: v.ina.clone(),
                 inb: v.inb.clone(),
+                rules: v.rules.clone(),
             });
         }
         let mut storage = self.nvs.lock().unwrap();
@@ -385,6 +419,7 @@ impl DeviceRegistry {
             inverseur: None,
             ina: None,
             inb: None,
+            rules: None,
         };
 
         // 1. Static Devices (Always present, avec conservation des noms NVS personnalisés)
@@ -829,6 +864,7 @@ impl DeviceRegistry {
                 inverseur: entry.inverseur,
                 ina: entry.ina.clone(),
                 inb: entry.inb.clone(),
+                rules: entry.rules.clone(),
             });
         }
 
@@ -885,6 +921,7 @@ impl DeviceRegistry {
                 inverseur: None,
                 ina: None,
                 inb: None,
+                rules: None,
             });
         }
 
@@ -909,6 +946,7 @@ impl DeviceRegistry {
         step: Option<u8>,
         pwm_val: Option<u8>,
         schedules: Option<Vec<crate::actuators::ScheduledAction>>,
+        rules: Option<Vec<RuleCondition>>,
     ) -> Result<(), anyhow::Error> {
         let mut map = self.load_registry();
         if let Some(entry) = map.get_mut(id) {
@@ -922,6 +960,7 @@ impl DeviceRegistry {
             if step.is_some() { entry.step = step; }
             if pwm_val.is_some() { entry.pwm_val = pwm_val; }
             if schedules.is_some() { entry.schedules = schedules; }
+            if rules.is_some() { entry.rules = rules; }
         }
         self.save_registry(&map);
         self.devices = map;
@@ -1193,4 +1232,156 @@ pub fn apply_sensor_corrections(
         }
     }
 }
+
+/// `get_corrected_sensor_values` (fonction) : Renvoie un dictionnaire de toutes les mesures corrigées des capteurs.
+/// - `nvs` (type: &Arc<Mutex<NvsStorage>>) : Accès à la NVS pour lire les formules de correction.
+/// - `readings` (type: &crate::sensors::SensorReadings) : Données de mesures physiques actuelles.
+/// Retourne une `HashMap<String, f64>` associant chaque identifiant de capteur à sa valeur corrigée.
+pub fn get_corrected_sensor_values(nvs: &Arc<Mutex<NvsStorage>>, readings: &crate::sensors::SensorReadings) -> HashMap<String, f64> {
+    let mut map: HashMap<String, f64> = HashMap::new();
+    
+    // Valeurs brutes initiales
+    map.insert("vsense".to_string(), readings.vsense.unwrap_or(0.0) as f64);
+    map.insert("isense".to_string(), readings.isense.unwrap_or(0.0) as f64);
+    map.insert("touch".to_string(), if readings.touch.unwrap_or(false) { 1.0 } else { 0.0 });
+    
+    // SHT45 (déjà corrigé si apply_sensor_corrections a été appelée)
+    map.insert("i2c:0:0x44_T".to_string(), readings.temperature_sht45 as f64);
+    map.insert("i2c:0:0x44_H".to_string(), readings.humidity_sht45 as f64);
+    
+    // CO2 SCD41 (déjà corrigé)
+    map.insert("i2c:0:0x62".to_string(), readings.co2_scd41 as f64);
+    
+    // DS18B20 1-wire (déjà corrigés)
+    for (addr, temp) in &readings.ds18b20_temperatures {
+        map.insert(format!("onewr:{}", addr), *temp as f64);
+    }
+    
+    // Capteurs I2C génériques
+    {
+        if let Ok(i2c_readings) = crate::i2c::I2C_READINGS.lock() {
+            for (k, &v) in i2c_readings.iter() {
+                map.insert(k.clone(), v as f64);
+            }
+        }
+    }
+    
+    // Appliquer les formules de correction de la NVS pour chaque capteur
+    let registry: HashMap<String, PersistEntry> = {
+        let storage = nvs.lock().unwrap();
+        if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
+            serde_json::from_str(&json_str).unwrap_or_default()
+        } else {
+            HashMap::new()
+        }
+    };
+    
+    // Remplacer par la valeur corrigée si une formule existe
+    for (id, pe) in registry {
+        if let Some(ref formula) = pe.correction_formula {
+            if formula != "x" && formula != "x.raw" && !formula.is_empty() {
+                if let Some(&raw_val) = map.get(&id) {
+                    let tokens = tokenize(formula, &map, raw_val);
+                    if let Ok(evaluated) = evaluate_expression(&tokens) {
+                        map.insert(id.clone(), evaluated);
+                    }
+                }
+            }
+        }
+    }
+    
+    map
+}
+
+/// `evaluate_logic_condition` (fonction) : Évalue une expression logique de condition.
+/// - `condition` (type: &str) : Expression logique à évaluer (ex: "i2c:7:0x44_H < 50 or i2c:0:0x44_T / 2 > 12").
+/// - `sensor_values` (type: &HashMap<String, f64>) : Map contenant les valeurs corrigées des capteurs.
+/// Retourne `true` si la condition est remplie, `false` sinon.
+pub fn evaluate_logic_condition(condition: &str, sensor_values: &HashMap<String, f64>) -> bool {
+    let cond_lower: String = condition.to_lowercase();
+    // Découper d'abord par "or" (si un seul bloc or est vrai, la condition est vraie)
+    let or_parts: Vec<&str> = cond_lower.split("or").collect();
+    
+    for or_part in or_parts {
+        // Chaque partie or doit être entièrement vraie (toutes les sous-parties "and" doivent être vraies)
+        let and_parts: Vec<&str> = or_part.split("and").collect();
+        let mut and_ok = true;
+        
+        for and_part in and_parts {
+            let and_part_trimmed = and_part.trim();
+            if and_part_trimmed.is_empty() {
+                continue;
+            }
+            
+            // Trouver l'opérateur de comparaison et évaluer
+            if let Some((op, left_str, right_str)) = parse_comparison(and_part_trimmed) {
+                let left_val: f64 = evaluate_arithmetic_expr(left_str, sensor_values).unwrap_or(0.0);
+                let right_val: f64 = evaluate_arithmetic_expr(right_str, sensor_values).unwrap_or(0.0);
+                
+                let comp_result = match op {
+                    "<" => left_val < right_val,
+                    ">" => left_val > right_val,
+                    "==" => (left_val - right_val).abs() < 0.0001,
+                    "<=" => left_val <= right_val,
+                    ">=" => left_val >= right_val,
+                    _ => false,
+                };
+                if !comp_result {
+                    and_ok = false;
+                    break;
+                }
+            } else {
+                // Pas de comparateur : si l'expression arithmétique simple est non-nulle, on considère que c'est vrai
+                let val: f64 = evaluate_arithmetic_expr(and_part_trimmed, sensor_values).unwrap_or(0.0);
+                if val == 0.0 {
+                    and_ok = false;
+                    break;
+                }
+            }
+        }
+        
+        if and_ok {
+            return true; // Un des blocs "or" est vrai
+        }
+    }
+    
+    false
+}
+
+/// `parse_comparison` (fonction) : Analyse une comparaison et sépare le membre gauche, l'opérateur et le membre droit.
+/// - `expr` (type: &str) : Expression logique simple à parser.
+/// Retourne une Option contenant (Opérateur, MembreGauche, MembreDroit).
+fn parse_comparison(expr: &str) -> Option<(&'static str, &str, &str)> {
+    if expr.contains("<=") {
+        let parts: Vec<&str> = expr.split("<=").collect();
+        if parts.len() == 2 { return Some(("<=", parts[0].trim(), parts[1].trim())); }
+    }
+    if expr.contains(">=") {
+        let parts: Vec<&str> = expr.split(">=").collect();
+        if parts.len() == 2 { return Some((">=", parts[0].trim(), parts[1].trim())); }
+    }
+    if expr.contains("==") {
+        let parts: Vec<&str> = expr.split("==").collect();
+        if parts.len() == 2 { return Some(("==", parts[0].trim(), parts[1].trim())); }
+    }
+    if expr.contains('<') {
+        let parts: Vec<&str> = expr.split('<').collect();
+        if parts.len() == 2 { return Some(("<", parts[0].trim(), parts[1].trim())); }
+    }
+    if expr.contains('>') {
+        let parts: Vec<&str> = expr.split('>') .collect();
+        if parts.len() == 2 { return Some((">", parts[0].trim(), parts[1].trim())); }
+    }
+    None
+}
+
+/// `evaluate_arithmetic_expr` (fonction) : Évalue une expression arithmétique simple après substitution des valeurs de capteurs.
+/// - `expr` (type: &str) : Expression mathématique.
+/// - `sensor_values` (type: &HashMap<String, f64>) : Map de valeurs de capteurs.
+/// Retourne le résultat du calcul arithmétique ou une erreur.
+pub fn evaluate_arithmetic_expr(expr: &str, sensor_values: &HashMap<String, f64>) -> Result<f64, anyhow::Error> {
+    let tokens: Vec<String> = tokenize(expr, sensor_values, 0.0);
+    evaluate_expression(&tokens)
+}
+
 

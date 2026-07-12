@@ -903,8 +903,12 @@ pub fn handle_rename_peripherals(mut req: Request<&mut EspHttpConnection<'_>>, r
         step: Option<u8>,
         pwm_val: Option<u8>,
         schedules: Option<Vec<crate::actuators::ScheduledAction>>,
+        /// `rules` (type: Option<Vec<crate::dynamic_devices::RuleCondition>>) : Liste des règles de planification événementielle.
+        #[serde(rename = "Rule")]
+        rules: Option<Vec<crate::dynamic_devices::RuleCondition>>,
     }
-    let mut buf = vec![0u8; 1024];
+    // `buf` (type: Vec<u8>) : Buffer augmenté à 4096 octets pour accueillir des structures de règles JSON potentiellement longues.
+    let mut buf = vec![0u8; 4096];
     let bytes_read = req.read(&mut buf)?;
     log::info!("[POST /api/peripherals] Bytes read: {}", bytes_read);
 
@@ -940,6 +944,7 @@ pub fn handle_rename_peripherals(mut req: Request<&mut EspHttpConnection<'_>>, r
         payload.step,
         payload.pwm_val,
         payload.schedules,
+        payload.rules,
     ) {
         log::warn!("[POST /api/peripherals] update_device_properties failed for id '{}': {:?}", payload.id, e);
         let mut response = req.into_status_response(400)?;

@@ -114,6 +114,7 @@ impl CronWorker {
                     if elapsed_metrics >= Duration::from_secs(30) {
                         self.last_metrics_run = Some(now_instant);
                         self.collect_sensor_metrics();
+                        self.evaluate_event_schedulers();
                     }
 
                     // Task 2: Trigger simulated HTTP API every 300 seconds (5 minutes)
@@ -758,6 +759,272 @@ impl CronWorker {
         }
 
         Ok(())
+    }
+
+    /// `evaluate_event_schedulers` (fonction) : Analyse et évalue les règles événementielles
+    /// stockées en NVS (clé Rule) pour chaque actionneur et met à jour leurs états physiques.
+    fn evaluate_event_schedulers(&mut self) {
+        debug!("[CRON] Évaluation des planificateurs événementiels...");
+        
+        // 1. Récupérer les dernières mesures de capteurs
+        // `last_entry` (type: &MetricEntry) : Dernière entrée de l'historique des capteurs.
+        let last_entry = match self.history.last() {
+            Some(entry) => entry,
+            None => return, // Pas de mesures encore disponibles, on attend
+        };
+
+        // Obtenir toutes les valeurs de capteurs corrigées
+        // `sensor_values` (type: HashMap<String, f64>) : Map de toutes les mesures physiques corrigées.
+        let sensor_values: std::collections::HashMap<String, f64> = 
+            crate::dynamic_devices::get_corrected_sensor_values(&self.nvs, &last_entry.readings);
+
+        // 2. Charger le registre des périphériques (devicesKnow) de la NVS
+        // `registry` (type: HashMap<String, PersistEntry>) : Registre des périphériques stockés dans la NVS.
+        let registry: std::collections::HashMap<String, crate::dynamic_devices::PersistEntry> = {
+            let storage = self.nvs.lock().unwrap();
+            if let Ok(Some(json_str)) = storage.get_str("devicesKnow") {
+                serde_json::from_str(&json_str).unwrap_or_default()
+            } else {
+                std::collections::HashMap::new()
+            }
+        };
+
+        // Heure UTC actuelle
+        // `now_str` (type: String) : Date/heure UTC actuelle formatée au format ISO 8601 ("YYYY-MM-DDTHH:MM:SSZ").
+        let now_str = crate::web_handlers::get_formatted_time();
+
+        let mut acts = self.actuators_state.lock().unwrap();
+        let mut devs = self.static_devs.lock().unwrap();
+        let mut changed = false;
+
+        // Pour chaque actionneur configuré, nous vérifions s'il a des règles
+        for (id, pe) in registry.iter() {
+            if let Some(ref rules) = pe.rules {
+                if rules.is_empty() {
+                    continue;
+                }
+
+                // Parcourir les règles. La première règle qui est vraie (short-circuit) ou qui a un ELSE défini s'applique.
+                for rule in rules {
+                    let mut condition_met = false;
+                    let rule_name = rule.name.as_deref().unwrap_or(id);
+                    
+                    // Vérifier la plage UTC si elle est définie
+                    let mut utc_ok = true;
+                    if let Some(ref range) = rule.utc {
+                        if range.len() == 2 {
+                            let start = &range[0];
+                            let end = &range[1];
+                            // Comparaison lexicographique des chaînes de date ISO 8601
+                            if now_str < *start || now_str > *end {
+                                utc_ok = false;
+                                info!("[EVENT SCHEDULER] Regle '{}' : Plage UTC [{}, {}] REJETEE (Heure actuelle : {})", rule_name, start, end, now_str);
+                            } else {
+                                info!("[EVENT SCHEDULER] Regle '{}' : Plage UTC [{}, {}] ACCEPTEE", rule_name, start, end);
+                            }
+                        }
+                    }
+
+                    if utc_ok {
+                        // Évaluer la condition logique ("if")
+                        let is_if_true = crate::dynamic_devices::evaluate_logic_condition(&rule.if_expr, &sensor_values);
+                        if is_if_true {
+                            info!("[EVENT SCHEDULER] Regle '{}' : Condition IF '{}' ACCEPTEE", rule_name, rule.if_expr);
+                            condition_met = true;
+                        } else {
+                            info!("[EVENT SCHEDULER] Regle '{}' : Condition IF '{}' REJETEE", rule_name, rule.if_expr);
+                        }
+                    }
+
+                    if condition_met {
+                        info!("\x1b[35m[EVENT SCHEDULER] Regle '{}' vraie -> execution du THEN: {}\x1b[0m", rule_name, rule.then_expr);
+                        apply_action_assignments(&rule.then_expr, id, &sensor_values, &mut acts, &mut devs, &self.nvs, &mut changed);
+                        break; // Première règle active trouvée, fin de la boucle pour cet actionneur
+                    } else {
+                        // Si la condition est fausse, le ELSE s'applique s'il est défini
+                        if let Some(ref else_expr) = rule.else_expr {
+                            info!("\x1b[35m[EVENT SCHEDULER] Regle '{}' fausse -> execution du ELSE: {}\x1b[0m", rule_name, else_expr);
+                            apply_action_assignments(else_expr, id, &sensor_values, &mut acts, &mut devs, &self.nvs, &mut changed);
+                            break; // Le ELSE produit son effet, arrêt de l'évaluation
+                        }
+                    }
+                }
+            }
+        }
+
+        if changed {
+            // Sauvegarder les nouveaux états dans devicesKnow
+            let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(&self.nvs));
+            let mut map = registry.load_registry();
+            if let Some(entry) = map.get_mut("rla") {
+                entry.pwm_val = Some(acts.rla_speed.unwrap_or(0));
+            }
+            if let Some(entry) = map.get_mut("rlb") {
+                entry.pwm_val = Some(acts.rlb_speed.unwrap_or(0));
+            }
+            if let Some(entry) = map.get_mut("swpwr") {
+                entry.pwm_val = Some(if acts.swpwr { 100 } else { 0 });
+            }
+            if let Some(entry) = map.get_mut("H0") {
+                entry.inverseur = Some(acts.H0.inverseur);
+                if let Some(ref mut ina) = entry.ina { ina.pwm_val = acts.H0.speed_a; }
+                if let Some(ref mut inb) = entry.inb { inb.pwm_val = acts.H0.speed_b; }
+            }
+            registry.save_registry(&map);
+            info!("\x1b[35m[EVENT SCHEDULER] Actuators updated physically and persisted.\x1b[0m");
+        }
+    }
+}
+
+/// `apply_action_assignments` (fonction) : Parse et applique les affectations de variables d'une chaîne d'action (ex: "ina=30, inb=45").
+/// - `action_str` (type: &str) : La chaîne de règles ou d'expressions (ex: "ina=30, inb=i2c:7:0x44_H" ou "100").
+/// - `default_device_id` (type: &str) : ID de périphérique par défaut si aucune variable n'est ciblée.
+/// - `sensor_values` (type: &HashMap<String, f64>) : Map de toutes les mesures corrigées des capteurs.
+/// - `acts` (type: &mut ActuatorsState) : Structure des états de la RAM.
+/// - `devs` (type: &mut Actuators) : Pilotes physiques des relais/pont H.
+/// - `nvs` (type: &Arc<Mutex<NvsStorage>>) : Stockage NVS.
+/// - `changed` (type: &mut bool) : Indicateur de modification d'état.
+fn apply_action_assignments(
+    action_str: &str,
+    default_device_id: &str,
+    sensor_values: &std::collections::HashMap<String, f64>,
+    acts: &mut crate::actuators::ActuatorsState,
+    devs: &mut crate::actuators::Actuators,
+    nvs: &Arc<Mutex<NvsStorage>>,
+    changed: &mut bool,
+) {
+    if action_str.contains('=') {
+        let parts: Vec<&str> = action_str.split(',').collect();
+        for part in parts {
+            let part_trimmed = part.trim();
+            if part_trimmed.is_empty() {
+                continue;
+            }
+            let sub_parts: Vec<&str> = part_trimmed.split('=').collect();
+            if sub_parts.len() == 2 {
+                let target = sub_parts[0].trim();
+                let expr = sub_parts[1].trim();
+                if let Ok(output_val) = crate::dynamic_devices::evaluate_arithmetic_expr(expr, sensor_values) {
+                    apply_single_actuator(target, output_val, acts, devs, nvs, changed);
+                } else {
+                    warn!("[EVENT SCHEDULER] Impossible d'evaluer l'expression arithmetique : {}", expr);
+                }
+            } else {
+                warn!("[EVENT SCHEDULER] Format d'affectation invalide : {}", part_trimmed);
+            }
+        }
+    } else {
+        // C'est une affectation directe simple sur le périphérique par défaut
+        if let Ok(output_val) = crate::dynamic_devices::evaluate_arithmetic_expr(action_str, sensor_values) {
+            apply_single_actuator(default_device_id, output_val, acts, devs, nvs, changed);
+        } else {
+            warn!("[EVENT SCHEDULER] Impossible d'evaluer l'expression simple : {}", action_str);
+        }
+    }
+}
+
+/// `apply_single_actuator` (fonction) : Applique une valeur numérique sur un unique actionneur ciblé.
+/// - `target` (type: &str) : Identifiant de l'actionneur (ex: "ina", "rla", "screen").
+/// - `output_val` (type: f64) : Valeur évaluée.
+/// - `acts` (type: &mut ActuatorsState) : Structure des états de la RAM.
+/// - `devs` (type: &mut Actuators) : Pilotes physiques.
+/// - `nvs` (type: &Arc<Mutex<NvsStorage>>) : Stockage NVS.
+/// - `changed` (type: &mut bool) : Indicateur de modification d'état.
+fn apply_single_actuator(
+    target: &str,
+    output_val: f64,
+    acts: &mut crate::actuators::ActuatorsState,
+    devs: &mut crate::actuators::Actuators,
+    nvs: &Arc<Mutex<NvsStorage>>,
+    changed: &mut bool,
+) {
+    match target {
+        "rla" => {
+            let state = output_val > 0.0;
+            let speed = if state { output_val.min(100.0) as u8 } else { 0 };
+            info!("[EVENT SCHEDULER] Actionneur 'rla' -> application valeur: {} (Etat: {}, Vitesse: {})", output_val, state, speed);
+            if acts.rla != state || acts.rla_speed != Some(speed) {
+                acts.rla = state;
+                acts.rla_speed = Some(speed);
+                let _ = devs.relay_a.set_speed(speed as i32);
+                let _ = devs.write("rla", state);
+                *changed = true;
+            }
+        }
+        "rlb" => {
+            let state = output_val > 0.0;
+            let speed = if state { output_val.min(100.0) as u8 } else { 0 };
+            info!("[EVENT SCHEDULER] Actionneur 'rlb' -> application valeur: {} (Etat: {}, Vitesse: {})", output_val, state, speed);
+            if acts.rlb != state || acts.rlb_speed != Some(speed) {
+                acts.rlb = state;
+                acts.rlb_speed = Some(speed);
+                let _ = devs.relay_b.set_speed(speed as i32);
+                let _ = devs.write("rlb", state);
+                *changed = true;
+            }
+        }
+        "swpwr" => {
+            let state = output_val > 0.0;
+            info!("[EVENT SCHEDULER] Actionneur 'swpwr' -> application valeur: {} (Etat: {})", output_val, state);
+            if acts.swpwr != state {
+                acts.swpwr = state;
+                let _ = devs.write("swpwr", state);
+                *changed = true;
+            }
+        }
+        "screen" => {
+            let brightness = output_val.max(0.0).min(100.0) as i32;
+            info!("[EVENT SCHEDULER] Actionneur 'screen' -> application valeur: {} (Luminosite: {}%)", output_val, brightness);
+            if acts.screen_brightness != Some(brightness as u8) {
+                acts.screen_brightness = Some(brightness as u8);
+                // Sauvegarder la nouvelle luminosité de l'écran en NVS
+                let mut storage = nvs.lock().unwrap();
+                let _ = storage.set_i32("scrBrightness", brightness);
+                *changed = true;
+            }
+        }
+        "ina" => {
+            let speed = output_val.max(0.0).min(100.0) as u8;
+            info!("[EVENT SCHEDULER] Actionneur 'ina' (mode independant) -> application valeur: {} (Vitesse: {})", output_val, speed);
+            if acts.H0.inverseur != 2 || acts.H0.speed_a != speed {
+                acts.H0.inverseur = 2; // Forcer le mode indépendant
+                acts.H0.speed_a = speed;
+                let _ = devs.write_h0(&acts.H0);
+                *changed = true;
+            }
+        }
+        "inb" => {
+            let speed = output_val.max(0.0).min(100.0) as u8;
+            info!("[EVENT SCHEDULER] Actionneur 'inb' (mode independant) -> application valeur: {} (Vitesse: {})", output_val, speed);
+            if acts.H0.inverseur != 2 || acts.H0.speed_b != speed {
+                acts.H0.inverseur = 2; // Forcer le mode indépendant
+                acts.H0.speed_b = speed;
+                let _ = devs.write_h0(&acts.H0);
+                *changed = true;
+            }
+        }
+        "H0" => {
+            let speed_val = output_val.clamp(-100.0, 100.0) as i8;
+            let (new_inv, new_speed_a, new_speed_b) = if speed_val < 0 {
+                (-1, (-speed_val) as u8, 0u8)
+            } else if speed_val > 0 {
+                (1, 0u8, speed_val as u8)
+            } else {
+                (0, 0u8, 0u8)
+            };
+            info!("[EVENT SCHEDULER] Actionneur 'H0' (mode bipolaire) -> application valeur: {} (Mode: {}, Vitesse A: {}, Vitesse B: {})", output_val, new_inv, new_speed_a, new_speed_b);
+
+            if acts.H0.inverseur != new_inv || acts.H0.speed_a != new_speed_a || acts.H0.speed_b != new_speed_b {
+                acts.H0.inverseur = new_inv;
+                acts.H0.speed_a = new_speed_a;
+                acts.H0.speed_b = new_speed_b;
+                let _ = devs.write_h0(&acts.H0);
+                *changed = true;
+            }
+        }
+        _ => {
+            warn!("[EVENT SCHEDULER] Actionneur cible inconnu : {}", target);
+        }
     }
 }
 

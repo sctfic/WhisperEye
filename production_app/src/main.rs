@@ -6,7 +6,6 @@ use esp_idf_hal::gpio::{PinDriver, Pull};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::http::server::{EspHttpServer, Configuration as ServerConfig};
-use esp_idf_svc::sntp::EspSntp;
 use anyhow::{Result, Context};
 use log::info;
 use std::thread;
@@ -14,10 +13,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.124";
-
-#[allow(dead_code)]
-pub const TOTP_SECRET: &str = "Salt-4-Hash-Between-Probe-&-WhisperEye";
+pub const FW_VERSION: &str = "1.2.134";
 
 pub const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 pub const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -412,6 +408,11 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
 
 
 

@@ -1833,6 +1833,7 @@
 
         window.realActuatorValues = {};
         window.wheelTimeout = {};
+        window.openDetails = new Set();
 
         window.getStepValue = function (id) {
             return parseInt(localStorage.getItem('step_' + id)) || (id === 'screen' ? 10 : (id === 'rla' || id === 'rlb' ? 100 : 5));
@@ -1855,18 +1856,18 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: id, step: valNum })
             })
-            .then(res => {
-                if (res.ok) {
+                .then(res => {
+                    if (res.ok) {
+                        fetchDevices();
+                    } else {
+                        console.error('Erreur sauvegarde NVS step');
+                        fetchDevices();
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
                     fetchDevices();
-                } else {
-                    console.error('Erreur sauvegarde NVS step');
-                    fetchDevices();
-                }
-            })
-            .catch(err => {
-                console.error(err);
-                fetchDevices();
-            });
+                });
         };
 
         window.debouncedSendRangeValue = function (id, val) {
@@ -2107,6 +2108,9 @@
                             const isPowerMissing = vsenseVal < 6.0;
 
                             actuators.forEach(dev => {
+                                const isDetailOpen = window.openDetails && window.openDetails.has(dev.id);
+                                const chevronStyle = isDetailOpen ? 'transform: rotate(180deg);' : '';
+                                const detailClass = isDetailOpen ? 'sensor-detail open' : 'sensor-detail';
                                 let valueHtml = '';
                                 if (dev.id === 'radio') {
                                     const isRadioPresent = dev.present;
@@ -2273,17 +2277,35 @@
                                                         <div onclick="event.stopPropagation()" style="display: flex; align-items: center; gap: 0.5rem;">
                                                             ${valueHtml}
                                                         </div>
-                                                        <svg class="sensor-chevron" id="chevron_${dev.id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                                        <svg class="sensor-chevron" id="chevron_${dev.id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary); ${chevronStyle}"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                                     </div>
                                                 </div>
-                                                <div id="detail_${dev.id}" class="sensor-detail">
+                                                <div id="detail_${dev.id}" class="${detailClass}">
                                                     ${indepHtml}
                                                     ${stepHtml}
                                                     <div style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary); margin-top: 0.4rem; margin-bottom: 0.3rem; padding-left: 0.5rem; display: flex; align-items: center; gap: 0.25rem;">
                                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 12px; height: 12px; color: var(--accent-color);"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                                                        Planifications actives :
+                                                        Planificateur horaire :
                                                     </div>
                                                     ${schedHtml}
+
+                                                    <!-- Section des règles événementielles -->
+                                                    <div style="margin-top: 0.8rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 0.6rem;">
+                                                        <div style="font-weight: 600; font-size: 0.8rem; color: var(--text-primary); margin-bottom: 0.3rem; padding-left: 0.5rem; display: flex; align-items: center; gap: 0.25rem;">
+                                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 12px; height: 12px; color: var(--accent-color);"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
+                                                            Planificateur événementiel (JSON) :
+                                                        </div>
+                                                        <div style="padding: 0 0.5rem;" onclick="event.stopPropagation()">
+                                                            <textarea id="rules_json_${dev.id}" style="width: 100%; height: 110px; font-family: monospace; font-size: 0.8rem; background: #0f172a; color: #94a3b8; border: 1px solid var(--border-color); border-radius: 4px; padding: 0.4rem; resize: vertical;" placeholder='[\n  {\n    "if": "i2c:7:0x44_H < 50",\n    "then": "100"\n  }\n]'>${JSON.stringify(dev.Rule || [], null, 2)}</textarea>
+                                                            <div style="display: flex; gap: 0.35rem; margin-top: 0.35rem; flex-wrap: wrap;">
+                                                                <button class="btn" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #334155;" onclick="addRuleTemplate('${dev.id}')">Ajouter Modèle</button>
+                                                                <button class="btn" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #10b981;" onclick="saveRules('${dev.id}')">Enregistrer</button>
+                                                                <button class="btn" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #0284c7;" onclick="testRules('${dev.id}')">Tester</button>
+                                                                <button class="btn btn-error" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #ef4444;" onclick="clearRules('${dev.id}')">Effacer</button>
+                                                            </div>
+                                                            <div id="rules_test_result_${dev.id}" style="margin-top: 0.4rem; font-size: 0.75rem; display: none; padding: 0.3rem 0.5rem; border-radius: 4px;"></div>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>`;
                             });
@@ -2295,9 +2317,12 @@
                         html = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Aucun capteur détecté.</p>';
                     } else {
                         sensors.forEach(dev => {
+                            const sensorId = dev.id.replace(/[^a-zA-Z0-9]/g, '_');
+                            const isDetailOpen = window.openDetails && window.openDetails.has(sensorId);
+                            const chevronStyle = isDetailOpen ? 'transform: rotate(180deg);' : '';
+                            const detailClass = isDetailOpen ? 'sensor-detail open' : 'sensor-detail';
                             const meta = dev.sensor_meta || {};
                             const corr = dev.correction_formula || 'x';
-                            const sensorId = dev.id.replace(/[^a-zA-Z0-9]/g, '_');
                             html += `
                                 <div class="sensor-row" style="border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 0.4rem; overflow: hidden;">
                                     <div class="sensor-header" onclick="toggleSensorDetail('${sensorId}')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
@@ -2319,10 +2344,10 @@
                                         <div style="display: flex; align-items: center; gap: 0.5rem;">
                                             <span style="font-weight: 700; color: var(--accent-color); font-size: 1rem;">${dev.value}${dev.value !== '--' && meta.unit ? ' ' + meta.unit : ''}</span>
                                             <span class="badge ${dev.present ? 'badge-green' : 'badge-error'}" style="font-size: 0.7rem;">${dev.present ? 'Actif' : 'Absent'}</span>
-                                            <svg class="sensor-chevron" id="chevron_${sensorId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary);"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                            <svg class="sensor-chevron" id="chevron_${sensorId}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; transition: transform 0.3s ease; color: var(--text-secondary); ${chevronStyle}"><polyline points="6 9 12 15 18 9"></polyline></svg>
                                         </div>
                                     </div>
-                                    <div id="detail_${sensorId}" class="sensor-detail">
+                                    <div id="detail_${sensorId}" class="${detailClass}">
                                         <div class="info-group">
                                             <span class="info-label">Unité</span>
                                             <span class="info-value" style="font-size: 0.85rem;">${meta.unit || '-'}</span>
@@ -3397,6 +3422,13 @@
                 const isOpen = detail.classList.contains('open');
                 detail.classList.toggle('open');
                 if (chevron) chevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+                
+                // Mémoriser l'état d'ouverture pour le conserver après rafraîchissement
+                if (detail.classList.contains('open')) {
+                    window.openDetails.add(sensorId);
+                } else {
+                    window.openDetails.delete(sensorId);
+                }
             }
         }
 
@@ -3481,7 +3513,177 @@
                 });
         }
 
+        // --- Fonctions de gestion du planificateur événementiel ---
+        function addRuleTemplate(id) {
+            const ta = document.getElementById('rules_json_' + id);
+            if (!ta) return;
+            let current = [];
+            try {
+                if (ta.value.trim()) {
+                    current = JSON.parse(ta.value);
+                }
+            } catch(e) {
+                // Si invalide, on part de vide
+            }
+            if (!Array.isArray(current)) {
+                current = [];
+            }
+            if (current.length >= 10) {
+                alert("Maximum de 10 règles atteint.");
+                return;
+            }
+            current.push({
+                utc: ["2026-07-25T17:04:31.000Z", "2026-07-26T07:04:22.000Z"],
+                if: "i2c:7:0x44_H < 50 or i2c:0:0x44_T/2 > 12",
+                then: "i2c:0:0x44_T/2"
+            });
+            ta.value = JSON.stringify(current, null, 2);
+        }
 
+        function saveRules(id) {
+            const ta = document.getElementById('rules_json_' + id);
+            if (!ta) return;
+            let rules = [];
+            try {
+                const val = ta.value.trim() ? ta.value : "[]";
+                rules = JSON.parse(val);
+                if (!Array.isArray(rules)) {
+                    throw new Error("Le format doit être un tableau JSON de règles.");
+                }
+                for (const r of rules) {
+                    if (typeof r !== 'object' || r === null) throw new Error("Chaque règle doit être un objet.");
+                    if (typeof r.if !== 'string') throw new Error("Le champ 'if' est requis et doit être une chaîne.");
+                    if (typeof r.then !== 'string') throw new Error("Le champ 'then' est requis et doit être une chaîne.");
+                    if (r.utc !== undefined && r.utc !== null) {
+                        if (!Array.isArray(r.utc) || r.utc.length !== 2) {
+                            throw new Error("Le champ 'utc' doit être un tableau de 2 dates.");
+                        }
+                    }
+                }
+            } catch(e) {
+                alert("Erreur de format JSON : " + e.message);
+                return;
+            }
+
+            fetch('/api/peripherals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id, Rule: rules })
+            })
+            .then(res => {
+                if (res.ok) {
+                    alert("Règles enregistrées avec succès !");
+                    fetchDevices();
+                } else {
+                    alert("Erreur lors de la sauvegarde des règles.");
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert("Erreur réseau : " + err.message);
+            });
+        }
+
+        function clearRules(id) {
+            if (!confirm("Voulez-vous vraiment effacer toutes les règles ?")) return;
+            const ta = document.getElementById('rules_json_' + id);
+            if (ta) ta.value = "[]";
+            saveRules(id);
+        }
+
+        function testRules(id) {
+            const ta = document.getElementById('rules_json_' + id);
+            const resEl = document.getElementById('rules_test_result_' + id);
+            if (!ta || !resEl) return;
+            
+            resEl.style.display = 'block';
+            resEl.style.background = '#1e293b';
+            resEl.style.color = '#cbd5e1';
+            resEl.style.border = '1px solid var(--border-color)';
+            resEl.innerHTML = '';
+
+            let rules = [];
+            try {
+                rules = JSON.parse(ta.value.trim() ? ta.value : "[]");
+            } catch(e) {
+                resEl.style.background = 'rgba(239, 68, 68, 0.2)';
+                resEl.style.color = '#fca5a5';
+                resEl.style.borderColor = '#ef4444';
+                resEl.innerHTML = 'Erreur JSON : ' + e.message;
+                return;
+            }
+
+            if (!Array.isArray(rules) || rules.length === 0) {
+                resEl.innerHTML = 'Aucune règle à tester.';
+                return;
+            }
+
+            // Récupérer toutes les valeurs de capteurs
+            const devMap = {};
+            if (window.currentDevices) {
+                window.currentDevices.forEach(d => {
+                    devMap[d.id] = parseFloat(d.value) || 0.0;
+                });
+            }
+
+            let logHtml = '<ul style="margin: 0; padding-left: 1rem;">';
+            let appliedAny = false;
+
+            for (let i = 0; i < rules.length; i++) {
+                const rule = rules[i];
+                let ifExpr = rule.if;
+                let thenExpr = rule.then;
+
+                // Fonction de remplacement des tokens de capteurs par leur valeur
+                function resolveExpr(expr) {
+                    let res = expr;
+                    // Remplacer or/and par les opérateurs logiques JS
+                    res = res.replace(/\bor\b/gi, '||').replace(/\band\b/gi, '&&');
+                    
+                    // Trouver tous les identifiants de capteurs potentiels (ex: i2c:7:0x44_H)
+                    const keys = Object.keys(devMap);
+                    // Trier par longueur décroissante pour éviter les conflits de préfixes
+                    keys.sort((a,b) => b.length - a.length);
+                    for (const key of keys) {
+                        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                        const re = new RegExp(escapedKey, 'g');
+                        if (re.test(res)) {
+                            res = res.replace(re, devMap[key]);
+                        }
+                    }
+                    return res;
+                }
+
+                const resolvedIf = resolveExpr(ifExpr);
+                let isMatch = false;
+                let evalError = null;
+                try {
+                    isMatch = !!eval(resolvedIf);
+                } catch(e) {
+                    evalError = e.message;
+                }
+
+                if (evalError) {
+                    logHtml += `<li style="margin-bottom:0.2rem;">Règle #${i+1} : <span style="color:#ef4444;">Erreur d'évaluation condition (${evalError})</span><br><small style="color:var(--text-secondary);">Original: ${ifExpr} -> Résolu: ${resolvedIf}</small></li>`;
+                } else if (isMatch) {
+                    appliedAny = true;
+                    const resolvedThen = resolveExpr(thenExpr);
+                    let valResult = null;
+                    try {
+                        valResult = eval(resolvedThen);
+                    } catch(e) {
+                        valResult = 'Erreur: ' + e.message;
+                    }
+                    logHtml += `<li style="margin-bottom:0.2rem;">Règle #${i+1} : <span style="color:#10b981; font-weight:bold;">APPLIQUÉE</span> -> Valeur calculée : <span style="color:var(--accent-color); font-weight:bold;">${valResult}</span><br><small style="color:var(--text-secondary);">${ifExpr} &rarr; ${thenExpr}</small></li>`;
+                    logHtml += `<li style="color:var(--text-secondary); list-style:none; font-style:italic;">(Première règle active, évaluation stoppée)</li>`;
+                    break;
+                } else {
+                    logHtml += `<li style="margin-bottom:0.2rem; color:var(--text-secondary);">Règle #${i+1} : Non applicable (${ifExpr})</li>`;
+                }
+            }
+            logHtml += '</ul>';
+            resEl.innerHTML = logHtml;
+        }
 
 
         // Initial setup
