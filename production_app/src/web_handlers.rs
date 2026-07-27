@@ -1124,6 +1124,31 @@ pub fn handle_post_actuators(
         if let Some(val) = raw.get("rlb_speed").and_then(|v| v.as_i64()) { state.rlb_speed = Some(val as u8); }
         if let Some(val) = raw.get("screen_brightness").and_then(|v| v.as_i64()) { state.screen_brightness = Some(val as u8); }
         if let Some(h0) = raw.get("H0") {
+            // [Junior Dev Note] : Mode inverseur via "speed" (signé, -100 à 100).
+            // Négatif = active INB, Positif = active INA, 0 = Off.
+            if let Some(speed) = h0.get("speed").and_then(|v| v.as_i64()) {
+                let speed_i8 = speed as i8;
+                if speed_i8 > 0 {
+                    state.H0.inverseur = -1; // INA
+                    state.H0.speed_a = speed_i8 as u8;
+                    state.H0.speed_b = 0;
+                } else if speed_i8 < 0 {
+                    state.H0.inverseur = 1; // INB
+                    state.H0.speed_b = (-speed_i8) as u8;
+                    state.H0.speed_a = 0;
+                } else {
+                    state.H0.inverseur = 0; // OFF
+                    state.H0.speed_a = 0;
+                    state.H0.speed_b = 0;
+                }
+            }
+            // [Junior Dev Note] : Mode indépendant via "speed_a" et/ou "speed_b" (0 à 100).
+            if h0.get("speed_a").is_some() || h0.get("speed_b").is_some() {
+                state.H0.inverseur = 2; // Mode indépendant
+                if let Some(sa) = h0.get("speed_a").and_then(|v| v.as_i64()) { state.H0.speed_a = sa as u8; }
+                if let Some(sb) = h0.get("speed_b").and_then(|v| v.as_i64()) { state.H0.speed_b = sb as u8; }
+            }
+            // Compatibilité ascendante : inverseur/speed_a/speed_b explicites
             if let Some(inv) = h0.get("inverseur").and_then(|v| v.as_i64()) { state.H0.inverseur = inv as i8; }
             if let Some(sa) = h0.get("speed_a").and_then(|v| v.as_i64()) { state.H0.speed_a = sa as u8; }
             if let Some(sb) = h0.get("speed_b").and_then(|v| v.as_i64()) { state.H0.speed_b = sb as u8; }

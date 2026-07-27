@@ -550,20 +550,31 @@ impl DeviceRegistry {
                 if entry_h.address.is_none() { entry_h.address = Some(addr_str.clone()); }
                 updated.insert(id_h, entry_h);
             } else if addr == 0x76 || addr == 0x77 {
+                // [Junior Dev Note] : Vérifier si le capteur est un BMP280 (pas d'humidité).
+                let is_bmp280 = {
+                    if let Ok(i2c_lock) = i2c.lock() {
+                        i2c_lock.bme280s.iter().any(|b| b.channel == channel && b.address == addr && b.is_bmp280)
+                    } else { false }
+                };
+                let model_name = if is_bmp280 { "BMP280" } else { "BME280" };
+
                 let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
-                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default(format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
+                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default(format!("{}-Temp (i2c:{}:0x{:02x})", model_name, channel, addr), false, true, Some(addr_str.clone())));
                 entry_t.present = true;
                 if entry_t.address.is_none() { entry_t.address = Some(addr_str.clone()); }
                 updated.insert(id_t, entry_t);
 
-                let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
-                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| make_default(format!("BME280-Hum (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
-                entry_h.present = true;
-                if entry_h.address.is_none() { entry_h.address = Some(addr_str.clone()); }
-                updated.insert(id_h, entry_h);
+                // BMP280 : pas d'humidité, on saute l'entrée _H
+                if !is_bmp280 {
+                    let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
+                    let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| make_default(format!("{}-Hum (i2c:{}:0x{:02x})", model_name, channel, addr), false, true, Some(addr_str.clone())));
+                    entry_h.present = true;
+                    if entry_h.address.is_none() { entry_h.address = Some(addr_str.clone()); }
+                    updated.insert(id_h, entry_h);
+                }
 
                 let id_p = format!("i2c:{}:0x{:02x}_P", channel, addr);
-                let mut entry_p = saved.remove(&id_p).unwrap_or_else(|| make_default(format!("BME280-Pres (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
+                let mut entry_p = saved.remove(&id_p).unwrap_or_else(|| make_default(format!("{}-Pres (i2c:{}:0x{:02x})", model_name, channel, addr), false, true, Some(addr_str.clone())));
                 entry_p.present = true;
                 if entry_p.address.is_none() { entry_p.address = Some(addr_str.clone()); }
                 updated.insert(id_p, entry_p);

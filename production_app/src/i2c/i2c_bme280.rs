@@ -22,11 +22,13 @@ pub struct Bme280Readings {
 pub struct I2cBme280 {
     pub channel: u8,
     pub address: u8,
+    /// `is_bmp280` (type: bool) : true si le capteur est un BMP280 (pas d'humidité physique, Chip ID 0x58).
+    pub is_bmp280: bool,
 }
 
 impl I2cBme280 {
     pub fn new(channel: u8, address: u8) -> Self {
-        Self { channel, address }
+        Self { channel, address, is_bmp280: false }
     }
 
     // `init` (type: fn(&mut self, &mut I2cDriver<'static>) -> Result<(), anyhow::Error>) : Initialise le capteur BME280/BMP280 en lisant le Chip ID et en configurant les registres de contrôle.
@@ -38,8 +40,10 @@ impl I2cBme280 {
         if driver.write_read(self.address, &[0xD0], &mut chip_id, 50).is_ok() {
             if chip_id[0] == 0x58 {
                 log::warn!("Capteur détecté à 0x{:02x} est un BMP280 (Température + Pression uniquement, PAS d'humidité physique !)", self.address);
+                self.is_bmp280 = true;
             } else if chip_id[0] == 0x60 {
                 log::info!("Capteur BME280 (Temp + Pres + Hum) confirmé à l'adresse 0x{:02x} (Chip ID: 0x60)", self.address);
+                self.is_bmp280 = false;
             } else {
                 log::info!("Capteur I2C à 0x{:02x} a pour Chip ID : 0x{:02x}", self.address, chip_id[0]);
             }
@@ -84,22 +88,27 @@ impl I2cBme280 {
         let dig_p9 = i16::from_le_bytes([calib_data1[22], calib_data1[23]]);
 
         // `dig_h1` (type: [u8; 1]) : Coefficient de calibration H1 (registre 0xA1).
-        let mut dig_h1 = [0u8; 1];
-        if driver.write_read(self.address, &[0xA1], &mut dig_h1, 50).is_err() {
-            return None;
-        }
+        // [Note Dev Junior] : Pour un BMP280 (Chip ID 0x58), les registres d'humidité n'existent pas physiquement.
+        // On saute la lecture des registres de calibration humidité et on renvoie -255.0.
+        let (mut dig_h1, mut dig_h2, mut dig_h3, mut dig_h4, mut dig_h5, mut dig_h6) = 
+            ([0u8; 1], 0i16, 0u8, 0i16, 0i16, 0i8);
         
-        // `calib_data2` (type: [u8; 7]) : Octets de calibration H2..H6 (registres 0xE1..0xE7).
-        let mut calib_data2 = [0u8; 7];
-        if driver.write_read(self.address, &[0xE1], &mut calib_data2, 50).is_err() {
-            return None;
+        if !self.is_bmp280 {
+            if driver.write_read(self.address, &[0xA1], &mut dig_h1, 50).is_err() {
+                return None;
+            }
+            
+            let mut calib_data2 = [0u8; 7];
+            if driver.write_read(self.address, &[0xE1], &mut calib_data2, 50).is_err() {
+                return None;
+            }
+            dig_h2 = i16::from_le_bytes([calib_data2[0], calib_data2[1]]);
+            dig_h3 = calib_data2[2];
+            dig_h4 = ((calib_data2[3] as i8 as i16) << 4) | ((calib_data2[4] & 0x0F) as i16);
+            dig_h5 = ((calib_data2[5] as i8 as i16) << 4) | (((calib_data2[4] & 0xF0) >> 4) as i16);
+            dig_h6 = calib_data2[6] as i8;
         }
-        let dig_h2 = i16::from_le_bytes([calib_data2[0], calib_data2[1]]);
-        let dig_h3 = calib_data2[2];
-        // [Note Dev Junior] : Cast signé i8 impératif pour préserver la propagation du signe sur 16 bits.
-        let dig_h4 = ((calib_data2[3] as i8 as i16) << 4) | ((calib_data2[4] & 0x0F) as i16);
-        let dig_h5 = ((calib_data2[5] as i8 as i16) << 4) | (((calib_data2[4] & 0xF0) >> 4) as i16);
-        let dig_h6 = calib_data2[6] as i8;
+
 
         // Configuration du mode de mesure :
         // 0xF2 (ctrl_hum) = 0x01 (oversampling humidité x1)
@@ -118,7 +127,8 @@ impl I2cBme280 {
         
         let adc_p = ((raw_data[0] as i32) << 12) | ((raw_data[1] as i32) << 4) | ((raw_data[2] as i32) >> 4);
         let adc_t = ((raw_data[3] as i32) << 12) | ((raw_data[4] as i32) << 4) | ((raw_data[5] as i32) >> 4);
-        let adc_h = ((raw_data[6] as i32) << 8) | (raw_data[7] as i32);
+        // `adc_h` (type: i32) : Pour BMP280, les registres 6-7 n'existent pas, on force -1.
+        let adc_h = if self.is_bmp280 { -1 } else { ((raw_data[6] as i32) << 8) | (raw_data[7] as i32) };
 
         // Compensation de la Température
         let var1 = (((adc_t >> 3) - ((dig_t1 as i32) << 1)) * (dig_t2 as i32)) >> 11;
@@ -145,18 +155,16 @@ impl I2cBme280 {
             p as f32 / 100.0
         };
 
-        // Compensation de l'Humidité
-        let mut h = (t_fine as f64) - 76800.0;
-        h = (adc_h as f64 - (((dig_h4 as f64) * 64.0) + ((dig_h5 as f64) / 16384.0) * h)) *
-            ((dig_h2 as f64) / 65536.0 * (1.0 + (dig_h6 as f64) / 67108864.0 * h *
-            (1.0 + (dig_h3 as f64) / 67108864.0 * h)));
-        h = h * (1.0 - (dig_h1[0] as f64) * h / 524288.0);
-        let humidity = if h > 100.0 {
-            100.0
-        } else if h < 0.0 {
-            0.0
+        // Compensation de l'Humidité (uniquement pour BME280, pas BMP280)
+        let humidity = if self.is_bmp280 {
+            -255.0
         } else {
-            h as f32
+            let mut h = (t_fine as f64) - 76800.0;
+            h = (adc_h as f64 - (((dig_h4 as f64) * 64.0) + ((dig_h5 as f64) / 16384.0) * h)) *
+                ((dig_h2 as f64) / 65536.0 * (1.0 + (dig_h6 as f64) / 67108864.0 * h *
+                (1.0 + (dig_h3 as f64) / 67108864.0 * h)));
+            h = h * (1.0 - (dig_h1[0] as f64) * h / 524288.0);
+            if h > 100.0 { 100.0 } else if h < 0.0 { 0.0 } else { h as f32 }
         };
 
         // Sauvegarder dans les variables globales pour la compatibilité

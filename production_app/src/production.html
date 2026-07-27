@@ -842,7 +842,7 @@
                 </h3>
                 <label class="switch" style="transform: scale(0.65); margin-left: auto;" title="Afficher les capteurs manquants">
                     <input type="checkbox" id="show_missing_sensors_switch" onchange="toggleMissingSensors()">
-                    <span class="slider">Voir tous</span>
+                    <span class="slider"></span>
                 </label>
             </div>
             <div id="sensors_list" style="display: flex; flex-direction: column; gap: 0.25rem;">
@@ -2070,7 +2070,24 @@
 
         window.sendH0InverseurValue = function (val) {
             window.updateH0InverseurSlider(val);
-            sendH0Payload();
+            // Envoi simplifié : { H0: { speed: val } }
+            const valNum = parseInt(val);
+            const payload = valNum >= 0
+                ? { H0: { speed: valNum } }
+                : { H0: { speed: valNum } }; // négatif = INB
+            fetch('/api/actuators', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(res => {
+                    if (!res.ok) alert('Erreur lors de la commande du Pont H');
+                    fetchDevices();
+                })
+                .catch(err => {
+                    console.error(err);
+                    fetchDevices();
+                });
         };
 
         window.updateH0IndepSlider = function (chan, val) {
@@ -2092,14 +2109,19 @@
         };
 
         function sendH0Payload() {
-            // N'envoyer que les données du Pont H (H0)
-            const payload = {
-                H0: {
-                    inverseur: window.actuatorStates.H0.inverseur,
-                    speed_a: window.actuatorStates.H0.speed_a,
-                    speed_b: window.actuatorStates.H0.speed_b
-                }
-            };
+            const h0 = window.actuatorStates.H0;
+            let payload;
+            // [Junior Dev Note] : Mode indépendant (inverseur === 2) → speed_a/speed_b
+            // Mode inverseur (inverseur === -1 ou 1) ou OFF (0) → speed signé
+            if (h0.inverseur === 2) {
+                payload = { H0: { speed_a: h0.speed_a, speed_b: h0.speed_b } };
+            } else if (h0.inverseur === -1) {
+                payload = { H0: { speed: h0.speed_a } }; // positif = INA
+            } else if (h0.inverseur === 1) {
+                payload = { H0: { speed: -(h0.speed_b) } }; // négatif = INB
+            } else {
+                payload = { H0: { speed: 0 } };
+            }
             fetch('/api/actuators', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2196,7 +2218,7 @@
 
                             if (dev.id === 'H0') {
                                 const isIndep = dev.inverseur === 2;
-                                const modeSwitch = document.getElementById('switch_mode_H0_detail');
+                                const modeSwitch = document.getElementById('switch_mode_H0');
                                 if (modeSwitch) modeSwitch.checked = isIndep;
 
                                 if (isIndep) {
@@ -2372,7 +2394,7 @@
                                         <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
                                             <span style="font-size: 0.8rem; color: var(--text-primary);">Mode Indépendant</span>
                                             <label class="switch" style="transform: scale(0.8);">
-                                                <input type="checkbox" id="switch_mode_H0_detail" ${isIndep ? 'checked' : ''} onchange="toggleH0Mode(this.checked)">
+                                                <input type="checkbox" id="switch_mode_H0" ${isIndep ? 'checked' : ''} onchange="toggleH0Mode(this.checked)">
                                                 <span class="slider"></span>
                                             </label>
                                         </div>`;
@@ -2493,7 +2515,8 @@
                                 presenceBadgeHtml = `<span class="badge badge-error" style="font-size: 0.7rem;">Absent</span>`;
                             }
                             // Bouton poubelle (uniquement pour les non-statiques)
-                            const deleteBtnHtml = !dev.is_static ? `<button onclick="event.stopPropagation(); confirmDeleteDevice('${dev.id}', '${dev.name.replace(/'/g, "\\'")}', '${missingInfo ? missingInfo.since : '-'}', ${missingInfo ? missingInfo.count : 0})" style="background: none; border: none; color: var(--danger); cursor: pointer; padding: 0.2rem; flex-shrink: 0;" title="Supprimer définitivement">
+                            // [Junior Dev Note] : Bouton poubelle uniquement sur les capteurs absents NON statiques (isense, vsense n'ont pas de poubelle)
+                            const deleteBtnHtml = (!dev.present && !dev.is_static) ? `<button onclick="event.stopPropagation(); confirmDeleteDevice('${dev.id}', '${dev.name.replace(/'/g, "\\'")}', '${missingInfo ? missingInfo.since : '-'}', ${missingInfo ? missingInfo.count : 0})" style="background: none; border: none; color: var(--danger); cursor: pointer; padding: 0.2rem; flex-shrink: 0;" title="Supprimer définitivement">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                             </button>` : '';
                             html += `
