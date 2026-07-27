@@ -2241,13 +2241,12 @@
                                         if (lblB) lblB.innerText = valB + '%';
                                     }
                                 } else {
+                                    // Mode inverseur : reconstruire la valeur signée
                                     let valH0 = 0;
-                                    if (isInverseur) {
-                                        const a = dev.ina ? dev.ina.pwm_val : 0;
-                                        const b = dev.inb ? dev.inb.pwm_val : 0;
-                                        if (a > 0) valH0 = a;
-                                        else if (b > 0) valH0 = -b;
-                                    }
+                                    const a = dev.ina ? dev.ina.pwm_val : 0;
+                                    const b = dev.inb ? dev.inb.pwm_val : 0;
+                                    if (a > 0) valH0 = a;         // INA (positif)
+                                    else if (b > 0) valH0 = -b;   // INB (négatif)
 
                                     const slider = document.getElementById('range_H0');
                                     if (slider && document.activeElement !== slider) {
