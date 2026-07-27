@@ -357,7 +357,7 @@ impl BrowseController {
                 "%RH".to_string()
             } else if key.ends_with("_P") {
                 "hPa".to_string()
-            } else if key.contains("0x62") {
+            } else if key.ends_with("_CO2") || key.contains("0x62") {
                 "ppm".to_string()
             } else {
                 "".to_string()
@@ -368,6 +368,8 @@ impl BrowseController {
                 format!("Température I2C ({})", key)
             } else if key.ends_with("_H") {
                 format!("Humidité relative I2C ({})", key)
+            } else if key.ends_with("_CO2") {
+                format!("Concentration CO2 ({})", key)
             } else {
                 format!("Mesure I2C ({})", key)
             };
@@ -792,6 +794,7 @@ impl BrowseController {
                                 ina: None,
                                 inb: None,
                                 rules: None,
+                                missing: None,
                             });
                         }
                         registry.save_registry(&map);

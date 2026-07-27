@@ -1,0 +1,76 @@
+{
+  "H0": {
+    "ina": {
+      "name": "open door",
+      "pwm_val": 30
+    },
+    "inb": {
+      "name": "close door",
+      "pwm_val": 30
+    },
+    "inverseur": 0,
+    "name": "Pont H",
+    "present": true
+  },
+  "i2c:4:0x62_CO2": {
+    "address": "0x62",
+    "name": "SCD41-CO2 (i2c:4:0x62)",
+    "present": true
+  },
+  "i2c:4:0x62_H": {
+    "address": "0x62",
+    "name": "SCD41-Hum (i2c:4:0x62)",
+    "present": true
+  },
+  "i2c:4:0x62_T": {
+    "address": "0x62",
+    "name": "SCD41-Temp (i2c:4:0x62)",
+    "present": true
+  },
+  "isense": {
+    "name": "Mesure Courant Pont H (ISENSE)",
+    "present": true
+  },
+  "onewr:2834517100000050": {
+    "address": "2834517100000050",
+    "name": "Sonde 1-Wire (283451)",
+    "present": true
+  },
+  "onewr:289ebc6f000000d8": {
+    "address": "289ebc6f000000d8",
+    "name": "Sonde 1-Wire (289EBC)",
+    "present": true
+  },
+  "onewr:28f2286f000000ce": {
+    "address": "28f2286f000000ce",
+    "name": "Sonde 1-Wire (28F228)",
+    "present": true
+  },
+  "radio": {
+    "name": "Transmetteur Radio RF",
+    "present": true
+  },
+  "rla": {
+    "name": "Relais A",
+    "present": true,
+    "pwm_val": 0
+  },
+  "rlb": {
+    "name": "Relais B (RLB)",
+    "present": true,
+    "pwm_val": 0
+  },
+  "screen": {
+    "name": "Écran ST7789",
+    "present": true
+  },
+  "swpwr": {
+    "name": "Coupure Alimentation (SWPWR)",
+    "present": true,
+    "pwm_val": 100
+  },
+  "vsense": {
+    "name": "Mesure Tension (VSENSE)",
+    "present": true
+  }
+}

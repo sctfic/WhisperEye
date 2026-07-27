@@ -170,6 +170,14 @@ pub fn register_routes(
         )
     })?;
 
+    // DELETE /api/peripherals/<id>
+    let del_nvs = Arc::clone(&nvs_storage);
+    let del_wifi = Arc::clone(&wifi_manager);
+    server.api_handler("/api/peripherals/", esp_idf_svc::http::Method::Delete, move |req| -> Result<(), anyhow::Error> {
+        extend_pairing(&del_wifi);
+        web_handlers::handle_delete_peripheral(req, Arc::clone(&del_nvs))
+    })?;
+
     // POST /api/peripherals
     let rename_nvs = Arc::clone(&nvs_storage);
     let rename_wifi = Arc::clone(&wifi_manager);

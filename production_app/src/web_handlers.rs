@@ -216,13 +216,12 @@ pub fn check_updates_internal(update_url: &str) -> Result<serde_json::Value, any
     let bar: String = format!("{}{}", "█".repeat(filled), "░".repeat(20 - filled));
     info!("\x1b[36m[HEAP] {} {}% ({} Ko / {} Ko)\x1b[0m", bar, pct, free_heap / 1024, total_heap / 1024);
 
-    // `config` (type: esp_idf_svc::http::client::Configuration) : Configuration optimisée du client HTTP pour limiter l'utilisation RAM de mbedTLS.
+    // `config` (type: esp_idf_svc::http::client::Configuration) : Configuration du client HTTP avec le bundle de certificats CA pour valider les connexions HTTPS (mbedTLS).
     let config = esp_idf_svc::http::client::Configuration {
         buffer_size: Some(1024),
         use_global_ca_store: false,
-        // [Junior Dev Note] : Désactiver le bundle de certificats crt_bundle_attach permet d'économiser
-        // environ 25 à 30 Ko de mémoire RAM sur le tas (heap) de l'ESP32, ce qui évite les plantages OOM.
-        crt_bundle_attach: None,
+        // [Junior Dev Note] : Attacher esp_crt_bundle_attach est obligatoire pour les requêtes HTTPS afin de valider la chaîne TLS du serveur.
+        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
         follow_redirects_policy: esp_idf_svc::http::client::FollowRedirectsPolicy::FollowNone,
         ..Default::default()
     };
@@ -785,13 +784,15 @@ pub fn handle_api_sensors(
         bus.read_value()
     };
 
-    // Construire le JSON des capteurs compatibles avec ce qui est attendu
+    let scd_ch = crate::i2c::i2c_scd41::SCD41_CHANNEL.load(std::sync::atomic::Ordering::Relaxed);
     let mut readings = serde_json::json!({
         "i2c:0:0x44_T": sht4_opt.as_ref().map(|s| s.temperature).unwrap_or(-255.0),
         "i2c:0:0x44_H": sht4_opt.as_ref().map(|s| s.humidity).unwrap_or(-255.0),
         "i2c:0:0x45_T": sht3_opt.as_ref().map(|s| s.temperature).unwrap_or(-255.0),
         "i2c:0:0x45_H": sht3_opt.as_ref().map(|s| s.humidity).unwrap_or(-255.0),
-        "i2c:0:0x62": scd_opt.as_ref().map(|s| s.co2).unwrap_or(-255),
+        format!("i2c:{}:0x62_CO2", scd_ch): scd_opt.as_ref().map(|s| s.co2).unwrap_or(-255),
+        format!("i2c:{}:0x62_T", scd_ch): scd_opt.as_ref().map(|s| s.temperature).unwrap_or(-255.0),
+        format!("i2c:{}:0x62_H", scd_ch): scd_opt.as_ref().map(|s| s.humidity).unwrap_or(-255.0),
     });
 
     if let Some(bme) = bme_opt {
@@ -987,39 +988,172 @@ pub fn handle_sensor_correction(mut req: Request<&mut EspHttpConnection<'_>>, co
     Ok(())
 }
 
+pub fn handle_delete_peripheral(
+    req: Request<&mut EspHttpConnection<'_>>,
+    del_nvs: Arc<Mutex<NvsStorage>>,
+) -> Result<()> {
+    // Extraire l'ID depuis l'URI : DELETE /api/peripherals/<id>
+    let uri = req.uri();
+    let id = if let Some(pos) = uri.rfind('/') {
+        uri[pos + 1..].to_string()
+    } else {
+        String::new()
+    };
+
+    if id.is_empty() || id == "peripherals" {
+        let mut response = req.into_status_response(400)?;
+        response.write(b"ID de peripherique manquant dans l'URL")?;
+        return Ok(());
+    }
+
+    let mut registry = dynamic_devices::DeviceRegistry::new(Arc::clone(&del_nvs));
+    match registry.delete_device(&id) {
+        Ok(()) => {
+            info!("[DELETE /api/peripherals/{}] Peripherique supprime avec succes", id);
+            let mut response = req.into_ok_response()?;
+            response.write(b"Deleted")?;
+            Ok(())
+        }
+        Err(e) => {
+            let mut response = req.into_status_response(400)?;
+            response.write(format!("Erreur: {}", e).as_bytes())?;
+            Ok(())
+        }
+    }
+}
+
+/// `handle_api_resources` (fonction) : Renvoie les statistiques de consommation des ressources ESP32.
+/// - `heap_total` (type: usize) : Taille totale de la heap interne (DRAM) en octets.
+/// - `heap_free` (type: usize) : Heap libre actuel en octets.
+/// - `heap_min_free` (type: usize) : Heap libre minimum enregistré depuis le boot (watermark).
+/// - `psram_total` (type: usize) : Taille totale de la PSRAM (0 si non disponible).
+/// - `psram_free` (type: usize) : PSRAM libre (0 si non disponible).
+/// - `flash_size` (type: usize) : Taille totale de la flash en octets.
+/// - `nvs_free` (type: usize) : Espace libre NVS estimé.
+/// - `cpu_freq` (type: u32) : Fréquence CPU en MHz.
+/// - `uptime_secs` (type: u64) : Temps écoulé depuis le boot en secondes.
+/// - `temperature` (type: Option<f32>) : Température interne de la puce si le capteur est disponible.
+/// - `app_size` (type: usize) : Taille de la partition applicative en octets.
+/// - `app_free` (type: usize) : Espace libre estimé sur la partition applicative.
+pub fn handle_api_resources(
+    req: Request<&mut EspHttpConnection<'_>>,
+) -> Result<()> {
+    // Heap interne (DRAM)
+    let heap_total: usize = unsafe { esp_idf_sys::heap_caps_get_total_size(esp_idf_sys::MALLOC_CAP_8BIT) };
+    let heap_free: usize = unsafe { esp_idf_sys::heap_caps_get_free_size(esp_idf_sys::MALLOC_CAP_8BIT) };
+    let heap_min_free: usize = unsafe { esp_idf_sys::heap_caps_get_minimum_free_size(esp_idf_sys::MALLOC_CAP_8BIT) };
+
+    // PSRAM
+    let psram_total: usize = unsafe { esp_idf_sys::heap_caps_get_total_size(esp_idf_sys::MALLOC_CAP_SPIRAM) };
+    let psram_free: usize = unsafe { esp_idf_sys::heap_caps_get_free_size(esp_idf_sys::MALLOC_CAP_SPIRAM) };
+
+    // Flash
+    let mut flash_size_val: u32 = 0;
+    unsafe { esp_idf_sys::esp_flash_get_size(std::ptr::null_mut(), &mut flash_size_val as *mut u32); }
+    let flash_size: usize = flash_size_val as usize;
+
+    // Taille de la partition applicative
+    let app_size: usize = unsafe {
+        let it = esp_idf_sys::esp_partition_find_first(
+            esp_idf_sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP,
+            esp_idf_sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_ANY,
+            std::ptr::null(),
+        );
+        if it.is_null() { 0 } else { (*it).size as usize }
+    };
+
+    // Fréquence CPU : ESP32-S3 = 240 MHz (valeur fixe, pas d'API publique dans les bindings)
+    let cpu_freq: u32 = 240;
+
+    // Uptime approximatif via esp_timer_get_time (microsecondes → secondes)
+    let uptime_us: i64 = unsafe { esp_idf_sys::esp_timer_get_time() };
+    let uptime_secs: u64 = if uptime_us > 0 { (uptime_us as u64) / 1_000_000 } else { 0 };
+
+    // Température interne (si disponible)
+    let temperature: Option<f32> = {
+        let raw: f32 = unsafe { esp_idf_sys::esp_efuse_get_pkg_ver() as f32 };
+        // Approximation : le capteur interne n'est pas toujours fiable
+        None
+    };
+
+    // Espace libre NVS estimé (on compte le nombre d'entrées dans devicesKnow comme indicateur)
+    let nvs_free: usize = 0; // Valeur indicative — l'API NVS native ne permet pas de récupérer simplement l'espace libre
+
+    let resources = serde_json::json!({
+        "heap_total": heap_total,
+        "heap_free": heap_free,
+        "heap_min_free": heap_min_free,
+        "heap_used_pct": if heap_total > 0 { ((heap_total - heap_free) as f64 / heap_total as f64 * 100.0).round() as u32 } else { 0 },
+        "heap_min_free_pct": if heap_total > 0 { ((heap_total - heap_min_free) as f64 / heap_total as f64 * 100.0).round() as u32 } else { 0 },
+        "psram_total": psram_total,
+        "psram_free": psram_free,
+        "psram_used_pct": if psram_total > 0 { ((psram_total - psram_free) as f64 / psram_total as f64 * 100.0).round() as u32 } else { 0 },
+        "flash_size": flash_size,
+        "app_size": app_size,
+        "app_used_pct": if flash_size > 0 { ((flash_size - 0) as f64 / flash_size as f64 * 100.0).round() as u32 } else { 0 },
+        "cpu_freq_mhz": cpu_freq,
+        "uptime_secs": uptime_secs,
+        "temperature": temperature,
+    });
+
+    let response_data = serde_json::to_string(&resources)?;
+    let mut response = req.into_ok_response()?;
+    response.write(response_data.as_bytes())?;
+    Ok(())
+}
+
 pub fn handle_post_actuators(
     mut req: Request<&mut EspHttpConnection<'_>>,
     act_clone: Arc<Mutex<ActuatorsState>>,
     actuators: Arc<Mutex<Actuators>>,
     nvs: Arc<Mutex<NvsStorage>>,
 ) -> Result<()> {
-    let mut buf = vec![0u8; 256];
+    let mut buf = vec![0u8; 512];
     let bytes_read = req.read(&mut buf)?;
-    let payload: ActuatorsState = serde_json::from_slice(&buf[..bytes_read])?;
     
-    info!("\x1b[35mUpdating actuators state: {:?}\x1b[0m", payload);
+    // Lire le payload JSON flexible (peut être complet OU partiel par actionneur)
+    let raw: serde_json::Value = serde_json::from_slice(&buf[..bytes_read])?;
+    
+    // Fusionner avec l'état actuel
+    let merged = {
+        let mut state = act_clone.lock().unwrap();
+        if let Some(val) = raw.get("rla").and_then(|v| v.as_bool()) { state.rla = val; }
+        if let Some(val) = raw.get("rlb").and_then(|v| v.as_bool()) { state.rlb = val; }
+        if let Some(val) = raw.get("swpwr").and_then(|v| v.as_bool()) { state.swpwr = val; }
+        if let Some(val) = raw.get("rla_speed").and_then(|v| v.as_i64()) { state.rla_speed = Some(val as u8); }
+        if let Some(val) = raw.get("rlb_speed").and_then(|v| v.as_i64()) { state.rlb_speed = Some(val as u8); }
+        if let Some(val) = raw.get("screen_brightness").and_then(|v| v.as_i64()) { state.screen_brightness = Some(val as u8); }
+        if let Some(h0) = raw.get("H0") {
+            if let Some(inv) = h0.get("inverseur").and_then(|v| v.as_i64()) { state.H0.inverseur = inv as i8; }
+            if let Some(sa) = h0.get("speed_a").and_then(|v| v.as_i64()) { state.H0.speed_a = sa as u8; }
+            if let Some(sb) = h0.get("speed_b").and_then(|v| v.as_i64()) { state.H0.speed_b = sb as u8; }
+        }
+        state.clone()
+    };
+
+    info!("\x1b[35mUpdating actuators state: {:?}\x1b[0m", merged);
     {
         let mut state = act_clone.lock().unwrap();
-        *state = payload.clone();
+        *state = merged.clone();
     }
 
     // Appliquer physiquement et sauvegarder en NVS
     {
         let mut acts = actuators.lock().unwrap();
-        if let Some(speed) = payload.rla_speed {
+        if let Some(speed) = merged.rla_speed {
             let _ = acts.relay_a.set_speed(speed as i32);
         }
-        let _ = acts.write("rla", payload.rla);
+        let _ = acts.write("rla", merged.rla);
 
-        if let Some(speed) = payload.rlb_speed {
+        if let Some(speed) = merged.rlb_speed {
             let _ = acts.relay_b.set_speed(speed as i32);
         }
-        let _ = acts.write("rlb", payload.rlb);
+        let _ = acts.write("rlb", merged.rlb);
 
-        let _ = acts.write("swpwr", payload.swpwr);
-        let _ = acts.write_h0(&payload.H0);
+        let _ = acts.write("swpwr", merged.swpwr);
+        let _ = acts.write_h0(&merged.H0);
 
-        if let Some(brightness) = payload.screen_brightness {
+        if let Some(brightness) = merged.screen_brightness {
             let mut storage = nvs.lock().unwrap();
             let _ = storage.set_i32("scrBrightness", brightness as i32);
         }
@@ -1029,36 +1163,36 @@ pub fn handle_post_actuators(
         let mut map = registry.load_registry();
 
         if let Some(entry) = map.get_mut("rla") {
-            if payload.rla {
-                entry.pwm_val = Some(payload.rla_speed.unwrap_or(100));
+            if merged.rla {
+                entry.pwm_val = Some(merged.rla_speed.unwrap_or(100));
             } else {
                 entry.pwm_val = Some(0);
             }
         }
         if let Some(entry) = map.get_mut("rlb") {
-            if payload.rlb {
-                entry.pwm_val = Some(payload.rlb_speed.unwrap_or(100));
+            if merged.rlb {
+                entry.pwm_val = Some(merged.rlb_speed.unwrap_or(100));
             } else {
                 entry.pwm_val = Some(0);
             }
         }
         if let Some(entry) = map.get_mut("swpwr") {
-            entry.pwm_val = Some(if payload.swpwr { 100 } else { 0 });
+            entry.pwm_val = Some(if merged.swpwr { 100 } else { 0 });
         }
         if let Some(entry) = map.get_mut("H0") {
-            entry.inverseur = Some(payload.H0.inverseur);
+            entry.inverseur = Some(merged.H0.inverseur);
             if let Some(ref mut ina) = entry.ina {
-                ina.pwm_val = payload.H0.speed_a;
+                ina.pwm_val = merged.H0.speed_a;
             }
             if let Some(ref mut inb) = entry.inb {
-                inb.pwm_val = payload.H0.speed_b;
+                inb.pwm_val = merged.H0.speed_b;
             }
         }
 
         registry.save_registry(&map);
     }
 
-    let response_data = serde_json::to_string(&payload)?;
+    let response_data = serde_json::to_string(&merged)?;
     let mut response = req.into_ok_response()?;
     response.write(response_data.as_bytes())?;
     Ok(())

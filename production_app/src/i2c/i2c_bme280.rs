@@ -29,8 +29,29 @@ impl I2cBme280 {
         Self { channel, address }
     }
 
-    pub fn init(&mut self, _driver: &mut I2cDriver<'static>) -> Result<(), anyhow::Error> {
+    // `init` (type: fn(&mut self, &mut I2cDriver<'static>) -> Result<(), anyhow::Error>) : Initialise le capteur BME280/BMP280 en lisant le Chip ID et en configurant les registres de contrôle.
+    pub fn init(&mut self, driver: &mut I2cDriver<'static>) -> Result<(), anyhow::Error> {
         log::info!("Initializing BME280 at channel {}, address 0x{:02x}...", self.channel, self.address);
+        
+        // `chip_id` (type: [u8; 1]) : Registre 0xD0 contenant l'identifiant du composant (0x60 pour BME280, 0x58 pour BMP280).
+        let mut chip_id = [0u8; 1];
+        if driver.write_read(self.address, &[0xD0], &mut chip_id, 50).is_ok() {
+            if chip_id[0] == 0x58 {
+                log::warn!("Capteur détecté à 0x{:02x} est un BMP280 (Température + Pression uniquement, PAS d'humidité physique !)", self.address);
+            } else if chip_id[0] == 0x60 {
+                log::info!("Capteur BME280 (Temp + Pres + Hum) confirmé à l'adresse 0x{:02x} (Chip ID: 0x60)", self.address);
+            } else {
+                log::info!("Capteur I2C à 0x{:02x} a pour Chip ID : 0x{:02x}", self.address, chip_id[0]);
+            }
+        }
+
+        // [Note Dev Junior] : La spécification Bosch indique qu'un changement dans `ctrl_hum` (0xF2)
+        // ne prend effet qu'APRÈS une écriture dans `ctrl_meas` (0xF4).
+        // 0xF2 = 0x01 (oversampling humidité x1)
+        let _ = driver.write(self.address, &[0xF2, 0x01], 50);
+        // 0xF4 = 0x27 (oversampling temp x1, pres x1, mode normal)
+        let _ = driver.write(self.address, &[0xF4, 0x27], 50);
+
         BME280_FOUND.store(true, std::sync::atomic::Ordering::Relaxed);
         BME280_CHANNEL.store(self.channel, std::sync::atomic::Ordering::Relaxed);
         BME280_ADDR.store(self.address, std::sync::atomic::Ordering::Relaxed);
@@ -41,7 +62,9 @@ impl I2cBme280 {
         BME280_FOUND.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    // `read_value` (type: fn(&mut self, &mut I2cDriver<'static>) -> Option<Bme280Readings>) : Lit les registres de calibration et de mesure bruts, applique les formules de compensation Bosch BME280 et retourne la température, pression et humidité.
     pub fn read_value(&mut self, driver: &mut I2cDriver<'static>) -> Option<Bme280Readings> {
+        // `calib_data1` (type: [u8; 24]) : Octets de calibration T1..T3 et P1..P9 (registres 0x88..0xA1).
         let mut calib_data1 = [0u8; 24];
         if driver.write_read(self.address, &[0x88], &mut calib_data1, 50).is_err() {
             return None;
@@ -60,26 +83,34 @@ impl I2cBme280 {
         let dig_p8 = i16::from_le_bytes([calib_data1[20], calib_data1[21]]);
         let dig_p9 = i16::from_le_bytes([calib_data1[22], calib_data1[23]]);
 
+        // `dig_h1` (type: [u8; 1]) : Coefficient de calibration H1 (registre 0xA1).
         let mut dig_h1 = [0u8; 1];
         if driver.write_read(self.address, &[0xA1], &mut dig_h1, 50).is_err() {
             return None;
         }
         
+        // `calib_data2` (type: [u8; 7]) : Octets de calibration H2..H6 (registres 0xE1..0xE7).
         let mut calib_data2 = [0u8; 7];
         if driver.write_read(self.address, &[0xE1], &mut calib_data2, 50).is_err() {
             return None;
         }
         let dig_h2 = i16::from_le_bytes([calib_data2[0], calib_data2[1]]);
         let dig_h3 = calib_data2[2];
-        let dig_h4 = ((calib_data2[3] as i16) << 4) | ((calib_data2[4] & 0x0F) as i16);
-        let dig_h5 = ((calib_data2[5] as i16) << 4) | (((calib_data2[4] & 0xF0) >> 4) as i16);
+        // [Note Dev Junior] : Cast signé i8 impératif pour préserver la propagation du signe sur 16 bits.
+        let dig_h4 = ((calib_data2[3] as i8 as i16) << 4) | ((calib_data2[4] & 0x0F) as i16);
+        let dig_h5 = ((calib_data2[5] as i8 as i16) << 4) | (((calib_data2[4] & 0xF0) >> 4) as i16);
         let dig_h6 = calib_data2[6] as i8;
 
+        // Configuration du mode de mesure :
+        // 0xF2 (ctrl_hum) = 0x01 (oversampling humidité x1)
+        // 0xF4 (ctrl_meas) = 0x25 (oversampling temp x1, pres x1, mode Forcé 0x01)
         if driver.write(self.address, &[0xF2, 0x01], 50).is_err() { return None; }
-        if driver.write(self.address, &[0xF4, 0x27], 50).is_err() { return None; }
+        if driver.write(self.address, &[0xF4, 0x25], 50).is_err() { return None; }
         
+        // Attente de la fin de la conversion (15ms)
         std::thread::sleep(std::time::Duration::from_millis(15));
         
+        // `raw_data` (type: [u8; 8]) : Données brutes lues à partir du registre 0xF7 (Press 3B, Temp 3B, Hum 2B).
         let mut raw_data = [0u8; 8];
         if driver.write_read(self.address, &[0xF7], &mut raw_data, 50).is_err() {
             return None;
@@ -89,11 +120,13 @@ impl I2cBme280 {
         let adc_t = ((raw_data[3] as i32) << 12) | ((raw_data[4] as i32) << 4) | ((raw_data[5] as i32) >> 4);
         let adc_h = ((raw_data[6] as i32) << 8) | (raw_data[7] as i32);
 
+        // Compensation de la Température
         let var1 = (((adc_t >> 3) - ((dig_t1 as i32) << 1)) * (dig_t2 as i32)) >> 11;
         let var2 = (((((adc_t >> 4) - (dig_t1 as i32)) * ((adc_t >> 4) - (dig_t1 as i32))) >> 12) * (dig_t3 as i32)) >> 14;
         let t_fine = var1 + var2;
         let temperature = ((t_fine * 5 + 128) >> 8) as f32 / 100.0;
 
+        // Compensation de la Pression
         let mut var1_p = (t_fine as f64 / 2.0) - 64000.0;
         let mut var2_p = var1_p * var1_p * (dig_p6 as f64) / 32768.0;
         var2_p = var2_p + var1_p * (dig_p5 as f64) * 2.0;
@@ -112,6 +145,7 @@ impl I2cBme280 {
             p as f32 / 100.0
         };
 
+        // Compensation de l'Humidité
         let mut h = (t_fine as f64) - 76800.0;
         h = (adc_h as f64 - (((dig_h4 as f64) * 64.0) + ((dig_h5 as f64) / 16384.0) * h)) *
             ((dig_h2 as f64) / 65536.0 * (1.0 + (dig_h6 as f64) / 67108864.0 * h *

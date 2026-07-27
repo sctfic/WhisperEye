@@ -282,6 +282,8 @@ impl CronWorker {
         }
         if let Some(ref scd) = scd_opt {
             readings.co2_scd41 = scd.co2;
+            readings.temp_scd41 = scd.temperature;
+            readings.hum_scd41 = scd.humidity;
         }
         
         let (ina_on, inb_on) = {

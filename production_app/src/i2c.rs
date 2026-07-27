@@ -234,8 +234,12 @@ impl I2c {
             if channel_selected {
                 if let Ok(mut driver) = get_driver(reversed) {
                     if let Some(r) = scd.read_value(&mut driver) {
+                        // [Junior Dev Note] : On stocke TOUTES les valeurs du SCD4x (CO2, Temp, Hum) dans I2C_READINGS
+                        // avec les suffixes _CO2, _T, _H pour correspondre aux IDs du registre devicesKnow.
                         let mut map = I2C_READINGS.lock().unwrap();
-                        map.insert(format!("i2c:{}:0x{:02x}", scd.channel, scd.address), r.co2 as f32);
+                        map.insert(format!("i2c:{}:0x{:02x}_CO2", scd.channel, scd.address), r.co2 as f32);
+                        map.insert(format!("i2c:{}:0x{:02x}_T", scd.channel, scd.address), r.temperature);
+                        map.insert(format!("i2c:{}:0x{:02x}_H", scd.channel, scd.address), r.humidity);
                         
                         if scd_res.is_none() {
                             scd_res = Some(r);

@@ -45,6 +45,15 @@ pub struct RuleCondition {
     pub else_expr: Option<String>,
 }
 
+/// `MissingInfo` (structure) : Compteur de défaillance d'un capteur.
+/// - `since` (type: String) : Horodatage ISO 8601 du début de l'absence.
+/// - `count` (type: u32) : Nombre de cycles consécutifs où le capteur est absent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissingInfo {
+    pub since: String,
+    pub count: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceEntry {
     pub name: String,
@@ -77,6 +86,9 @@ pub struct DeviceEntry {
     /// `rules` (type: Option<Vec<RuleCondition>>) : Liste des règles de planification événementielle associées.
     #[serde(skip_serializing_if = "Option::is_none", rename = "Rule")]
     pub rules: Option<Vec<RuleCondition>>,
+    /// `missing` (type: Option<MissingInfo>) : Compteur d'absence consécutive du capteur.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing: Option<MissingInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +122,9 @@ pub struct PersistEntry {
     /// `rules` (type: Option<Vec<RuleCondition>>) : Liste des règles de planification événementielle.
     #[serde(skip_serializing_if = "Option::is_none", rename = "Rule")]
     pub rules: Option<Vec<RuleCondition>>,
+    /// `missing` (type: Option<MissingInfo>) : Compteur d'absence consécutive du capteur.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing: Option<MissingInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -151,6 +166,9 @@ pub struct DeviceDisplay {
     /// `rules` (type: Option<Vec<RuleCondition>>) : Liste des règles de planification événementielle.
     #[serde(skip_serializing_if = "Option::is_none", rename = "Rule")]
     pub rules: Option<Vec<RuleCondition>>,
+    /// `missing` (type: Option<MissingInfo>) : Informations sur les absences consécutives du capteur.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing: Option<MissingInfo>,
 }
 
 /// Métadonnées techniques d'un capteur (issues des documentations officielles)
@@ -269,6 +287,7 @@ pub fn set_correction_formula(nvs: &Arc<Mutex<NvsStorage>>, device_id: &str, for
             ina: None,
             inb: None,
             rules: None,
+            missing: None,
         });
     }
     let new_str = serde_json::to_string(&persist_map)?;
@@ -312,6 +331,7 @@ impl DeviceRegistry {
                 ina: None,
                 inb: None,
                 rules: None,
+                missing: None,
             };
             if id == "H0" {
                 entry.inverseur = Some(0);
@@ -361,6 +381,7 @@ impl DeviceRegistry {
                             ina: pe.ina,
                             inb: pe.inb,
                             rules: pe.rules,
+                            missing: pe.missing,
                         });
                     }
                 }
@@ -390,6 +411,7 @@ impl DeviceRegistry {
                 ina: v.ina.clone(),
                 inb: v.inb.clone(),
                 rules: v.rules.clone(),
+                missing: v.missing.clone(),
             });
         }
         let mut storage = self.nvs.lock().unwrap();
@@ -420,6 +442,7 @@ impl DeviceRegistry {
             ina: None,
             inb: None,
             rules: None,
+            missing: None,
         };
 
         // 1. Static Devices (Always present, avec conservation des noms NVS personnalisés)
@@ -509,11 +532,23 @@ impl DeviceRegistry {
                 }
                 updated.insert(id_h, entry_h);
             } else if addr == 0x62 {
-                let id = format!("i2c:{}:0x{:02x}", channel, addr);
-                let mut entry = saved.remove(&id).unwrap_or_else(|| make_default("Capteur CO2 SCD41".to_string(), false, true, Some(addr_str.clone())));
-                entry.present = true;
-                if entry.address.is_none() { entry.address = Some(addr_str.clone()); }
-                updated.insert(id, entry);
+                let id_c = format!("i2c:{}:0x{:02x}_CO2", channel, addr);
+                let mut entry_c = saved.remove(&id_c).unwrap_or_else(|| make_default(format!("SCD41-CO2 (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
+                entry_c.present = true;
+                if entry_c.address.is_none() { entry_c.address = Some(addr_str.clone()); }
+                updated.insert(id_c, entry_c);
+
+                let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
+                let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default(format!("SCD41-Temp (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
+                entry_t.present = true;
+                if entry_t.address.is_none() { entry_t.address = Some(addr_str.clone()); }
+                updated.insert(id_t, entry_t);
+
+                let id_h = format!("i2c:{}:0x{:02x}_H", channel, addr);
+                let mut entry_h = saved.remove(&id_h).unwrap_or_else(|| make_default(format!("SCD41-Hum (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
+                entry_h.present = true;
+                if entry_h.address.is_none() { entry_h.address = Some(addr_str.clone()); }
+                updated.insert(id_h, entry_h);
             } else if addr == 0x76 || addr == 0x77 {
                 let id_t = format!("i2c:{}:0x{:02x}_T", channel, addr);
                 let mut entry_t = saved.remove(&id_t).unwrap_or_else(|| make_default(format!("BME280-Temp (i2c:{}:0x{:02x})", channel, addr), false, true, Some(addr_str.clone())));
@@ -541,9 +576,35 @@ impl DeviceRegistry {
             }
         }
 
+        // Gérer les devices de l'ancien scan qui ne sont plus dans le nouveau scan
         for (id, mut entry) in saved {
+            // `now_iso` (type: String) : Horodatage ISO 8601 courant pour marquer le début de l'absence.
+            let now_iso = crate::web_handlers::get_formatted_time();
+            if entry.present {
+                // Le device était présent au scan précédent → il vient de disparaître → initialiser missing
+                entry.missing = Some(MissingInfo {
+                    since: now_iso,
+                    count: 1,
+                });
+            } else if let Some(ref mut m) = entry.missing {
+                // Le device était déjà absent → incrémenter le compteur
+                m.count = m.count.saturating_add(1);
+            } else {
+                // Absent mais pas de compteur existant (cas rare après migration) → initialiser
+                entry.missing = Some(MissingInfo {
+                    since: now_iso,
+                    count: 1,
+                });
+            }
             entry.present = false;
             updated.insert(id, entry);
+        }
+
+        // Pour les devices présents dans le nouveau scan, réinitialiser le compteur missing si existant
+        for (_, entry) in updated.iter_mut() {
+            if entry.present && entry.missing.is_some() {
+                entry.missing = None;
+            }
         }
 
         self.save_registry(&updated);
@@ -711,6 +772,12 @@ impl DeviceRegistry {
                             } else if id.ends_with("_H") && id.contains("0x44") {
                                 h_raw = entry.readings.humidity_sht45 as f64;
                                 h_present = h_raw != -255.0;
+                            } else if id.ends_with("_T") && id.contains("0x62") {
+                                h_raw = entry.readings.temp_scd41 as f64;
+                                h_present = h_raw != -255.0;
+                            } else if id.ends_with("_H") && id.contains("0x62") {
+                                h_raw = entry.readings.hum_scd41 as f64;
+                                h_present = h_raw != -255.0;
                             } else if id.contains("0x62") {
                                 h_raw = entry.readings.co2_scd41 as f64;
                                 h_present = h_raw != -255.0;
@@ -734,13 +801,16 @@ impl DeviceRegistry {
                         h_raw = (h_raw * 100.0).round() / 100.0;
                         let mut h_final = h_raw;
                         if correction != "x" && correction != "x.raw" && !correction.is_empty() {
+                            let scd_ch = crate::i2c::i2c_scd41::SCD41_CHANNEL.load(std::sync::atomic::Ordering::Relaxed);
                             let mut h_raw_values = HashMap::new();
                             h_raw_values.insert("vsense".to_string(), entry.readings.vsense.unwrap_or(0.0) as f64);
                             h_raw_values.insert("isense".to_string(), entry.readings.isense.unwrap_or(0.0) as f64);
                             h_raw_values.insert("touch".to_string(), if entry.readings.touch.unwrap_or(false) { 1.0 } else { 0.0 });
                             h_raw_values.insert("i2c:0:0x44_T".to_string(), entry.readings.temperature_sht45 as f64);
                             h_raw_values.insert("i2c:0:0x44_H".to_string(), entry.readings.humidity_sht45 as f64);
-                            h_raw_values.insert("i2c:0:0x62".to_string(), entry.readings.co2_scd41 as f64);
+                            h_raw_values.insert(format!("i2c:{}:0x62_CO2", scd_ch), entry.readings.co2_scd41 as f64);
+                            h_raw_values.insert(format!("i2c:{}:0x62_T", scd_ch), entry.readings.temp_scd41 as f64);
+                            h_raw_values.insert(format!("i2c:{}:0x62_H", scd_ch), entry.readings.hum_scd41 as f64);
                             for (addr, temp) in &entry.readings.ds18b20_temperatures {
                                 h_raw_values.insert(format!("onewr:{}", addr), *temp as f64);
                             }
@@ -865,6 +935,7 @@ impl DeviceRegistry {
                 ina: entry.ina.clone(),
                 inb: entry.inb.clone(),
                 rules: entry.rules.clone(),
+                missing: entry.missing.clone(),
             });
         }
 
@@ -922,6 +993,7 @@ impl DeviceRegistry {
                 ina: None,
                 inb: None,
                 rules: None,
+                missing: None,
             });
         }
 
@@ -961,6 +1033,20 @@ impl DeviceRegistry {
             if pwm_val.is_some() { entry.pwm_val = pwm_val; }
             if schedules.is_some() { entry.schedules = schedules; }
             if rules.is_some() { entry.rules = rules; }
+        }
+        self.save_registry(&map);
+        self.devices = map;
+        Ok(())
+    }
+
+    /// Supprime définitivement un périphérique du registre NVS (via devicesKnow).
+    pub fn delete_device(&mut self, id: &str) -> Result<(), anyhow::Error> {
+        if is_static_device(id) {
+            return Err(anyhow::anyhow!("Impossible de supprimer un périphérique statique"));
+        }
+        let mut map = self.load_registry();
+        if map.remove(id).is_some() {
+            info!("Device '{}' supprimé du registre devicesKnow", id);
         }
         self.save_registry(&map);
         self.devices = map;
@@ -1121,9 +1207,12 @@ pub fn apply_sensor_corrections(
     raw_values.insert("inb".to_string(), 0.0);
     
     // Valeurs réelles des capteurs
+    let scd_ch = crate::i2c::i2c_scd41::SCD41_CHANNEL.load(std::sync::atomic::Ordering::Relaxed);
     raw_values.insert("i2c:0:0x44_T".to_string(), readings.temperature_sht45 as f64);
     raw_values.insert("i2c:0:0x44_H".to_string(), readings.humidity_sht45 as f64);
-    raw_values.insert("i2c:0:0x62".to_string(), readings.co2_scd41 as f64);
+    raw_values.insert(format!("i2c:{}:0x62_CO2", scd_ch), readings.co2_scd41 as f64);
+    raw_values.insert(format!("i2c:{}:0x62_T", scd_ch), readings.temp_scd41 as f64);
+    raw_values.insert(format!("i2c:{}:0x62_H", scd_ch), readings.hum_scd41 as f64);
     
     let bme_t = {
         if let Ok(lock) = crate::i2c::i2c_bme280::BME280_TEMP.lock() {
@@ -1184,8 +1273,9 @@ pub fn apply_sensor_corrections(
     
     // 4. Corriger le CO2 SCD41
     if readings.co2_scd41 != -255 {
-        let id = "i2c:0:0x62";
-        let correction = get_correction_formula(nvs, id);
+        let scd_ch = crate::i2c::i2c_scd41::SCD41_CHANNEL.load(std::sync::atomic::Ordering::Relaxed);
+        let id = format!("i2c:{}:0x62_CO2", scd_ch);
+        let correction = get_correction_formula(nvs, &id);
         if correction != "x" && correction != "x.raw" && !correction.is_empty() {
             let tokens = tokenize(&correction, &raw_values, readings.co2_scd41 as f64);
             if let Ok(evaluated) = evaluate_expression(&tokens) {
@@ -1250,7 +1340,10 @@ pub fn get_corrected_sensor_values(nvs: &Arc<Mutex<NvsStorage>>, readings: &crat
     map.insert("i2c:0:0x44_H".to_string(), readings.humidity_sht45 as f64);
     
     // CO2 SCD41 (déjà corrigé)
-    map.insert("i2c:0:0x62".to_string(), readings.co2_scd41 as f64);
+    let scd_ch = crate::i2c::i2c_scd41::SCD41_CHANNEL.load(std::sync::atomic::Ordering::Relaxed);
+    map.insert(format!("i2c:{}:0x62_CO2", scd_ch), readings.co2_scd41 as f64);
+    map.insert(format!("i2c:{}:0x62_T", scd_ch), readings.temp_scd41 as f64);
+    map.insert(format!("i2c:{}:0x62_H", scd_ch), readings.hum_scd41 as f64);
     
     // DS18B20 1-wire (déjà corrigés)
     for (addr, temp) in &readings.ds18b20_temperatures {

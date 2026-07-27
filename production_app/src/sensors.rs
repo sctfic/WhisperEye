@@ -33,6 +33,8 @@ pub struct SensorReadings {
     pub temperature_sht45: f32,
     pub humidity_sht45: f32,
     pub co2_scd41: i32,
+    pub temp_scd41: f32,
+    pub hum_scd41: f32,
     pub ds18b20_temperatures: HashMap<String, f32>,
     pub vsense: Option<f32>,
     pub isense: Option<f32>,
@@ -47,9 +49,12 @@ impl serde::Serialize for SensorReadings {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(None)?;
         
+        let scd_ch = crate::i2c::i2c_scd41::SCD41_CHANNEL.load(std::sync::atomic::Ordering::Relaxed);
         map.serialize_entry("i2c:0:0x44_T", &self.temperature_sht45)?;
         map.serialize_entry("i2c:0:0x44_H", &self.humidity_sht45)?;
-        map.serialize_entry("i2c:0:0x62", &self.co2_scd41)?;
+        map.serialize_entry(&format!("i2c:{}:0x62_CO2", scd_ch), &self.co2_scd41)?;
+        map.serialize_entry(&format!("i2c:{}:0x62_T", scd_ch), &self.temp_scd41)?;
+        map.serialize_entry(&format!("i2c:{}:0x62_H", scd_ch), &self.hum_scd41)?;
         
         for (addr, temp) in &self.ds18b20_temperatures {
             map.serialize_entry(&format!("onewr:{}", addr), temp)?;
@@ -138,6 +143,8 @@ pub fn read_sensors(
         temperature_sht45: -255.0,
         humidity_sht45: -255.0,
         co2_scd41: -255,
+        temp_scd41: -255.0,
+        hum_scd41: -255.0,
         ds18b20_temperatures: ds_temps,
         vsense: None,
         isense: None,
