@@ -108,6 +108,11 @@ pub fn register_routes(
         )
     })?;
 
+    // GET /api/resources
+    server.api_handler("/api/resources", esp_idf_svc::http::Method::Get, move |req| -> Result<(), anyhow::Error> {
+        web_handlers::handle_api_resources(req)
+    })?;
+
     // GET /api/check_updates
     let updates_nvs = Arc::clone(&nvs_storage);
     let updates_url = Arc::clone(&url_validation_state);

@@ -1054,6 +1054,16 @@ pub fn handle_api_resources(
         if it.is_null() { 0 } else { (*it).size as usize }
     };
 
+    // Taille de la partition NVS (Non-Volatile Storage)
+    let nvs_size: usize = unsafe {
+        let it = esp_idf_sys::esp_partition_find_first(
+            esp_idf_sys::esp_partition_type_t_ESP_PARTITION_TYPE_DATA,
+            esp_idf_sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_DATA_NVS,
+            std::ptr::null(),
+        );
+        if it.is_null() { 0 } else { (*it).size as usize }
+    };
+
     // Fréquence CPU : ESP32-S3 = 240 MHz (valeur fixe, pas d'API publique dans les bindings)
     let cpu_freq: u32 = 240;
 
@@ -1075,8 +1085,7 @@ pub fn handle_api_resources(
         "psram_free": psram_free,
         "psram_used_pct": if psram_total > 0 { ((psram_total - psram_free) as f64 / psram_total as f64 * 100.0).round() as u32 } else { 0 },
         "flash_size": flash_size,
-        "app_size": app_size,
-        "app_used_pct": if flash_size > 0 { ((flash_size - 0) as f64 / flash_size as f64 * 100.0).round() as u32 } else { 0 },
+        "nvs_size": nvs_size,
         "cpu_freq_mhz": cpu_freq,
         "uptime_secs": uptime_secs,
         "temperature": temperature,

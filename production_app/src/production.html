@@ -1834,53 +1834,58 @@
                     const section = document.getElementById('resources_section');
                     if (!section) return;
                     
+                    // Helper: barre de progression colorée
                     function bar(pct, color) {
                         const safePct = Math.min(100, Math.max(0, pct));
-                        return `<div style="background: rgba(255,255,255,0.1); border-radius: 4px; height: 8px; width: 100%; overflow: hidden; margin-top: 0.2rem;">
+                        return `<div style="background: rgba(255,255,255,0.08); border-radius: 4px; height: 8px; width: 100%; overflow: hidden; margin-top: 0.2rem;">
                             <div style="height: 100%; width: ${safePct}%; background: ${color}; border-radius: 4px; transition: width 0.5s ease;"></div>
                         </div>`;
                     }
 
+                    // Helper: pastille colorée pour les tuiles récap
+                    // `title` (type: string) : Texte d'explication affiché au survol.
+                    function pill(label, value, color = 'var(--text-primary)', title = '') {
+                        const titleAttr = title ? ` title="${title}"` : '';
+                        return `
+                            <div style="display: flex; flex-direction: column; align-items: center; gap: 0.15rem; background: rgba(11,15,25,0.5); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.5rem 0.4rem; min-width: 0; flex: 1;"${titleAttr}>
+                                <span style="font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap;">${label}</span>
+                                <span style="font-size: 1rem; font-weight: 700; color: ${color}; white-space: nowrap;">${value}</span>
+                            </div>`;
+                    }
+
+                    // Uptime formaté
                     const uptime = data.uptime_secs || 0;
                     const days = Math.floor(uptime / 86400);
                     const hours = Math.floor((uptime % 86400) / 3600);
                     const mins = Math.floor((uptime % 3600) / 60);
-                    const uptimeStr = days > 0 ? `${days}j ${hours}h ${mins}m` : `${hours}h ${mins}m`;
+                    const uptimeStr = days > 0 ? `${days}j ${hours}h` : `${hours}h ${mins}m`;
 
-                    section.innerHTML = `
-                        <div class="info-group">
-                            <span class="info-label">Uptime</span>
-                            <span class="info-value" style="color: var(--accent-color); font-weight: 600;">${uptimeStr}</span>
-                        </div>
-                        <div class="info-group">
-                            <span class="info-label">CPU</span>
-                            <span class="info-value">${data.cpu_freq_mhz || '--'} MHz</span>
-                        </div>
-                        <div class="info-group">
-                            <span class="info-label">Heap RAM (DRAM)</span>
-                            <span class="info-value" style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.1rem; width: 100%;">
-                                <span>${formatBytes(data.heap_free)} / ${formatBytes(data.heap_total)} libres</span>
-                                ${bar(data.heap_used_pct, data.heap_used_pct > 80 ? '#ef4444' : data.heap_used_pct > 60 ? '#f59e0b' : '#10b981')}
-                                <span style="font-size: 0.7rem; color: var(--text-secondary);">Min: ${formatBytes(data.heap_min_free)} (watermark)</span>
+                    // Mini-tuiles récap (CPU, Uptime, Flash, NVS)
+                    const flashStr = formatBytes(data.flash_size);
+                    const nvsStr = data.nvs_size ? formatBytes(data.nvs_size) : '--';
+                    const heapColor = data.heap_used_pct > 80 ? '#ef4444' : data.heap_used_pct > 60 ? '#f59e0b' : '#10b981';
+
+                    let tilesHtml = `
+                        <div style="display: flex; gap: 0.4rem; margin-bottom: 0.8rem;">
+                            ${pill('CPU', `${data.cpu_freq_mhz || '--'} MHz`, 'var(--secondary-accent)', 'Fréquence du microprocesseur ESP32-S3')}
+                            ${pill('Uptime', uptimeStr, 'var(--accent-color)', 'Temps écoulé depuis le dernier démarrage')}
+                            ${pill('Flash', flashStr, 'var(--text-primary)', 'Taille totale de la mémoire Flash (stockage firmware + données)')}
+                            ${pill('NVS', nvsStr, 'var(--text-primary)', 'Taille de la partition NVS (Non-Volatile Storage : configuration, clés WiFi, TOTP, réglages)')}
+                        </div>`;
+
+                    // Détail DRAM (1 seule barre : usage actuel)
+                    // `heap_min_free` (type: usize) : Plus petit free jamais mesuré — visible en petit en dessous
+                    let dramHtml = `
+                        <div class="info-group" style="padding: 0.5rem 0;">
+                            <span class="info-label" style="font-size: 0.85rem; cursor: help; flex-shrink: 0;" title="Mémoire vive interne (Heap DRAM) utilisée par le CPU et les tâches FreeRTOS">DRAM</span>
+                            <span class="info-value" style="flex-direction: column; align-items: flex-end; gap: 0.1rem; width: 100%;">
+                                <span style="font-size: 0.85rem;">${formatBytes(data.heap_free)} / ${formatBytes(data.heap_total)} libres (${data.heap_used_pct}% utilisé)</span>
+                                ${bar(data.heap_used_pct, heapColor)}
+                                <span style="font-size: 0.7rem; color: var(--text-secondary);">min libre : ${formatBytes(data.heap_min_free)}</span>
                             </span>
-                        </div>
-                        ${data.psram_total > 0 ? `
-                        <div class="info-group">
-                            <span class="info-label">PSRAM</span>
-                            <span class="info-value" style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.1rem; width: 100%;">
-                                <span>${formatBytes(data.psram_free)} / ${formatBytes(data.psram_total)} libres</span>
-                                ${bar(data.psram_used_pct, data.psram_used_pct > 80 ? '#ef4444' : data.psram_used_pct > 60 ? '#f59e0b' : '#3b82f6')}
-                            </span>
-                        </div>` : ''}
-                        <div class="info-group">
-                            <span class="info-label">Flash</span>
-                            <span class="info-value">${formatBytes(data.flash_size)}</span>
-                        </div>
-                        <div class="info-group">
-                            <span class="info-label">Partition Applicative</span>
-                            <span class="info-value">${formatBytes(data.app_size)}</span>
-                        </div>
-                    `;
+                        </div>`;
+
+                    section.innerHTML = tilesHtml + dramHtml;
                 })
                 .catch(err => console.error('Erreur ressources:', err));
         }
