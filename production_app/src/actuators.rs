@@ -6,15 +6,18 @@ use esp_idf_hal::units::*;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct H0State {
-    pub inverseur: i8, // -1 : ina actif, 1 : inb actif, 0 : aucun, 2 : independant
+    /// `inverseur` (type: bool) : true = mode Inverseur (speed signé détermine INA/INB), false = mode Indépendant (speed_a/speed_b séparés).
+    pub inverseur: bool,
+    /// `speed_a` (type: u8) : Vitesse INA en % (0-100). En mode inverseur, actif si speed>0.
     pub speed_a: u8,
+    /// `speed_b` (type: u8) : Vitesse INB en % (0-100). En mode inverseur, actif si speed<0.
     pub speed_b: u8,
 }
 
 impl Default for H0State {
     fn default() -> Self {
         Self {
-            inverseur: 0,
+            inverseur: true,
             speed_a: 30,
             speed_b: 30,
         }
@@ -236,40 +239,42 @@ impl Actuators {
     }
 
     pub fn write_h0(&mut self, h0: &H0State) -> Result<(), esp_idf_hal::sys::EspError> {
-        match h0.inverseur {
-            -1 => {
-                // INA actif (sens A), INB forcé à 0
+        if h0.inverseur {
+            // [Junior Dev Note] : Mode Inverseur — speed_a > 0 = INA, speed_b > 0 = INB.
+            // L'un des deux est toujours à 0.
+            if h0.speed_a > 0 {
+                log::debug!("[H0] Mode Inverseur -> INA actif à {}% | INB=0%", h0.speed_a);
                 self.ina.set_level(Level::High)?;
                 self.ina.set_speed(h0.speed_a as i32)?;
                 self.inb.set_level(Level::Low)?;
                 self.inb.set_speed(0)?;
-            }
-            1 => {
-                // INB actif (sens B), INA forcé à 0
+            } else if h0.speed_b > 0 {
+                log::debug!("[H0] Mode Inverseur -> INB actif à {}% | INA=0%", h0.speed_b);
                 self.inb.set_level(Level::High)?;
                 self.inb.set_speed(h0.speed_b as i32)?;
                 self.ina.set_level(Level::Low)?;
                 self.ina.set_speed(0)?;
-            }
-            2 => {
-                // Indépendant : INA et INB pilotés séparément
-                let active_a = h0.speed_a > 0;
-                self.ina.set_level(active_a.into())?;
-                if active_a {
-                    self.ina.set_speed(h0.speed_a as i32)?;
-                }
-                let active_b = h0.speed_b > 0;
-                self.inb.set_level(active_b.into())?;
-                if active_b {
-                    self.inb.set_speed(h0.speed_b as i32)?;
-                }
-            }
-            _ => {
-                // Aucun actif (OFF ou autre)
+            } else {
+                log::debug!("[H0] Mode Inverseur -> OFF (INA=0%, INB=0%)");
                 self.ina.set_level(Level::Low)?;
                 self.ina.set_speed(0)?;
                 self.inb.set_level(Level::Low)?;
                 self.inb.set_speed(0)?;
+            }
+        } else {
+            // [Junior Dev Note] : Mode Indépendant — INA et INB pilotés séparément.
+            let active_a = h0.speed_a > 0;
+            let active_b = h0.speed_b > 0;
+            log::debug!("[H0] Mode Independant -> INA={}% ({}), INB={}% ({})",
+                h0.speed_a, if active_a { "ON" } else { "OFF" },
+                h0.speed_b, if active_b { "ON" } else { "OFF" });
+            self.ina.set_level(active_a.into())?;
+            if active_a {
+                self.ina.set_speed(h0.speed_a as i32)?;
+            }
+            self.inb.set_level(active_b.into())?;
+            if active_b {
+                self.inb.set_speed(h0.speed_b as i32)?;
             }
         }
         Ok(())

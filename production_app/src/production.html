@@ -1902,7 +1902,7 @@
             rlb: false,
             swpwr: true,
             H0: {
-                inverseur: 0,
+                inverseur: true,
                 speed_a: 30,
                 speed_b: 30
             },
@@ -2028,13 +2028,14 @@
         };
 
         // Helper pour changer le mode du Pont H (H0) depuis l'IHM Web
-        window.switchH0Mode = function (modeVal) {
-            window.actuatorStates.H0.inverseur = parseInt(modeVal);
-            if (modeVal === 2) {
-                window.actuatorStates.H0.speed_a = window.actuatorStates.H0.speed_a || 30;
-                window.actuatorStates.H0.speed_b = window.actuatorStates.H0.speed_b || 30;
+        window.switchH0Mode = function (isInverseur) {
+            window.actuatorStates.H0.inverseur = isInverseur;
+            if (!isInverseur) {
+                // Mode indépendant : valeurs par défaut
+                window.actuatorStates.H0.speed_a = window.actuatorStates.H0.speed_a || 0;
+                window.actuatorStates.H0.speed_b = window.actuatorStates.H0.speed_b || 0;
             } else {
-                window.actuatorStates.H0.inverseur = 0; // OFF par défaut
+                // Mode inverseur : OFF
                 window.actuatorStates.H0.speed_a = 0;
                 window.actuatorStates.H0.speed_b = 0;
             }
@@ -2042,21 +2043,19 @@
         };
 
         window.toggleH0Mode = function (checked) {
-            window.switchH0Mode(checked ? 2 : 0);
+            // checked = true → mode inverseur, false → mode indépendant
+            window.switchH0Mode(checked);
         };
 
         window.updateH0InverseurSlider = function (val) {
             const valNum = parseInt(val);
             if (valNum > 0) {
-                window.actuatorStates.H0.inverseur = -1; // INA
                 window.actuatorStates.H0.speed_a = valNum;
                 window.actuatorStates.H0.speed_b = 0;
             } else if (valNum < 0) {
-                window.actuatorStates.H0.inverseur = 1; // INB
                 window.actuatorStates.H0.speed_b = -valNum;
                 window.actuatorStates.H0.speed_a = 0;
             } else {
-                window.actuatorStates.H0.inverseur = 0; // OFF
                 window.actuatorStates.H0.speed_a = 0;
                 window.actuatorStates.H0.speed_b = 0;
             }
@@ -2111,16 +2110,18 @@
         function sendH0Payload() {
             const h0 = window.actuatorStates.H0;
             let payload;
-            // [Junior Dev Note] : Mode indépendant (inverseur === 2) → speed_a/speed_b
-            // Mode inverseur (inverseur === -1 ou 1) ou OFF (0) → speed signé
-            if (h0.inverseur === 2) {
+            if (!h0.inverseur) {
+                // Mode indépendant : speed_a/speed_b séparés [0, 100]
                 payload = { H0: { speed_a: h0.speed_a, speed_b: h0.speed_b } };
-            } else if (h0.inverseur === -1) {
-                payload = { H0: { speed: h0.speed_a } }; // positif = INA
-            } else if (h0.inverseur === 1) {
-                payload = { H0: { speed: -(h0.speed_b) } }; // négatif = INB
             } else {
-                payload = { H0: { speed: 0 } };
+                // Mode inverseur : valeur signée unique [-100, 100]
+                if (h0.speed_a > 0) {
+                    payload = { H0: { speed: h0.speed_a } }; // positif = INA
+                } else if (h0.speed_b > 0) {
+                    payload = { H0: { speed: -(h0.speed_b) } }; // négatif = INB
+                } else {
+                    payload = { H0: { speed: 0 } };
+                }
             }
             fetch('/api/actuators', {
                 method: 'POST',
@@ -2167,7 +2168,7 @@
                             if (dev.id === 'swpwr') window.actuatorStates.swpwr = (dev.value === 'ON');
                             if (dev.id === 'H0') {
                                 window.actuatorStates.H0 = {
-                                    inverseur: dev.inverseur !== undefined && dev.inverseur !== null ? dev.inverseur : 0,
+                                    inverseur: dev.inverseur !== undefined && dev.inverseur !== null ? dev.inverseur : true,
                                     speed_a: dev.ina ? dev.ina.pwm_val : 30,
                                     speed_b: dev.inb ? dev.inb.pwm_val : 30
                                 };
@@ -2217,11 +2218,11 @@
                             }
 
                             if (dev.id === 'H0') {
-                                const isIndep = dev.inverseur === 2;
+                                const isInverseur = dev.inverseur === true || dev.inverseur === null || dev.inverseur === undefined;
                                 const modeSwitch = document.getElementById('switch_mode_H0');
-                                if (modeSwitch) modeSwitch.checked = isIndep;
+                                if (modeSwitch) modeSwitch.checked = isInverseur;
 
-                                if (isIndep) {
+                                if (!isInverseur) {
                                     const sliderA = document.getElementById('range_H0_a');
                                     const valA = dev.ina ? dev.ina.pwm_val : 30;
                                     if (sliderA && document.activeElement !== sliderA) {
@@ -2241,8 +2242,12 @@
                                     }
                                 } else {
                                     let valH0 = 0;
-                                    if (dev.inverseur === -1) valH0 = dev.ina ? dev.ina.pwm_val : 30;
-                                    else if (dev.inverseur === 1) valH0 = dev.inb ? -dev.inb.pwm_val : -30;
+                                    if (isInverseur) {
+                                        const a = dev.ina ? dev.ina.pwm_val : 0;
+                                        const b = dev.inb ? dev.inb.pwm_val : 0;
+                                        if (a > 0) valH0 = a;
+                                        else if (b > 0) valH0 = -b;
+                                    }
 
                                     const slider = document.getElementById('range_H0');
                                     if (slider && document.activeElement !== slider) {
@@ -2316,7 +2321,7 @@
                                                         <span id="range_val_screen" style="font-weight: 700; color: var(--accent-color); font-size: 0.95rem; min-width: 38px; text-align: right;">${valPct}%</span>
                                                     </div>`;
                                 } else if (dev.id === 'H0') {
-                                    const isIndep = dev.inverseur === 2;
+                                    const isInverseur = dev.inverseur === true || dev.inverseur === null || dev.inverseur === undefined;
                                     const isPwmError = isPowerMissing;
                                     const inputClass = isPwmError ? 'slider-danger' : '';
                                     const inputStyle = isPwmError ? 'accent-color: #ef4444; filter: drop-shadow(0 0 2px rgba(239,68,68,0.5));' : '';
@@ -2324,8 +2329,12 @@
                                     const warningTitle = isPwmError ? 'title="Alimentation manquante !"' : '';
 
                                     let valH0 = 0;
-                                    if (dev.inverseur === -1) valH0 = dev.ina ? dev.ina.pwm_val : 30;
-                                    else if (dev.inverseur === 1) valH0 = dev.inb ? -dev.inb.pwm_val : -30;
+                                    if (isInverseur) {
+                                        const a = dev.ina ? dev.ina.pwm_val : 0;
+                                        const b = dev.inb ? dev.inb.pwm_val : 0;
+                                        if (a > 0) valH0 = a;         // INA (positif)
+                                        else if (b > 0) valH0 = -b;   // INB (négatif)
+                                    }
 
                                     const valA = dev.ina ? dev.ina.pwm_val : 30;
                                     const valB = dev.inb ? dev.inb.pwm_val : 30;
@@ -2337,7 +2346,7 @@
                                     valueHtml = `
                                                     <div style="display: flex; flex-direction: column; gap: 0.5rem; width: 220px;" ${warningTitle}>
                                                         <!-- Mode Inverseur -->
-                                                        <div id="container_inverseur_H0" style="display: ${isIndep ? 'none' : 'flex'}; align-items: center; gap: 0.5rem; width: 100%;">
+                                                        <div id="container_inverseur_H0" style="display: ${isInverseur ? 'flex' : 'none'}; align-items: center; gap: 0.5rem; width: 100%;">
                                                             <div class="slider-wrapper" style="width: 140px;">
                                                                 <input type="range" id="range_H0" min="-100" max="100" step="${getStepValue('H0')}" value="${valH0}"
                                                                     class="range-slider ${inputClass}" style="${inputStyle}"
@@ -2349,7 +2358,7 @@
                                                         </div>
 
                                                         <!-- Mode Indépendant -->
-                                                        <div id="container_indep_H0" style="display: ${isIndep ? 'flex' : 'none'}; flex-direction: column; gap: 0.4rem; width: 100%;">
+                                                        <div id="container_indep_H0" style="display: ${!isInverseur ? 'flex' : 'none'}; flex-direction: column; gap: 0.4rem; width: 100%;">
                                                             <div style="display: flex; align-items: center; gap: 0.4rem; justify-content: space-between;">
                                                                 <span style="font-size: 0.75rem; color: var(--text-secondary); min-width: 30px;">INA</span>
                                                                 <div class="slider-wrapper" style="width: 110px;">
@@ -2389,12 +2398,12 @@
 
                                 let indepHtml = '';
                                 if (dev.id === 'H0') {
-                                    const isIndep = dev.inverseur === 2;
+                                    const isInverseur = dev.inverseur === true || dev.inverseur === null || dev.inverseur === undefined;
                                     indepHtml = `
                                         <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                                            <span style="font-size: 0.8rem; color: var(--text-primary);">Mode Indépendant</span>
+                                            <span style="font-size: 0.8rem; color: var(--text-primary);">Mode Inverseur</span>
                                             <label class="switch" style="transform: scale(0.8);">
-                                                <input type="checkbox" id="switch_mode_H0" ${isIndep ? 'checked' : ''} onchange="toggleH0Mode(this.checked)">
+                                                <input type="checkbox" id="switch_mode_H0" ${isInverseur ? 'checked' : ''} onchange="toggleH0Mode(this.checked)">
                                                 <span class="slider"></span>
                                             </label>
                                         </div>`;

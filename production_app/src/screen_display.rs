@@ -614,12 +614,7 @@ pub fn run_ihm(
                 let mut b = board.lock().unwrap();
                 let (ina_act, inb_act) = {
                     let act = actuators_state.lock().unwrap();
-                    match act.H0.inverseur {
-                        -1 => (true, false),
-                        1 => (false, true),
-                        2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
-                        _ => (false, false),
-                    }
+                    (act.H0.speed_a > 0, act.H0.speed_b > 0)
                 };
                 b.read_value(ina_act, inb_act)
             };
@@ -634,12 +629,7 @@ pub fn run_ihm(
 
         let (current_rla, current_rlb, current_ina, current_inb) = {
             let act = actuators_state.lock().unwrap();
-            let (ina_act, inb_act) = match act.H0.inverseur {
-                -1 => (true, false),
-                1 => (false, true),
-                2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
-                _ => (false, false),
-            };
+            let (ina_act, inb_act) = (act.H0.speed_a > 0, act.H0.speed_b > 0);
             (act.rla, act.rlb, ina_act, inb_act)
         };
 
@@ -762,7 +752,7 @@ pub fn run_ihm(
         //     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
         //     .draw(&mut display);
 
-        if h0_state.inverseur == 2 {
+        if !h0_state.inverseur {
             // Mode indépendant : afficher A:XX% et B:XX%
             let a_text = if has_power {
                 if current_ina { format!("A:{}% ", h0_state.speed_a) } else { "A:0%  ".to_string() }
@@ -786,10 +776,10 @@ pub fn run_ihm(
                 .draw(&mut display);
             if !has_power {
                 let _ = Text::new("H:ERR ", Point::new(2, 227), status_style_red).draw(&mut display);
-            } else if h0_state.inverseur == -1 && current_ina {
+            } else if current_ina {
                 let _ = Text::new(&format!("   {}% ", h0_state.speed_a), Point::new(0, 227), status_style_green).draw(&mut display);
                 let _ = draw_upload_icon(&mut display, Point::new(2, 221), true);
-            } else if h0_state.inverseur == 1 && current_inb {
+            } else if current_inb {
                 let _ = Text::new(&format!("   {}% ", h0_state.speed_b), Point::new(0, 227), status_style_green).draw(&mut display);
                 let _ = draw_download_icon(&mut display, Point::new(2, 221), true);
             } else {

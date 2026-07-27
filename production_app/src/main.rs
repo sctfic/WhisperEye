@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.137-0013";
+pub const FW_VERSION: &str = "1.2.137-0019";
 
 pub const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 pub const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -158,14 +158,14 @@ fn main() -> Result<()> {
 
         // Restaurer le Pont H (H0)
         if let Some(entry) = map.get("H0") {
-            let inv = entry.inverseur.unwrap_or(0);
+            let inv = entry.inverseur.unwrap_or(true); // true = inverseur, false = indépendant
             let speed_a = entry.ina.as_ref().map(|i| i.pwm_val).unwrap_or(30);
             let speed_b = entry.inb.as_ref().map(|i| i.pwm_val).unwrap_or(30);
             state.H0.inverseur = inv;
             state.H0.speed_a = speed_a;
             state.H0.speed_b = speed_b;
             let _ = acts.write_h0(&state.H0);
-            log::info!("[BOOT] Restored H0: inverseur={}, speed_a={}%, speed_b={}%", inv, speed_a, speed_b);
+            log::info!("[BOOT] Restored H0: inverseur_mode={}, speed_a={}%, speed_b={}%", inv, speed_a, speed_b);
         }
         // Restaurer RLA
         if let Some(entry) = map.get("rla") {
@@ -405,6 +405,12 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
 
 
 

@@ -77,8 +77,7 @@ pub struct DeviceEntry {
     pub pwm_val: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inverseur: Option<i8>,
+    pub inverseur: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ina: Option<SubPwmDevice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -113,8 +112,7 @@ pub struct PersistEntry {
     pub pwm_val: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedules: Option<Vec<crate::actuators::ScheduledAction>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inverseur: Option<i8>,
+    pub inverseur: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ina: Option<SubPwmDevice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,8 +155,7 @@ pub struct DeviceDisplay {
     pub polarity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub buffer: Option<Vec<f64>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inverseur: Option<i8>,
+    pub inverseur: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ina: Option<SubPwmDevice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -334,7 +331,7 @@ impl DeviceRegistry {
                 missing: None,
             };
             if id == "H0" {
-                entry.inverseur = Some(0);
+                entry.inverseur = Some(true); // true = mode inverseur par défaut
                 entry.ina = Some(SubPwmDevice { name: "open door".to_string(), pwm_val: 30 });
                 entry.inb = Some(SubPwmDevice { name: "close door".to_string(), pwm_val: 30 });
             }
@@ -844,15 +841,21 @@ impl DeviceRegistry {
                     value = serde_json::json!(if final_val > 0.5 { "ON" } else { "OFF" });
                 }
                 "H0" => {
-                    let inv = entry.inverseur.unwrap_or(0);
-                    if inv == 2 {
-                        value = serde_json::json!("Indépendant");
-                    } else if inv == -1 {
-                        value = serde_json::json!(format!("INA: {}%", entry.ina.as_ref().map(|i| i.pwm_val).unwrap_or(0)));
-                    } else if inv == 1 {
-                        value = serde_json::json!(format!("INB: {}%", entry.inb.as_ref().map(|i| i.pwm_val).unwrap_or(0)));
+                    let inv = entry.inverseur.unwrap_or(true); // true = inverseur, false = indépendant
+                    if !inv {
+                        value = serde_json::json!(format!("INA: {}% / INB: {}%",
+                            entry.ina.as_ref().map(|i| i.pwm_val).unwrap_or(0),
+                            entry.inb.as_ref().map(|i| i.pwm_val).unwrap_or(0)));
                     } else {
-                        value = serde_json::json!("OFF");
+                        let speed_a = entry.ina.as_ref().map(|i| i.pwm_val).unwrap_or(0);
+                        let speed_b = entry.inb.as_ref().map(|i| i.pwm_val).unwrap_or(0);
+                        if speed_a > 0 {
+                            value = serde_json::json!(format!("INA: {}%", speed_a));
+                        } else if speed_b > 0 {
+                            value = serde_json::json!(format!("INB: {}%", speed_b));
+                        } else {
+                            value = serde_json::json!("OFF");
+                        }
                     }
                 }
                 "touch" => {

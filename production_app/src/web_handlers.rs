@@ -346,12 +346,8 @@ pub fn build_capacity_info(
 ) -> Result<serde_json::Value, anyhow::Error> {
     let (rla, rlb, swpwr, ina, inb) = {
         let act = cap_act_state.lock().unwrap();
-        let (ina_act, inb_act) = match act.H0.inverseur {
-            -1 => (true, false),
-            1 => (false, true),
-            2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
-            _ => (false, false),
-        };
+        let ina_act = act.H0.speed_a > 0;
+        let inb_act = act.H0.speed_b > 0;
         (act.rla, act.rlb, act.swpwr, ina_act, inb_act)
     };
     
@@ -819,12 +815,8 @@ pub fn handle_api_peripherals(
 ) -> Result<()> {
     let (rla, rlb, swpwr, ina, inb) = {
         let act = periphs_act_state.lock().unwrap();
-        let (ina_act, inb_act) = match act.H0.inverseur {
-            -1 => (true, false),
-            1 => (false, true),
-            2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
-            _ => (false, false),
-        };
+        let ina_act = act.H0.speed_a > 0;
+        let inb_act = act.H0.speed_b > 0;
         (act.rla, act.rlb, act.swpwr, ina_act, inb_act)
     };
     
@@ -1069,15 +1061,9 @@ pub fn handle_api_resources(
     let uptime_us: i64 = unsafe { esp_idf_sys::esp_timer_get_time() };
     let uptime_secs: u64 = if uptime_us > 0 { (uptime_us as u64) / 1_000_000 } else { 0 };
 
-    // Température interne (si disponible)
-    let temperature: Option<f32> = {
-        let raw: f32 = unsafe { esp_idf_sys::esp_efuse_get_pkg_ver() as f32 };
-        // Approximation : le capteur interne n'est pas toujours fiable
-        None
-    };
-
-    // Espace libre NVS estimé (on compte le nombre d'entrées dans devicesKnow comme indicateur)
-    let nvs_free: usize = 0; // Valeur indicative — l'API NVS native ne permet pas de récupérer simplement l'espace libre
+    // Température interne (si disponible) — pas de capteur fiable sur ESP32-S3
+    #[allow(unused_variables)]
+    let temperature: Option<f32> = None;
 
     let resources = serde_json::json!({
         "heap_total": heap_total,
@@ -1124,32 +1110,30 @@ pub fn handle_post_actuators(
         if let Some(val) = raw.get("rlb_speed").and_then(|v| v.as_i64()) { state.rlb_speed = Some(val as u8); }
         if let Some(val) = raw.get("screen_brightness").and_then(|v| v.as_i64()) { state.screen_brightness = Some(val as u8); }
         if let Some(h0) = raw.get("H0") {
-            // [Junior Dev Note] : Mode inverseur via "speed" (signé, -100 à 100).
-            // Négatif = active INB, Positif = active INA, 0 = Off.
+            // [Junior Dev Note] : Mode Inverseur via "speed" (signé, -100 à 100).
+            // speed > 0 -> INA, speed < 0 -> INB, speed == 0 -> OFF.
             if let Some(speed) = h0.get("speed").and_then(|v| v.as_i64()) {
+                state.H0.inverseur = true; // Mode inverseur
                 let speed_i8 = speed as i8;
                 if speed_i8 > 0 {
-                    state.H0.inverseur = -1; // INA
                     state.H0.speed_a = speed_i8 as u8;
                     state.H0.speed_b = 0;
                 } else if speed_i8 < 0 {
-                    state.H0.inverseur = 1; // INB
                     state.H0.speed_b = (-speed_i8) as u8;
                     state.H0.speed_a = 0;
                 } else {
-                    state.H0.inverseur = 0; // OFF
                     state.H0.speed_a = 0;
                     state.H0.speed_b = 0;
                 }
             }
-            // [Junior Dev Note] : Mode indépendant via "speed_a" et/ou "speed_b" (0 à 100).
+            // [Junior Dev Note] : Mode Indépendant via "speed_a" et/ou "speed_b" (0 à 100).
             if h0.get("speed_a").is_some() || h0.get("speed_b").is_some() {
-                state.H0.inverseur = 2; // Mode indépendant
+                state.H0.inverseur = false; // Mode indépendant
                 if let Some(sa) = h0.get("speed_a").and_then(|v| v.as_i64()) { state.H0.speed_a = sa as u8; }
                 if let Some(sb) = h0.get("speed_b").and_then(|v| v.as_i64()) { state.H0.speed_b = sb as u8; }
             }
-            // Compatibilité ascendante : inverseur/speed_a/speed_b explicites
-            if let Some(inv) = h0.get("inverseur").and_then(|v| v.as_i64()) { state.H0.inverseur = inv as i8; }
+            // Compatibilité : inverseur bool explicite
+            if let Some(inv) = h0.get("inverseur").and_then(|v| v.as_bool()) { state.H0.inverseur = inv; }
             if let Some(sa) = h0.get("speed_a").and_then(|v| v.as_i64()) { state.H0.speed_a = sa as u8; }
             if let Some(sb) = h0.get("speed_b").and_then(|v| v.as_i64()) { state.H0.speed_b = sb as u8; }
         }
@@ -1205,7 +1189,7 @@ pub fn handle_post_actuators(
             entry.pwm_val = Some(if merged.swpwr { 100 } else { 0 });
         }
         if let Some(entry) = map.get_mut("H0") {
-            entry.inverseur = Some(merged.H0.inverseur);
+            entry.inverseur = Some(merged.H0.inverseur); // bool : true=inverseur, false=indépendant
             if let Some(ref mut ina) = entry.ina {
                 ina.pwm_val = merged.H0.speed_a;
             }
@@ -1280,27 +1264,17 @@ pub fn handle_actuators_control(
                 "rlb" => acts.rlb = payload.state,
                 "swpwr" => acts.swpwr = payload.state,
                 "ina" => {
-                    if acts.H0.inverseur == 2 {
-                        acts.H0.speed_a = if payload.state { 100 } else { 0 };
-                    } else {
-                        if payload.state {
-                            acts.H0.inverseur = -1;
-                            acts.H0.speed_a = 100;
-                        } else if acts.H0.inverseur == -1 {
-                            acts.H0.inverseur = 0;
-                        }
+                    acts.H0.speed_a = if payload.state { 100 } else { 0 };
+                    if acts.H0.inverseur && !payload.state {
+                        // En mode inverseur, désactiver INA = éteindre
+                        acts.H0.speed_b = 0;
                     }
                 }
                 "inb" => {
-                    if acts.H0.inverseur == 2 {
-                        acts.H0.speed_b = if payload.state { 100 } else { 0 };
-                    } else {
-                        if payload.state {
-                            acts.H0.inverseur = 1;
-                            acts.H0.speed_b = 100;
-                        } else if acts.H0.inverseur == 1 {
-                            acts.H0.inverseur = 0;
-                        }
+                    acts.H0.speed_b = if payload.state { 100 } else { 0 };
+                    if acts.H0.inverseur && !payload.state {
+                        // En mode inverseur, désactiver INB = éteindre
+                        acts.H0.speed_a = 0;
                     }
                 }
                 _ => {

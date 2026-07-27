@@ -114,7 +114,7 @@ pub struct BrowseController {
     pub last_rlb_val: i16,
     pub last_screen_val: i16,
     pub clear_zone_req: u8,
-    pub last_h0_mode: i8,
+    pub last_h0_mode: bool,
 }
 
 fn has_layout_changed(s1: Option<AppState>, s2: AppState) -> bool {
@@ -158,7 +158,7 @@ impl BrowseController {
             last_rlb_val: -999,
             last_screen_val: -999,
             clear_zone_req: 3, // effacer tout au démarrage
-            last_h0_mode: -2,
+            last_h0_mode: false,
         }
     }
 
@@ -172,12 +172,7 @@ impl BrowseController {
 
         let (ina_act, inb_act) = {
             let act = actuators_state.lock().unwrap();
-            match act.H0.inverseur {
-                -1 => (true, false),
-                1 => (false, true),
-                2 => (act.H0.speed_a > 0, act.H0.speed_b > 0),
-                _ => (false, false),
-            }
+            (act.H0.speed_a > 0, act.H0.speed_b > 0)
         };
 
         let readings = {
@@ -491,14 +486,18 @@ impl BrowseController {
                                     let st = actuators_state.lock().unwrap();
                                     let (val, sub_s) = match new_sub {
                                         0 => {
-                                            if st.H0.inverseur == 2 {
-                                                (st.H0.speed_a as i16, 0)
-                                            } else if st.H0.inverseur == -1 {
-                                                (st.H0.speed_a as i16, 0)
-                                            } else if st.H0.inverseur == 1 {
-                                                (-(st.H0.speed_b as i16), 0)
+                                            if st.H0.inverseur {
+                                                // Mode inverseur : valeur signée unique (-100 à 100)
+                                                if st.H0.speed_a > 0 {
+                                                    (st.H0.speed_a as i16, 0)
+                                                } else if st.H0.speed_b > 0 {
+                                                    (-(st.H0.speed_b as i16), 0)
+                                                } else {
+                                                    (0, 0)
+                                                }
                                             } else {
-                                                (0, 0)
+                                                // Mode indépendant : on affiche speed_A (sub_step 0)
+                                                (st.H0.speed_a as i16, 0)
                                             }
                                         }
                                         1 => (if st.rla { 100 } else { 0 }, 0),
@@ -669,8 +668,8 @@ impl BrowseController {
                         let mut acts = actuators.lock().unwrap();
                         let mut st = actuators_state.lock().unwrap();
                         
-                        if st.H0.inverseur == 2 {
-                            st.H0.inverseur = 0;
+                        if !st.H0.inverseur {
+                            st.H0.inverseur = true;
                             st.H0.speed_a = 0;
                             st.H0.speed_b = 0;
                             let _ = acts.write_h0(&st.H0);
@@ -678,7 +677,7 @@ impl BrowseController {
                             let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
                             let mut map = registry.load_registry();
                             if let Some(entry) = map.get_mut("H0") {
-                                entry.inverseur = Some(0);
+                                entry.inverseur = Some(true);
                                 if let Some(ref mut ina) = entry.ina { ina.pwm_val = 0; }
                                 if let Some(ref mut inb) = entry.inb { inb.pwm_val = 0; }
                             }
@@ -692,7 +691,7 @@ impl BrowseController {
                                 sub_step: 0,
                             };
                         } else {
-                            st.H0.inverseur = 2;
+                            st.H0.inverseur = false;
                             st.H0.speed_a = 0;
                             st.H0.speed_b = 0;
                             let _ = acts.write_h0(&st.H0);
@@ -700,7 +699,7 @@ impl BrowseController {
                             let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
                             let mut map = registry.load_registry();
                             if let Some(entry) = map.get_mut("H0") {
-                                entry.inverseur = Some(2);
+                                entry.inverseur = Some(false);
                                 if let Some(ref mut ina) = entry.ina { ina.pwm_val = 0; }
                                 if let Some(ref mut inb) = entry.inb { inb.pwm_val = 0; }
                             }
@@ -753,7 +752,7 @@ impl BrowseController {
                         max_val = 100;
                     } else if main_index == 1 && sub_index == 0 {
                         let acts_state = actuators_state.lock().unwrap();
-                        if acts_state.H0.inverseur == 2 {
+                        if !acts_state.H0.inverseur {
                             min_val = 0;
                             max_val = 100;
                         } else {
@@ -803,25 +802,25 @@ impl BrowseController {
                         let mut st = actuators_state.lock().unwrap();
                         let actuator_id = match sub_index {
                             0 => {
-                                if st.H0.inverseur == 2 {
+                                if st.H0.inverseur {
+                                    // Mode inverseur : val signé
+                                    let val_i = val as i16;
+                                    if val_i > 0 {
+                                        st.H0.speed_a = val_i as u8;
+                                        st.H0.speed_b = 0;
+                                    } else if val_i < 0 {
+                                        st.H0.speed_b = (-val_i) as u8;
+                                        st.H0.speed_a = 0;
+                                    } else {
+                                        st.H0.speed_a = 0;
+                                        st.H0.speed_b = 0;
+                                    }
+                                } else {
+                                    // Mode indépendant
                                     if sub_step == 0 {
                                         st.H0.speed_a = val as u8;
                                     } else {
                                         st.H0.speed_b = val as u8;
-                                    }
-                                } else {
-                                    if val > 0 {
-                                        st.H0.inverseur = -1;
-                                        st.H0.speed_a = val as u8;
-                                        st.H0.speed_b = 0;
-                                    } else if val < 0 {
-                                        st.H0.inverseur = 1;
-                                        st.H0.speed_b = (-val) as u8;
-                                        st.H0.speed_a = 0;
-                                    } else {
-                                        st.H0.inverseur = 0;
-                                        st.H0.speed_a = 0;
-                                        st.H0.speed_b = 0;
                                     }
                                 }
                                 let _ = acts.write_h0(&st.H0);
@@ -870,7 +869,7 @@ impl BrowseController {
                         self.state = AppState::NaviguerSousMenu { main_index, sub_index };
                     } else if main_index == 1 && sub_index == 0 {
                         let st = actuators_state.lock().unwrap();
-                        if st.H0.inverseur == 2 {
+                        if !st.H0.inverseur {
                             if sub_step == 0 {
                                 self.state = AppState::AjusterSlider {
                                     main_index,
@@ -1067,7 +1066,7 @@ impl BrowseController {
         let h0_mode = {
             let registry = crate::dynamic_devices::DeviceRegistry::new(Arc::clone(nvs));
             let map = registry.load_registry();
-            map.get("H0").and_then(|e| e.inverseur).unwrap_or(0)
+            map.get("H0").and_then(|e| e.inverseur).unwrap_or(true)
         };
 
         let exited_modal = matches!(self.last_rendered_state, Some(AppState::ConfirmerAction { .. })) && !matches!(self.state, AppState::ConfirmerAction { .. });
@@ -1305,14 +1304,18 @@ impl BrowseController {
                             let st = actuators_state.lock().unwrap();
                             let v = match current_sub {
                                 0 => {
-                                    if st.H0.inverseur == 2 {
-                                        st.H0.speed_a as i16
-                                    } else if st.H0.inverseur == -1 {
-                                        st.H0.speed_a as i16
-                                    } else if st.H0.inverseur == 1 {
-                                        -(st.H0.speed_b as i16)
+                                    if st.H0.inverseur {
+                                        // Mode inverseur : signé (positif=INA, négatif=INB)
+                                        if st.H0.speed_a > 0 {
+                                            st.H0.speed_a as i16
+                                        } else if st.H0.speed_b > 0 {
+                                            -(st.H0.speed_b as i16)
+                                        } else {
+                                            0
+                                        }
                                     } else {
-                                        0
+                                        // Mode indépendant
+                                        st.H0.speed_a as i16
                                     }
                                 }
                                 1 => if st.rla { 100 } else { 0 },
@@ -1346,12 +1349,7 @@ impl BrowseController {
 
                     let (ina_act, inb_act) = {
                         let state = actuators_state.lock().unwrap();
-                        match state.H0.inverseur {
-                            -1 => (true, false),
-                            1 => (false, true),
-                            2 => (state.H0.speed_a > 0, state.H0.speed_b > 0),
-                            _ => (false, false),
-                        }
+                        (state.H0.speed_a > 0, state.H0.speed_b > 0)
                     };
 
                     let vsense_v = board.lock().unwrap().read_value(ina_act, inb_act).vsense_volts;
@@ -1372,14 +1370,14 @@ impl BrowseController {
                             (
                                 entry.ina.as_ref().map(|i| i.name.clone()).unwrap_or_else(|| "INA".to_string()),
                                 entry.inb.as_ref().map(|i| i.name.clone()).unwrap_or_else(|| "INB".to_string()),
-                                entry.inverseur.unwrap_or(0),
+                                entry.inverseur.unwrap_or(true),
                             )
                         } else {
-                            ("open door".to_string(), "close door".to_string(), 0)
+                            ("open door".to_string(), "close door".to_string(), true)
                         }
                     };
 
-                    if current_sub == 0 && h0_mode == 2 {
+                    if current_sub == 0 && !h0_mode {
                         // ── MODE INDÉPENDANT : 2 BARRES (INA & INB) ──
                         let st = actuators_state.lock().unwrap();
                         let (val_a, val_b) = (st.H0.speed_a, st.H0.speed_b);

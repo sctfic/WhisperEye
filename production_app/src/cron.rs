@@ -154,27 +154,17 @@ impl CronWorker {
                                     "rlb" => { acts.rlb = action.state; }
                                     "swpwr" => { acts.swpwr = action.state; }
                                     "ina" => {
-                                        if acts.H0.inverseur == 2 {
-                                            acts.H0.speed_a = if action.state { 30 } else { 0 };
-                                        } else {
-                                            if action.state {
-                                                acts.H0.inverseur = -1;
-                                                acts.H0.speed_a = 30;
-                                            } else if acts.H0.inverseur == -1 {
-                                                acts.H0.inverseur = 0;
-                                            }
+                                        acts.H0.speed_a = if action.state { 75 } else { 0 };
+                                        if !action.state && acts.H0.inverseur {
+                                            // En mode inverseur, désactiver INA = éteindre
+                                            acts.H0.speed_b = 0;
                                         }
                                     }
                                     "inb" => {
-                                        if acts.H0.inverseur == 2 {
-                                            acts.H0.speed_b = if action.state { 30 } else { 0 };
-                                        } else {
-                                            if action.state {
-                                                acts.H0.inverseur = 1;
-                                                acts.H0.speed_b = 30;
-                                            } else if acts.H0.inverseur == 1 {
-                                                acts.H0.inverseur = 0;
-                                            }
+                                        acts.H0.speed_b = if action.state { 75 } else { 0 };
+                                        if !action.state && acts.H0.inverseur {
+                                            // En mode inverseur, désactiver INB = éteindre
+                                            acts.H0.speed_a = 0;
                                         }
                                     }
                                     _ => {
@@ -288,12 +278,7 @@ impl CronWorker {
         
         let (ina_on, inb_on) = {
             let state = self.actuators_state.lock().unwrap();
-            match state.H0.inverseur {
-                -1 => (true, false),
-                1 => (false, true),
-                2 => (state.H0.speed_a > 0, state.H0.speed_b > 0),
-                _ => (false, false),
-            }
+            (state.H0.speed_a > 0, state.H0.speed_b > 0)
         };
         let board_readings = {
             let mut b = self.board.lock().unwrap();
@@ -868,7 +853,7 @@ impl CronWorker {
                 entry.pwm_val = Some(if acts.swpwr { 100 } else { 0 });
             }
             if let Some(entry) = map.get_mut("H0") {
-                entry.inverseur = Some(acts.H0.inverseur);
+                entry.inverseur = Some(acts.H0.inverseur); // bool : true=inverseur, false=indépendant
                 if let Some(ref mut ina) = entry.ina { ina.pwm_val = acts.H0.speed_a; }
                 if let Some(ref mut inb) = entry.inb { inb.pwm_val = acts.H0.speed_b; }
             }
@@ -988,8 +973,8 @@ fn apply_single_actuator(
         "ina" => {
             let speed = output_val.max(0.0).min(100.0) as u8;
             info!("[EVENT SCHEDULER] Actionneur 'ina' (mode independant) -> application valeur: {} (Vitesse: {})", output_val, speed);
-            if acts.H0.inverseur != 2 || acts.H0.speed_a != speed {
-                acts.H0.inverseur = 2; // Forcer le mode indépendant
+            if acts.H0.inverseur || acts.H0.speed_a != speed {
+                acts.H0.inverseur = false; // Forcer le mode indépendant
                 acts.H0.speed_a = speed;
                 let _ = devs.write_h0(&acts.H0);
                 *changed = true;
@@ -998,8 +983,8 @@ fn apply_single_actuator(
         "inb" => {
             let speed = output_val.max(0.0).min(100.0) as u8;
             info!("[EVENT SCHEDULER] Actionneur 'inb' (mode independant) -> application valeur: {} (Vitesse: {})", output_val, speed);
-            if acts.H0.inverseur != 2 || acts.H0.speed_b != speed {
-                acts.H0.inverseur = 2; // Forcer le mode indépendant
+            if acts.H0.inverseur || acts.H0.speed_b != speed {
+                acts.H0.inverseur = false; // Forcer le mode indépendant
                 acts.H0.speed_b = speed;
                 let _ = devs.write_h0(&acts.H0);
                 *changed = true;
@@ -1007,17 +992,18 @@ fn apply_single_actuator(
         }
         "H0" => {
             let speed_val = output_val.clamp(-100.0, 100.0) as i8;
-            let (new_inv, new_speed_a, new_speed_b) = if speed_val < 0 {
-                (-1, (-speed_val) as u8, 0u8)
-            } else if speed_val > 0 {
-                (1, 0u8, speed_val as u8)
+            // [Junior Dev Note] : speed > 0 = INA, speed < 0 = INB, speed == 0 = OFF
+            let (new_speed_a, new_speed_b) = if speed_val > 0 {
+                (speed_val as u8, 0u8)      // INA
+            } else if speed_val < 0 {
+                (0u8, (-speed_val) as u8)   // INB
             } else {
-                (0, 0u8, 0u8)
+                (0u8, 0u8)                  // OFF
             };
-            info!("[EVENT SCHEDULER] Actionneur 'H0' (mode bipolaire) -> application valeur: {} (Mode: {}, Vitesse A: {}, Vitesse B: {})", output_val, new_inv, new_speed_a, new_speed_b);
+            info!("[EVENT SCHEDULER] Actionneur 'H0' (mode bipolaire) -> application valeur: {} (Vitesse A: {}, Vitesse B: {})", output_val, new_speed_a, new_speed_b);
 
-            if acts.H0.inverseur != new_inv || acts.H0.speed_a != new_speed_a || acts.H0.speed_b != new_speed_b {
-                acts.H0.inverseur = new_inv;
+            if acts.H0.inverseur != true || acts.H0.speed_a != new_speed_a || acts.H0.speed_b != new_speed_b {
+                acts.H0.inverseur = true; // Forcer le mode inverseur
                 acts.H0.speed_a = new_speed_a;
                 acts.H0.speed_b = new_speed_b;
                 let _ = devs.write_h0(&acts.H0);
