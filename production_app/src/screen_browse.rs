@@ -500,8 +500,10 @@ impl BrowseController {
                                                 (st.H0.speed_a as i16, 0)
                                             }
                                         }
-                                        1 => (if st.rla { 100 } else { 0 }, 0),
-                                        2 => (if st.rlb { 100 } else { 0 }, 0),
+                                        // [Junior Dev Note] : à l'entrée en mode réglage, on initialise le slider
+                                        // avec la VRAIE vitesse (rla_speed/rlb_speed) et non un simple 100 si actif.
+                                        1 => (st.rla_speed.unwrap_or(if st.rla { 100 } else { 0 }) as i16, 0),
+                                        2 => (st.rlb_speed.unwrap_or(if st.rlb { 100 } else { 0 }) as i16, 0),
                                         _ => (0, 0),
                                     };
                                     let actuator_id = match new_sub {
@@ -521,7 +523,7 @@ impl BrowseController {
                                         if new_sub == 0 {
                                             4 // Step 10% par défaut
                                         } else if new_sub == 1 || new_sub == 2 {
-                                            8 // Step 100% par défaut
+                                            4 // Step 10% par défaut (cohérent avec le frontend, permet d'ajuster la valeur réelle)
                                         } else {
                                             self.slider_step_idx
                                         }
@@ -833,6 +835,7 @@ impl BrowseController {
                                     let _ = acts.relay_a.set_speed(val);
                                 }
                                 st.rla = is_active;
+                                st.rla_speed = Some(val as u8);
                                 "rla"
                             }
                             2 => {
@@ -842,6 +845,7 @@ impl BrowseController {
                                     let _ = acts.relay_b.set_speed(val);
                                 }
                                 st.rlb = is_active;
+                                st.rlb_speed = Some(val as u8);
                                 "rlb"
                             }
                             _ => "",
@@ -1318,8 +1322,11 @@ impl BrowseController {
                                         st.H0.speed_a as i16
                                     }
                                 }
-                                1 => if st.rla { 100 } else { 0 },
-                                2 => if st.rlb { 100 } else { 0 },
+                                // 1 => if st.rla { 100 } else { 0 },
+                                // [Junior Dev Note] : affiche la vraie vitesse (rla_speed/rlb_speed)
+                                // pour être cohérent avec le frontend web (pwm_val).
+                                1 => st.rla_speed.unwrap_or(if st.rla { 100 } else { 0 }) as i16,
+                                2 => st.rlb_speed.unwrap_or(if st.rlb { 100 } else { 0 }) as i16,
                                 _ => 0,
                             };
                             let actuator_id = match current_sub {

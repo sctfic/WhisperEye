@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.141-0011";
+pub const FW_VERSION: &str = "1.2.144";
 
 pub const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 pub const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -171,6 +171,7 @@ fn main() -> Result<()> {
                     let _ = acts.relay_a.set_speed(pwm as i32);
                 }
                 state.rla = is_active;
+                state.rla_speed = Some(pwm);
                 log::info!("[BOOT] Restored RLA state: {}, speed: {}%", is_active, acts.relay_a.get_speed());
             }
         }
@@ -183,6 +184,7 @@ fn main() -> Result<()> {
                     let _ = acts.relay_b.set_speed(pwm as i32);
                 }
                 state.rlb = is_active;
+                state.rlb_speed = Some(pwm);
                 log::info!("[BOOT] Restored RLB state: {}, speed: {}%", is_active, acts.relay_b.get_speed());
             }
         }
@@ -403,6 +405,9 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
 
 
 

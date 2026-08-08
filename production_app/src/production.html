@@ -339,7 +339,7 @@
             padding: 0.6rem 0.8rem;
         }
 
-        /* SLIDER FOR PWM */
+        /* SLIDER FOR PWM — design épuré & haut de gamme */
         .slider-group {
             margin-top: 1rem;
         }
@@ -349,43 +349,90 @@
             flex: 1;
             display: flex;
             align-items: center;
-            height: 36px;
+            height: 28px;
             margin: 0;
         }
 
         .range-slider {
             -webkit-appearance: none;
+            appearance: none;
             width: 100%;
-            height: 9px;
-            border-radius: 5px;
-            background: #334155;
+            height: 4px;
+            border-radius: 9999px;
+            background: linear-gradient(
+                to right,
+                var(--secondary-accent) 0%,
+                var(--secondary-accent) var(--range-progress, 0%),
+                #1e293b var(--range-progress, 0%),
+                #1e293b 100%
+            );
             outline: none;
             margin: 0;
             position: relative;
             z-index: 2;
+            cursor: pointer;
+            box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.15);
+        }
+
+        .range-slider::-webkit-slider-runnable-track {
+            height: 4px;
+            border-radius: 9999px;
+            background: transparent;
         }
 
         .range-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 16px;
-            height: 16px;
-            margin-top: -2px;
+            width: 14px;
+            height: 14px;
+            margin-top: -5px;
             border-radius: 50%;
-            background: var(--secondary-accent);
+            background: radial-gradient(circle at 32% 32%, #ffffff, #cbd5e1);
+            border: 2px solid var(--secondary-accent);
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
             cursor: pointer;
-            transition: transform 0.1s;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
         }
 
         .range-slider::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
+            transform: scale(1.15);
+            border-color: #93c5fd;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.6), 0 1px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        .range-slider::-moz-range-track {
+            height: 4px;
+            border-radius: 9999px;
+            background: transparent;
+        }
+
+        .range-slider::-moz-range-progress {
+            height: 4px;
+            border-radius: 9999px;
+            background: var(--secondary-accent);
+        }
+
+        .range-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 32% 32%, #ffffff, #cbd5e1);
+            border: 2px solid var(--secondary-accent);
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+            cursor: pointer;
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
+        }
+
+        .range-slider::-moz-range-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.6), 0 1px 4px rgba(0, 0, 0, 0.5);
         }
 
         .real-state-thumb {
             position: absolute;
             pointer-events: none;
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             background: #60a5fa;
             opacity: 0.6;
@@ -627,7 +674,7 @@
             box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
         }
 
-        /* Style personnalisé pour les input range */
+        /* Style personnalisé pour les input range (générique) */
         input[type="range"] {
             -webkit-appearance: none;
             appearance: none;
@@ -640,56 +687,67 @@
 
         input[type="range"]::-webkit-slider-runnable-track {
             width: 100%;
-            height: 12px;
+            height: 4px;
+            border-radius: 9999px;
             cursor: pointer;
-            background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
-            border-radius: 4px;
-            border: 1px solid #334155;
-            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+            background: linear-gradient(
+                to right,
+                var(--secondary-accent) 0%,
+                var(--secondary-accent) var(--range-progress, 0%),
+                #1e293b var(--range-progress, 0%),
+                #1e293b 100%
+            );
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
         }
 
         input[type="range"]::-webkit-slider-thumb {
-            height: 18px;
-            width: 18px;
+            height: 14px;
+            width: 14px;
+            margin-top: -5px;
             border-radius: 50%;
-            background: radial-gradient(circle at 30% 30%, #34d399, #10b981);
+            background: radial-gradient(circle at 32% 32%, #ffffff, #cbd5e1);
             cursor: pointer;
             -webkit-appearance: none;
-            margin-top: -3px;
-            border: 2px solid rgba(255, 255, 255, 0.25);
-            box-shadow: 0 0 8px rgba(16, 185, 129, 0.4), 0 2px 4px rgba(0, 0, 0, 0.5);
-            transition: transform 0.1s, box-shadow 0.1s;
+            border: 2px solid var(--secondary-accent);
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+            transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
         }
 
         input[type="range"]::-webkit-slider-thumb:hover {
             transform: scale(1.15);
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.8), 0 2px 6px rgba(0, 0, 0, 0.6);
+            border-color: #93c5fd;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.6), 0 1px 4px rgba(0, 0, 0, 0.5);
         }
 
         input[type="range"]::-moz-range-track {
             width: 100%;
-            height: 12px;
+            height: 4px;
+            border-radius: 9999px;
             cursor: pointer;
-            background: linear-gradient(90deg, #1e293b 0%, #0f172a 100%);
-            border-radius: 4px;
-            border: 1px solid #334155;
-            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+            background: #1e293b;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+        }
+
+        input[type="range"]::-moz-range-progress {
+            height: 4px;
+            border-radius: 9999px;
+            background: var(--secondary-accent);
         }
 
         input[type="range"]::-moz-range-thumb {
-            height: 18px;
-            width: 18px;
+            height: 14px;
+            width: 14px;
             border-radius: 50%;
-            background: radial-gradient(circle at 30% 30%, #34d399, #10b981);
+            background: radial-gradient(circle at 32% 32%, #ffffff, #cbd5e1);
             cursor: pointer;
-            border: 2px solid rgba(255, 255, 255, 0.25);
-            box-shadow: 0 0 8px rgba(16, 185, 129, 0.4), 0 2px 4px rgba(0, 0, 0, 0.5);
-            transition: transform 0.1s, box-shadow 0.1s;
+            border: 2px solid var(--secondary-accent);
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
         }
 
         input[type="range"]::-moz-range-thumb:hover {
             transform: scale(1.15);
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.8), 0 2px 6px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.6), 0 1px 4px rgba(0, 0, 0, 0.5);
         }
 
         input[type="range"].slider-danger::-webkit-slider-thumb {
@@ -2137,6 +2195,8 @@
                 else if (valNum < 0) lbl.innerText = `↙ ${-valNum}%`;
                 else lbl.innerText = 'Off';
             }
+            // [Junior Dev Note] : slider inverseur [-100, 100] → remplissage proportionnel (0→50%→100%).
+            updateRangeProgress('H0', valNum);
         };
 
         window.sendH0InverseurValue = function (val) {
@@ -2167,10 +2227,12 @@
                 window.actuatorStates.H0.speed_a = valNum;
                 const lbl = document.getElementById('range_val_H0_a');
                 if (lbl) lbl.innerText = `${valNum}%`;
+                updateRangeProgress('H0_a', valNum);
             } else {
                 window.actuatorStates.H0.speed_b = valNum;
                 const lbl = document.getElementById('range_val_H0_b');
                 if (lbl) lbl.innerText = `${valNum}%`;
+                updateRangeProgress('H0_b', valNum);
             }
         };
 
@@ -2271,6 +2333,7 @@
                                             slider.step = stepVal;
                                             const lbl = document.getElementById(`range_val_${dev.id}`);
                                             if (lbl) lbl.innerText = realVal + '%';
+                                            updateRangeProgress(dev.id, realVal);
                                         }
                                     }
                                 }
@@ -2285,6 +2348,7 @@
                                         slider.step = getStepValue('screen');
                                         const lbl = document.getElementById('range_val_screen');
                                         if (lbl) lbl.innerText = realVal + '%';
+                                        updateRangeProgress('screen', realVal);
                                     }
                                 }
                             }
@@ -2302,6 +2366,7 @@
                                         sliderA.step = getStepValue('H0');
                                         const lblA = document.getElementById('range_val_H0_a');
                                         if (lblA) lblA.innerText = valA + '%';
+                                        updateRangeProgress('H0_a', valA);
                                     }
 
                                     const sliderB = document.getElementById('range_H0_b');
@@ -2311,6 +2376,7 @@
                                         sliderB.step = getStepValue('H0');
                                         const lblB = document.getElementById('range_val_H0_b');
                                         if (lblB) lblB.innerText = valB + '%';
+                                        updateRangeProgress('H0_b', valB);
                                     }
                                 } else {
                                     // Mode inverseur : reconstruire la valeur signée
@@ -2330,6 +2396,7 @@
                                             else if (valH0 < 0) lbl.innerText = `↙ ${-valH0}%`;
                                             else lbl.innerText = 'Off';
                                         }
+                                        updateRangeProgress('H0', valH0);
                                     }
                                 }
                             }
@@ -2365,7 +2432,7 @@
                                                         <div style="display: flex; align-items: center; gap: 0.5rem; width: 200px;">
                                                             <div class="slider-wrapper">
                                                                 <input type="range" id="range_${dev.id}" min="0" max="100" step="${stepVal}" value="${valPct}" 
-                                                                    class="range-slider"
+                                                                    class="range-slider" style="--range-progress: ${valPct}%;"
                                                                     oninput="updateRangeLabel('${dev.id}', this.value)" onchange="sendRangeValue('${dev.id}', this.value)"
                                                                     onwheel="event.preventDefault(); let step = getStepValue('${dev.id}'); let newVal = parseFloat(this.value) + (event.deltaY < 0 ? step : -step); newVal = Math.max(0, Math.min(100, newVal)); this.value = newVal; updateRangeLabel('${dev.id}', newVal); debouncedSendRangeValue('${dev.id}', newVal);">
                                                             </div>
@@ -2385,7 +2452,7 @@
                                                     <div style="display: flex; align-items: center; gap: 0.5rem; width: 200px;">
                                                         <div class="slider-wrapper">
                                                             <input type="range" id="range_screen" min="0" max="100" step="${getStepValue('screen')}" value="${valPct}" 
-                                                                class="range-slider"
+                                                                class="range-slider" style="--range-progress: ${valPct}%;"
                                                                 oninput="updateRangeLabel('screen', this.value)" onchange="sendRangeValue('screen', this.value)"
                                                                 onwheel="event.preventDefault(); let step = getStepValue('screen'); let newVal = parseFloat(this.value) + (event.deltaY < 0 ? step : -step); newVal = Math.max(0, Math.min(100, newVal)); this.value = newVal; updateRangeLabel('screen', newVal); debouncedSendRangeValue('screen', newVal);">
                                                         </div>
@@ -2420,7 +2487,7 @@
                                                         <div id="container_inverseur_H0" style="display: ${isInverseur ? 'flex' : 'none'}; align-items: center; gap: 0.5rem; width: 100%;">
                                                             <div class="slider-wrapper" style="width: 140px;">
                                                                 <input type="range" id="range_H0" min="-100" max="100" step="${getStepValue('H0')}" value="${valH0}"
-                                                                    class="range-slider ${inputClass}" style="${inputStyle}"
+                                                                    class="range-slider ${inputClass}" style="--range-progress: ${valH0 >= 0 ? 50 + valH0 / 2 : 50 - (-valH0) / 2}%; ${inputStyle}"
                                                                     oninput="updateH0InverseurSlider(this.value)"
                                                                     onchange="sendH0InverseurValue(this.value)"
                                                                     onwheel="event.preventDefault(); let step = getStepValue('H0'); let newVal = parseFloat(this.value) + (event.deltaY < 0 ? step : -step); newVal = Math.max(-100, Math.min(100, newVal)); this.value = newVal; updateH0InverseurSlider(newVal); debouncedSendH0InverseurValue(newVal);">
@@ -2434,7 +2501,7 @@
                                                                 <span style="font-size: 0.75rem; color: var(--text-secondary); min-width: 30px;">INA</span>
                                                                 <div class="slider-wrapper" style="width: 110px;">
                                                                     <input type="range" id="range_H0_a" min="0" max="100" step="${getStepValue('H0')}" value="${valA}"
-                                                                        class="range-slider ${inputClass}" style="${inputStyle}"
+                                                                        class="range-slider ${inputClass}" style="--range-progress: ${valA}%; ${inputStyle}"
                                                                         oninput="updateH0IndepSlider('a', this.value)"
                                                                         onchange="sendH0IndepValue('a', this.value)"
                                                                         onwheel="event.preventDefault(); let step = getStepValue('H0'); let newVal = parseFloat(this.value) + (event.deltaY < 0 ? step : -step); newVal = Math.max(0, Math.min(100, newVal)); this.value = newVal; updateH0IndepSlider('a', newVal); debouncedSendH0IndepValue('a', newVal);">
@@ -2445,7 +2512,7 @@
                                                                 <span style="font-size: 0.75rem; color: var(--text-secondary); min-width: 30px;">INB</span>
                                                                 <div class="slider-wrapper" style="width: 110px;">
                                                                     <input type="range" id="range_H0_b" min="0" max="100" step="${getStepValue('H0')}" value="${valB}"
-                                                                        class="range-slider ${inputClass}" style="${inputStyle}"
+                                                                        class="range-slider ${inputClass}" style="--range-progress: ${valB}%; ${inputStyle}"
                                                                         oninput="updateH0IndepSlider('b', this.value)"
                                                                         onchange="sendH0IndepValue('b', this.value)"
                                                                         onwheel="event.preventDefault(); let step = getStepValue('H0'); let newVal = parseFloat(this.value) + (event.deltaY < 0 ? step : -step); newVal = Math.max(0, Math.min(100, newVal)); this.value = newVal; updateH0IndepSlider('b', newVal); debouncedSendH0IndepValue('b', newVal);">
@@ -2601,7 +2668,7 @@
                             </button>` : '';
                             html += `
                                 <div class="sensor-row" style="border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 0.4rem; overflow: hidden;">
-                                    <div class="sensor-header" onclick="toggleSensorDetail('${sensorId}')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: none; user-select: none; background: rgba(11,15,25,0.3);">
+                                    <div class="sensor-header" onclick="toggleSensorDetail('${sensorId}')" style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; cursor: pointer; user-select: none; background: rgba(11,15,25,0.3);">
                                         <div style="flex: 1; min-width: 0;" onclick="event.stopPropagation()">
                                             <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                                                 <span id="name_display_${dev.id}" style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary); cursor: ${window.deviceRenamable ? 'pointer' : 'default'};" onclick="startEditing('${dev.id}')">${dev.name}</span>
@@ -2974,6 +3041,23 @@
         function updateRangeLabel(id, val) {
             const valEl = document.getElementById(`range_val_${id}`);
             if (valEl) valEl.innerText = val + '%';
+            // [Junior Dev Note] : met à jour le remplissage (progress) du slider haut de gamme.
+            // Le remplissage est un dégradé CSS piloté par la variable --range-progress.
+            updateRangeProgress(id, val);
+        }
+
+        // Met à jour le pourcentage de remplissage d'un slider (sur sa piste) via la variable
+        // CSS --range-progress (0 à 100 %). Gère aussi les sliders H0 (min potentiellement -100).
+        function updateRangeProgress(id, val) {
+            const slider = document.getElementById(`range_${id}`);
+            if (!slider) return;
+            let num = parseInt(val);
+            if (isNaN(num)) num = 0;
+            const min = parseFloat(slider.min) || 0;
+            const max = parseFloat(slider.max) || 100;
+            let pct = ((num - min) / (max - min)) * 100;
+            pct = Math.max(0, Math.min(100, pct));
+            slider.style.setProperty('--range-progress', pct + '%');
         }
 
         function sendRangeValue(id, val) {

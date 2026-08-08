@@ -1194,6 +1194,13 @@ pub fn handle_post_actuators(
                 entry.pwm_val = Some(0);
             }
         }
+        if let Some(entry) = map.get_mut("screen") {
+            // [Junior Dev Note] : synchroniser la luminosité de l'écran dans le registre
+            // devicesKnow afin que /api/peripherals renvoie le bon pwm_val pour "screen".
+            if let Some(brightness) = merged.screen_brightness {
+                entry.pwm_val = Some(brightness);
+            }
+        }
         if let Some(entry) = map.get_mut("swpwr") {
             entry.pwm_val = Some(if merged.swpwr { 100 } else { 0 });
         }
