@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 pub const WHISPEREYE_BOARD:  &str = "1.0";
 pub const CHIP_TYPE:  &str = "ESP32-S3";
-pub const FW_VERSION: &str = "1.2.138";
+pub const FW_VERSION: &str = "1.2.141-0011";
 
 pub const AUTHOR_EMAIL: &str = "alban.lopez+whisperEye@gmail.com";
 pub const AUTHOR_NAME: &str = "LOPEZ Alban";
@@ -140,14 +140,9 @@ fn main() -> Result<()> {
 
     let actuators_state = Arc::new(Mutex::new(ActuatorsState::default()));
 
-    // 2b. Initialiser la LED RMT (GPIO48 est partagé avec RLA)
-    #[allow(deprecated)]
-    let rmt_channel = unsafe { esp_idf_hal::rmt::CHANNEL0::steal() };
-    #[allow(deprecated)]
-    let led_pin = unsafe { esp_idf_hal::gpio::Gpio48::steal() };
-    if let Err(e) = common::led::init_led(rmt_channel, led_pin) {
-        println!("WARNING: Failed to init LED: {:?}", e);
-    }
+    // [Junior Dev Note] : La LED WS2812 n'est PAS initialisée au démarrage.
+    // Elle n'est créée que lors d'un appel /api/identify (voir common::led::extend_identify)
+    // qui l'initialise sur GPIO48, la fait clignoter en blanc puis rend la broche à RLA.
 
     // Restauration des états/valeurs PWM sauvegardés dans devicesKnow
     {
@@ -383,8 +378,11 @@ fn main() -> Result<()> {
         Arc::clone(&board),
     )?;
 
-    // Serveur Web
-    let mut server = EspHttpServer::new(&ServerConfig::default())
+    // Serveur Web — augmente la stack de la tâche httpd pour éviter les stack overflow dans check_updates
+    let mut server = EspHttpServer::new(&ServerConfig {
+        stack_size: 16384,
+        ..ServerConfig::default()
+    })
         .context("Failed to start HTTP server")?;
 
     route::register_routes(
@@ -405,6 +403,18 @@ fn main() -> Result<()> {
         thread::sleep(std::time::Duration::from_secs(60));
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

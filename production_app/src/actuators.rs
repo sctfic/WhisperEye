@@ -175,7 +175,7 @@ impl Actuators {
         let mut sw_pwr = PinDriver::output(gpio21)?;
         sw_pwr.set_high()?; // Garder le système alimenté par défaut
 
-        // Configurer le PWM à 10 kHz pour les moteurs et les relais
+        // Configurer le PWM à 25 kHz pour les moteurs et les relais (RLA, RLB, INA, INB)
         let timer1 = unsafe { TIMER1::steal() };
         let timer2 = unsafe { TIMER2::steal() };
         let timer3 = unsafe { TIMER3::steal() };
@@ -184,7 +184,7 @@ impl Actuators {
         let channel3 = unsafe { CHANNEL3::steal() };
         let channel4 = unsafe { CHANNEL4::steal() };
 
-        let timer_config = config::TimerConfig::new().frequency(10.kHz().into());
+        let timer_config = config::TimerConfig::new().frequency(25.kHz().into());
         let timer_driver1 = LedcTimerDriver::new(timer1, &timer_config)?;
         let timer_driver2 = LedcTimerDriver::new(timer2, &timer_config)?;
         let timer_driver3 = Box::leak(Box::new(LedcTimerDriver::new(timer3, &timer_config)?));

@@ -39,6 +39,13 @@ pub const MAGENTA: Color = (255, 0, 255);
 pub const WHITE: Color = (255, 255, 255);
 
 pub fn set_led_color(color: Color, intensity: u8) {
+    // [Junior Dev Note] : La LED RGB n'est plus utilisée pour les couleurs d'état (STA/AP),
+    // car GPIO48 est dédié à RLA (sortie). Seule la fonction /api/identify allume la LED
+    // temporairement (via le thread RMT). Cette fonction est donc un no-op : elle ne doit
+    // JAMAIS reconfigurer la matrice GPIO de la broche 48 pendant le fonctionnement normal.
+    let _ = (color, intensity);
+    return;
+    #[allow(unreachable_code)]
     if RLA_ACTIVE.load(Ordering::SeqCst) {
         unsafe {
             esp_idf_sys::esp_rom_gpio_connect_out_signal(
@@ -124,12 +131,29 @@ pub enum LedApStatus {
 
 pub fn set_sta_status(status: LedStaStatus) {
     LED_STA_STATUS.store(status as u8, Ordering::SeqCst);
-    ensure_pattern_running();
+    // Ne démarre PAS le thread LED (la LED ne doit pas être utilisée sauf en mode identify).
 }
 
 pub fn set_ap_status(status: LedApStatus) {
     LED_AP_STATUS.store(status as u8, Ordering::SeqCst);
-    ensure_pattern_running();
+    // Ne démarre PAS le thread LED (la LED ne doit pas être utilisée sauf en mode identify).
+}
+
+/// Initialise paresseusement le pilote RMT WS2812 (sur GPIO48) UNIQUEMENT si ce n'est pas
+/// déjà fait. Appelée la première fois que le mode identify est déclenché.
+/// La LED n'est donc jamais initialisée au démarrage.
+fn ensure_led_driver_ready() {
+    static LED_DRIVER_INIT: Once = Once::new();
+    LED_DRIVER_INIT.call_once(|| {
+        // On "vole" les périphériques (singletons ESP32) uniquement à ce moment-là.
+        #[allow(deprecated)]
+        let channel = unsafe { esp_idf_hal::rmt::CHANNEL0::steal() };
+        #[allow(deprecated)]
+        let pin = unsafe { esp_idf_hal::gpio::Gpio48::steal() };
+        if let Err(e) = init_led(channel, pin) {
+            log::error!("Failed to init LED RMT during identify: {:?}", e);
+        }
+    });
 }
 
 /// Démarre ou réinitialise le mode "identify" (LED blanche clignotement rapide).
@@ -142,6 +166,11 @@ pub fn extend_identify(duration_secs: u64) -> std::time::SystemTime {
         .as_secs();
     let new_target = (now_unix + duration_secs) as u32;
     IDENTIFY_SECS.store(new_target, Ordering::SeqCst);
+
+    // La LED n'est initialisée que lors d'un identify, jamais au démarrage.
+    ensure_led_driver_ready();
+    ensure_pattern_running();
+
     let unix_end = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_unix + duration_secs);
     log::info!("LED identify set, ends in {}s (UTC: {:?})", duration_secs, unix_end);
     std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_unix + duration_secs)
@@ -188,27 +217,15 @@ fn ensure_pattern_running() {
 
                 let mut was_identify_active = false;
 
+                // `identify_pending` (type: bool) : Vrai si le mode identify vient de se terminer,
+                // afin de rendre la broche GPIO48 à RLA (selon son mode) au cycle suivant.
+                let mut identify_pending = false;
+
                 loop {
-                    if RLA_ACTIVE.load(Ordering::SeqCst) {
-                        unsafe {
-                            esp_idf_sys::esp_rom_gpio_connect_out_signal(
-                                48,
-                                (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
-                                false,
-                                false,
-                            );
-                        }
-                        thread::sleep(tick);
-                        continue;
-                    }
-
-                    if RESET_FLASHING.load(Ordering::SeqCst) {
-                        thread::sleep(tick);
-                        continue;
-                    }
-
-                    // Le mode identify (blanc rapide) prend priorité sur tout
+                    // [Junior Dev Note] : Le mode identify /api/identify FORCE la broche GPIO48
+                    // pour la LED (prioritaire sur RLA). À la fin, on rend la broche à RLA.
                     let identify = identify_active();
+
                     if identify {
                         if !was_identify_active {
                             was_identify_active = true;
@@ -232,14 +249,6 @@ fn ensure_pattern_running() {
                                 );
                             }
                             let _ = driver.write_blocking(led_color.as_ref().iter().copied());
-                            unsafe {
-                                esp_idf_sys::esp_rom_gpio_connect_out_signal(
-                                    48,
-                                    (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
-                                    false,
-                                    false,
-                                );
-                            }
                         }
                         drop(guard);
                         thread::sleep(tick);
@@ -248,16 +257,40 @@ fn ensure_pattern_running() {
                     } else {
                         if was_identify_active {
                             was_identify_active = false;
-                            log::info!("LED identify finished, restoring GPIO 48 PWM to LEDC 3");
-                            unsafe {
-                                esp_idf_sys::esp_rom_gpio_connect_out_signal(
-                                    48,
-                                    (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
-                                    false,
-                                    false,
-                                );
-                            }
+                            identify_pending = true;
                         }
+                    }
+
+                    // Identification terminée → rendre la broche GPIO48 à RLA (simple sortie PWM LEDC).
+                    if identify_pending {
+                        identify_pending = false;
+                        log::info!("LED identify finished, restoring GPIO 48 PWM to LEDC 3");
+                        unsafe {
+                            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                48,
+                                (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                                false,
+                                false,
+                            );
+                        }
+                    }
+
+                    if RLA_ACTIVE.load(Ordering::SeqCst) {
+                        unsafe {
+                            esp_idf_sys::esp_rom_gpio_connect_out_signal(
+                                48,
+                                (esp_idf_sys::LEDC_LS_SIG_OUT0_IDX + 3) as u32,
+                                false,
+                                false,
+                            );
+                        }
+                        thread::sleep(tick);
+                        continue;
+                    }
+
+                    if RESET_FLASHING.load(Ordering::SeqCst) {
+                        thread::sleep(tick);
+                        continue;
                     }
 
                     let sta = LED_STA_STATUS.load(Ordering::SeqCst);
